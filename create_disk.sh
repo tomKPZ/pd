@@ -8,16 +8,17 @@ DISK_SIZE="1G"
 CHUNK_SIZE=$((1024 * 1024)) # 1MiB in bytes
 LUKS_PASSWORD="test"
 LVM_NAME="test_vg"
+THINPOOL_NAME="thinpool"
 LV_NAME="test_lv"
 MOUNT_POINT="/mnt/test_lv"
 DISK_CHECK_SCRIPT="disk_check.py"
 LOOP_DEV=""
-PART_DEV=""
 
 cleanup() {
 	echo "Cleaning up"
 	sudo umount $MOUNT_POINT || true
 	sudo lvremove -f /dev/$LVM_NAME/$LV_NAME || true
+	sudo lvremove -f /dev/$LVM_NAME/$THINPOOL_NAME || true
 	sudo vgremove -f $LVM_NAME || true
 	sudo pvremove -f /dev/mapper/luks_partition || true
 	sudo cryptsetup close luks_partition || true
@@ -58,15 +59,16 @@ echo -n "$LUKS_PASSWORD" | sudo cryptsetup open $PART_DEV luks_partition -
 pypy3 $DISK_CHECK_SCRIPT $DISK_IMG $CHUNK_SIZE
 
 # Step 4: Create an LVM with the LUKS partition as its only PV
-echo "Step 4: Creating LVM"
+echo "Step 4: Creating LVM with thin provisioning"
 sudo pvcreate /dev/mapper/luks_partition
 sudo vgcreate $LVM_NAME /dev/mapper/luks_partition
-sudo lvcreate --alloc contiguous -l 100%FREE -n $LV_NAME $LVM_NAME
+sudo lvcreate --type thin-pool --thinpool $THINPOOL_NAME --size 900M $LVM_NAME
+sudo lvcreate --thin $LVM_NAME/$THINPOOL_NAME --name $LV_NAME --virtualsize 900M
 pypy3 $DISK_CHECK_SCRIPT $DISK_IMG $CHUNK_SIZE
 
 # Step 5: Create an ext4 filesystem on the LV
 echo "Step 5: Creating ext4 filesystem"
-sudo mkfs.ext2 /dev/$LVM_NAME/$LV_NAME
+sudo mkfs.ext4 /dev/$LVM_NAME/$LV_NAME
 pypy3 $DISK_CHECK_SCRIPT $DISK_IMG $CHUNK_SIZE
 
 # Step 6: Write a 128MiB file from /dev/urandom to the ext4 partition
