@@ -87,6 +87,7 @@ sudo mount /dev/$LVM_NAME/$LV_NAME $MOUNT_POINT -o \
 sudo dd if=/dev/urandom of=$MOUNT_POINT/random_file bs=128M count=1
 sudo sync
 sudo rm $MOUNT_POINT/random_file
+sudo sync
 pypy3 $DISK_CHECK_SCRIPT $DISK_IMG $CHUNK_SIZE
 sudo umount $MOUNT_POINT
 
@@ -98,8 +99,8 @@ for _ in $(seq 1 16); do
 	sudo dd if=/dev/urandom of=$MOUNT_POINT/random_file bs=128M count=1
 	sudo sync
 	sudo rm $MOUNT_POINT/random_file
+	sudo sync
 done
-sudo sync
 pypy3 $DISK_CHECK_SCRIPT $DISK_IMG $CHUNK_SIZE
 sudo umount $MOUNT_POINT
 
