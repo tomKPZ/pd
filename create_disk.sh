@@ -62,7 +62,12 @@ pypy3 $DISK_CHECK_SCRIPT $DISK_IMG $CHUNK_SIZE
 echo "Step 4: Creating LVM with thin provisioning"
 sudo pvcreate /dev/mapper/luks_partition
 sudo vgcreate $LVM_NAME /dev/mapper/luks_partition
-sudo lvcreate --type thin-pool --thinpool $THINPOOL_NAME -l 100%FREE $LVM_NAME
+sudo lvcreate \
+	--type thin-pool \
+	--thinpool $THINPOOL_NAME \
+	-l 100%FREE \
+	--poolmetadataspare \
+	n $LVM_NAME
 sudo lvcreate --thin $LVM_NAME/$THINPOOL_NAME --name $LV_NAME --virtualsize 900M
 pypy3 $DISK_CHECK_SCRIPT $DISK_IMG $CHUNK_SIZE
 
