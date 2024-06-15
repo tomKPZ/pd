@@ -74,13 +74,25 @@ pypy3 $DISK_CHECK_SCRIPT $DISK_IMG $CHUNK_SIZE
 echo "Step 4: Creating LVM with thin provisioning"
 sudo pvcreate /dev/mapper/luks_partition
 sudo vgcreate $LVM_NAME /dev/mapper/luks_partition
+# 32M -> 2G for 2TB?
+POOLMETASIZE=32M
 sudo lvcreate \
 	--type thin-pool \
 	--thinpool $THINPOOL_NAME \
-	-l 100%FREE \
-	--poolmetadataspare \
-	n $LVM_NAME
-sudo lvcreate --thin $LVM_NAME/$THINPOOL_NAME --name $LV_NAME --virtualsize 900M
+	--poolmetadatasize ${POOLMETASIZE}M \
+	-L 4M \
+	$LVM_NAME
+sudo pvmove --alloc anywhere /dev/mapper/luks_partition:8 /dev/mapper/luks_partition:17
+sudo pvmove --alloc anywhere /dev/mapper/luks_partition:9-16 /dev/mapper/luks_partition:18-25
+sudo pvmove --alloc anywhere /dev/mapper/luks_partition:18-25 /dev/mapper/luks_partition:8-15
+sudo pvmove --alloc anywhere /dev/mapper/luks_partition:17 /dev/mapper/luks_partition:16
+sudo lvextend -l+100%FREE $LVM_NAME
+sudo pvdisplay -v -m
+sudo pvs --segments -v
+POOL_SIZE=$(sudo lvs --units m --noheadings -o lv_size $LVM_NAME/$THINPOOL_NAME | awk '{print $1}')
+sudo lvcreate --thin $LVM_NAME/$THINPOOL_NAME --name $LV_NAME --virtualsize $POOL_SIZE
+sudo lvdisplay -v -m
+sudo lvs --segments -v
 pypy3 $DISK_CHECK_SCRIPT $DISK_IMG $CHUNK_SIZE
 
 # Step 5: Create an btrfs filesystem on the LV
