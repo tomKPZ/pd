@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # Define variables
-DISK_IMG="disk.img"
+DISK_IMG="$(mktemp --suffix=.img)"
 DISK_SIZE="1G"
 CHUNK_SIZE=$((1024 * 1024)) # 1MiB in bytes
 LUKS_PASSWORD="test"
@@ -24,6 +24,15 @@ cleanup() {
 	sudo cryptsetup close luks_partition || true
 	sudo kpartx -d "$LOOP_DEV" || true
 	sudo losetup -d "$LOOP_DEV" || true
+	rm "$DISK_IMG" || true
+}
+
+syncall() {
+	sudo sync "$MOUNT_POINT" || true
+	sudo sync /dev/$LVM_NAME/$LV_NAME || true
+	sudo sync /dev/mapper/luks_partition || true
+	sudo sync "$LOOP_DEV" || true
+	sudo sync "$DISK_IMG" || true
 }
 
 trap cleanup EXIT
@@ -74,20 +83,20 @@ sudo lvcreate \
 sudo lvcreate --thin $LVM_NAME/$THINPOOL_NAME --name $LV_NAME --virtualsize 900M
 pypy3 $DISK_CHECK_SCRIPT $DISK_IMG $CHUNK_SIZE
 
-# Step 5: Create an ext4 filesystem on the LV
-echo "Step 5: Creating ext4 filesystem"
+# Step 5: Create an btrfs filesystem on the LV
+echo "Step 5: Creating btrfs filesystem"
 sudo mkfs.btrfs /dev/$LVM_NAME/$LV_NAME
 pypy3 $DISK_CHECK_SCRIPT $DISK_IMG $CHUNK_SIZE
 
-# Step 6: Write a 128MiB file from /dev/urandom to the ext4 partition
+# Step 6: Write a 128MiB file from /dev/urandom to the btrfs partition
 echo "Step 6: Writing a 128MiB file from /dev/urandom"
 sudo mkdir -p $MOUNT_POINT
 sudo mount /dev/$LVM_NAME/$LV_NAME $MOUNT_POINT -o \
 	'defaults,relatime,lazytime,autodefrag,ssd,discard=async,compress=zstd:3,space_cache=v2'
 sudo dd if=/dev/urandom of=$MOUNT_POINT/random_file bs=128M count=1
-sudo sync
+syncall
 sudo rm $MOUNT_POINT/random_file
-sudo sync
+syncall
 pypy3 $DISK_CHECK_SCRIPT $DISK_IMG $CHUNK_SIZE
 sudo umount $MOUNT_POINT
 
@@ -97,9 +106,9 @@ sudo mkdir -p $MOUNT_POINT
 sudo mount /dev/$LVM_NAME/$LV_NAME $MOUNT_POINT
 for _ in $(seq 1 16); do
 	sudo dd if=/dev/urandom of=$MOUNT_POINT/random_file bs=128M count=1
-	sudo sync
+	syncall
 	sudo rm $MOUNT_POINT/random_file
-	sudo sync
+	syncall
 done
 pypy3 $DISK_CHECK_SCRIPT $DISK_IMG $CHUNK_SIZE
 sudo umount $MOUNT_POINT
