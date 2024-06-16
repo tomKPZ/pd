@@ -73,7 +73,7 @@ echo "Step 3: Creating an MBR on reversed device"
 echo -e "o\nn\np\n1\n\n\nw" | sudo fdisk $REVERSED_DEV || true
 # Create a loop device with partitions
 sudo kpartx -a "$REVERSED_DEV"
-PART_DEV="${REVERSED_DEV}p1"
+PART_DEV="${REVERSED_DEV}1"
 visualize
 
 # Step 4: Create a LUKS partition with password "test"
