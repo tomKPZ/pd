@@ -12,7 +12,7 @@ THINPOOL_NAME="thinpool"
 LV_NAME="test_lv"
 MOUNT_POINT="/mnt/test_lv"
 DISK_CHECK_SCRIPT="disk_check.py"
-REVERSED_DEV="/dev/mapper/reversed9"
+REVERSED_DEV="/dev/mapper/reversed"
 LOOP_DEV=""
 
 cleanup() {
@@ -23,9 +23,8 @@ cleanup() {
 	sudo vgremove -f $LVM_NAME || echo "vgremove failed"
 	sudo pvremove -f /dev/mapper/luks_partition || echo "pvremove failed"
 	sudo cryptsetup close luks_partition || echo "cryptsetup close failed"
-	sudo kpartx -d "$LOOP_DEV" || echo "kpartx -d failed"
+	sudo kpartx -d "$REVERSED_DEV" || echo "kpartx -d failed"
 	sudo losetup -d "$LOOP_DEV" || echo "losetup -d failed"
-	# TODO: figure out why this fails.
 	sudo dmsetup remove "$REVERSED_DEV" || echo "dmsetup remove failed"
 	rm "$DISK_IMG" || echo "rm failed"
 }
