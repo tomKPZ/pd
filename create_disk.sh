@@ -116,7 +116,7 @@ lvdisplay -v -m
 lvs --segments -v
 visualize
 
-# Step 6: Create an btrfs filesystem on the LV
+# Step 6: Create a btrfs filesystem on the LV
 echo "Step 6: Creating btrfs filesystem"
 mkfs.btrfs $LV_DEV
 mkdir -p $MOUNT_POINT
