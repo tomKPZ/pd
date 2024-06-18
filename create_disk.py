@@ -88,8 +88,8 @@ def partition(reversed_dev):
 @contextmanager
 def luks(part_dev):
     LUKS_PASSWORD = "test"
-    LUKS_PART = "luks_partition"
-    LUKS_DEV = f"/dev/mapper/{LUKS_PART}"
+    LUKS_NAME = "luks_test"
+    LUKS_DEV = f"/dev/mapper/{LUKS_NAME}"
 
     cmd(
         [
@@ -104,24 +104,24 @@ def luks(part_dev):
         input=f"{LUKS_PASSWORD}\n".encode(),
     )
     cmd(
-        ["cryptsetup", "open", part_dev, LUKS_PART], input=f"{LUKS_PASSWORD}\n".encode()
+        ["cryptsetup", "open", part_dev, LUKS_NAME], input=f"{LUKS_PASSWORD}\n".encode()
     )
     try:
         yield LUKS_DEV
     finally:
-        cmd(["cryptsetup", "close", LUKS_PART])
+        cmd(["cryptsetup", "close", LUKS_NAME])
 
 
 @contextmanager
 def lvm(luks_dev):
     LV_NAME = "test_lv"
-    LVM_NAME = "test_vg"
+    VG_NAME = "test_vg"
     THINPOOL_NAME = "thinpool"
-    THINPOOL_DEV = f"/dev/{LVM_NAME}/{THINPOOL_NAME}"
-    LV_DEV = f"/dev/{LVM_NAME}/{LV_NAME}"
+    THINPOOL_DEV = f"/dev/{VG_NAME}/{THINPOOL_NAME}"
+    LV_DEV = f"/dev/{VG_NAME}/{LV_NAME}"
 
     cmd(["pvcreate", luks_dev])
-    cmd(["vgcreate", LVM_NAME, luks_dev])
+    cmd(["vgcreate", VG_NAME, luks_dev])
     POOLMETASIZE = "32M"
     cmd(
         [
@@ -134,10 +134,10 @@ def lvm(luks_dev):
             POOLMETASIZE,
             "-L",
             "4M",
-            LVM_NAME,
+            VG_NAME,
         ]
     )
-    cmd(["lvextend", "-l+100%FREE", LVM_NAME])
+    cmd(["lvextend", "-l+100%FREE", VG_NAME])
     POOL_SIZE = cmd_output(
         ["lvs", "--units", "m", "--noheadings", "-o", "lv_size", THINPOOL_DEV]
     ).split()[0]
@@ -157,7 +157,7 @@ def lvm(luks_dev):
     finally:
         cmd(["lvremove", "-f", LV_DEV], check=False)
         cmd(["lvremove", "-f", THINPOOL_DEV], check=False)
-        cmd(["vgremove", "-f", LVM_NAME], check=False)
+        cmd(["vgremove", "-f", VG_NAME], check=False)
         cmd(["pvremove", "-f", luks_dev], check=False)
 
 
@@ -166,7 +166,7 @@ def btrfs_mount(lv_dev):
     MOUNT_POINT = "/mnt/test_lv"
 
     cmd(["mkfs.btrfs", lv_dev])
-    os.makedirs(MOUNT_POINT, exist_ok=True)
+    os.mkdir(MOUNT_POINT)
     cmd(
         [
             "mount",
@@ -180,6 +180,7 @@ def btrfs_mount(lv_dev):
         yield MOUNT_POINT
     finally:
         cmd(["umount", MOUNT_POINT], check=False)
+        os.rmdir(MOUNT_POINT)
 
 
 def file_test(mount_point):
