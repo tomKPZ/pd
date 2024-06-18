@@ -18,7 +18,7 @@ PYTHON_INTERP = "pypy3"
 DISK_CHECK_SCRIPT = "disk_check.py"
 
 
-def run_command(command, shell=True, check=True):
+def cmd(command, shell=True, check=True):
     subprocess.run(command, shell=shell, check=check)
 
 
@@ -30,15 +30,15 @@ def visualize():
 
 def cleanup():
     print("Cleaning up")
-    run_command(f"umount {MOUNT_POINT}", check=False)
-    run_command(f"lvremove -f {LV_DEV}", check=False)
-    run_command(f"lvremove -f {THINPOOL_DEV}", check=False)
-    run_command(f"vgremove -f {LVM_NAME}", check=False)
-    run_command(f"pvremove -f {LUKS_DEV}", check=False)
-    run_command(f"cryptsetup close {LUKS_PART}", check=False)
-    run_command(f"kpartx -d {REVERSED_DEV}", check=False)
-    run_command(f"losetup -d {LOOP_DEV}", check=False)
-    run_command(f"dmsetup remove {REVERSED_DEV}", check=False)
+    cmd(f"umount {MOUNT_POINT}", check=False)
+    cmd(f"lvremove -f {LV_DEV}", check=False)
+    cmd(f"lvremove -f {THINPOOL_DEV}", check=False)
+    cmd(f"vgremove -f {LVM_NAME}", check=False)
+    cmd(f"pvremove -f {LUKS_DEV}", check=False)
+    cmd(f"cryptsetup close {LUKS_PART}", check=False)
+    cmd(f"kpartx -d {REVERSED_DEV}", check=False)
+    cmd(f"losetup -d {LOOP_DEV}", check=False)
+    cmd(f"dmsetup remove {REVERSED_DEV}", check=False)
     os.remove(DISK_IMG)
 
 
@@ -47,7 +47,7 @@ if __name__ == "__main__":
     try:
         # Step 1: Create disk.img of size 1GiB and fill it with 0x7dc2655a
         print("Step 1: Creating disk.img and filling with 0x7dc2655a")
-        run_command(f"dd if=/dev/zero of={DISK_IMG} bs={DISK_SIZE} count=1")
+        cmd(f"dd if=/dev/zero of={DISK_IMG} bs={DISK_SIZE} count=1")
         with open(DISK_IMG, "rb+") as f:
             value = (0x7DC2655A).to_bytes(4, byteorder="little")
             chunk = value * (DISPLAY_CHUNK_SIZE // 4)
@@ -86,27 +86,25 @@ if __name__ == "__main__":
 
         # Step 3: Create an MBR on reversed device
         print("Step 3: Creating an MBR on reversed device")
-        run_command(f"echo -e 'o\nn\np\n1\n\n\nw' | fdisk {REVERSED_DEV} || true")
-        run_command(f"kpartx -a {REVERSED_DEV}")
+        cmd(f"echo -e 'o\nn\np\n1\n\n\nw' | fdisk {REVERSED_DEV} || true")
+        cmd(f"kpartx -a {REVERSED_DEV}")
         PART_DEV = f"{REVERSED_DEV}1"
         visualize()
 
         # Step 4: Create a LUKS partition with password "test"
         print("Step 4: Creating a LUKS partition")
-        run_command(
+        cmd(
             f"echo -n '{LUKS_PASSWORD}' | cryptsetup luksFormat --pbkdf-force-iterations 4 --pbkdf-parallel 4 {PART_DEV} -"
         )
-        run_command(
-            f"echo -n '{LUKS_PASSWORD}' | cryptsetup open {PART_DEV} {LUKS_PART} -"
-        )
+        cmd(f"echo -n '{LUKS_PASSWORD}' | cryptsetup open {PART_DEV} {LUKS_PART} -")
         visualize()
 
         # Step 5: Create an LVM with the LUKS partition as its only PV
         print("Step 5: Creating LVM with thin provisioning")
-        run_command(f"pvcreate {LUKS_DEV}")
-        run_command(f"vgcreate {LVM_NAME} {LUKS_DEV}")
+        cmd(f"pvcreate {LUKS_DEV}")
+        cmd(f"vgcreate {LVM_NAME} {LUKS_DEV}")
         POOLMETASIZE = "32M"
-        run_command(
+        cmd(
             f"lvcreate --type thin-pool --thinpool {THINPOOL_NAME} --poolmetadatasize {POOLMETASIZE} -L 4M {LVM_NAME}"
         )
         # Optionally make the blocks contiguous
@@ -114,9 +112,9 @@ if __name__ == "__main__":
         # pvmove --alloc anywhere $LUKS_DEV:9-16 $LUKS_DEV:18-25
         # pvmove --alloc anywhere $LUKS_DEV:18-25 $LUKS_DEV:8-15
         # pvmove --alloc anywhere $LUKS_DEV:17 $LUKS_DEV:16
-        run_command(f"lvextend -l+100%FREE {LVM_NAME}")
-        run_command("pvdisplay -v -m")
-        run_command("pvs --segments -v")
+        cmd(f"lvextend -l+100%FREE {LVM_NAME}")
+        cmd("pvdisplay -v -m")
+        cmd("pvs --segments -v")
         POOL_SIZE = (
             subprocess.check_output(
                 f"lvs --units m --noheadings -o lv_size {THINPOOL_DEV} | awk '{{print $1}}'",
@@ -125,39 +123,37 @@ if __name__ == "__main__":
             .decode()
             .strip()
         )
-        run_command(
+        cmd(
             f"lvcreate --thin {THINPOOL_DEV} --name {LV_NAME} --virtualsize {POOL_SIZE}"
         )
-        run_command("lvdisplay -v -m")
-        run_command("lvs --segments -v")
+        cmd("lvdisplay -v -m")
+        cmd("lvs --segments -v")
         visualize()
 
         # Step 6: Create a btrfs filesystem on the LV
         print("Step 6: Creating btrfs filesystem")
-        run_command(f"mkfs.btrfs {LV_DEV}")
+        cmd(f"mkfs.btrfs {LV_DEV}")
         os.makedirs(MOUNT_POINT, exist_ok=True)
-        run_command(
+        cmd(
             f"mount {LV_DEV} {MOUNT_POINT} -o 'defaults,relatime,lazytime,autodefrag,ssd,discard=async,compress=zstd:3,space_cache=v2'"
         )
         visualize()
 
         # Step 7: Write a 128MiB file from /dev/urandom to the btrfs partition
         print("Step 7: Writing a 128MiB file from /dev/urandom")
-        run_command(f"dd if=/dev/urandom of={MOUNT_POINT}/random_file bs=128M count=1")
-        run_command("sync")
+        cmd(f"dd if=/dev/urandom of={MOUNT_POINT}/random_file bs=128M count=1")
+        cmd("sync")
         os.remove(f"{MOUNT_POINT}/random_file")
-        run_command("sync")
+        cmd("sync")
         visualize()
 
         # Step 8: Multiple writes
         print("Step 8: Writing multiple files from /dev/urandom")
         for _ in range(16):
-            run_command(
-                f"dd if=/dev/urandom of={MOUNT_POINT}/random_file bs=128M count=1"
-            )
-            run_command("sync")
+            cmd(f"dd if=/dev/urandom of={MOUNT_POINT}/random_file bs=128M count=1")
+            cmd("sync")
             os.remove(f"{MOUNT_POINT}/random_file")
-            run_command("sync")
+            cmd("sync")
         visualize()
 
         print("Script completed.")
