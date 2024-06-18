@@ -18,8 +18,8 @@ PYTHON_INTERP = "pypy3"
 DISK_CHECK_SCRIPT = "disk_check.py"
 
 
-def run_command(command, shell=True):
-    subprocess.run(command, shell=shell, check=True)
+def run_command(command, shell=True, check=True):
+    subprocess.run(command, shell=shell, check=check)
 
 
 def visualize():
@@ -30,46 +30,16 @@ def visualize():
 
 def cleanup():
     print("Cleaning up")
-    try:
-        run_command(f"umount {MOUNT_POINT}")
-    except subprocess.CalledProcessError:
-        print("unmount failed")
-    try:
-        run_command(f"lvremove -f {LV_DEV}")
-    except subprocess.CalledProcessError:
-        print("lvremove failed")
-    try:
-        run_command(f"lvremove -f {THINPOOL_DEV}")
-    except subprocess.CalledProcessError:
-        print("lvremove failed")
-    try:
-        run_command(f"vgremove -f {LVM_NAME}")
-    except subprocess.CalledProcessError:
-        print("vgremove failed")
-    try:
-        run_command(f"pvremove -f {LUKS_DEV}")
-    except subprocess.CalledProcessError:
-        print("pvremove failed")
-    try:
-        run_command(f"cryptsetup close {LUKS_PART}")
-    except subprocess.CalledProcessError:
-        print("cryptsetup close failed")
-    try:
-        run_command(f"kpartx -d {REVERSED_DEV}")
-    except subprocess.CalledProcessError:
-        print("kpartx -d failed")
-    try:
-        run_command(f"losetup -d {LOOP_DEV}")
-    except subprocess.CalledProcessError:
-        print("losetup -d failed")
-    try:
-        run_command(f"dmsetup remove {REVERSED_DEV}")
-    except subprocess.CalledProcessError:
-        print("dmsetup remove failed")
-    try:
-        os.remove(DISK_IMG)
-    except OSError:
-        print("rm failed")
+    run_command(f"umount {MOUNT_POINT}", check=False)
+    run_command(f"lvremove -f {LV_DEV}", check=False)
+    run_command(f"lvremove -f {THINPOOL_DEV}", check=False)
+    run_command(f"vgremove -f {LVM_NAME}", check=False)
+    run_command(f"pvremove -f {LUKS_DEV}", check=False)
+    run_command(f"cryptsetup close {LUKS_PART}", check=False)
+    run_command(f"kpartx -d {REVERSED_DEV}", check=False)
+    run_command(f"losetup -d {LOOP_DEV}", check=False)
+    run_command(f"dmsetup remove {REVERSED_DEV}", check=False)
+    os.remove(DISK_IMG)
 
 
 if __name__ == "__main__":
