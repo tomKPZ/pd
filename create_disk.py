@@ -213,25 +213,36 @@ def multifile_test(mount_point):
         cmd(["sync"])
 
 
+@contextmanager
+def manage(disk_img, managers, i, prev):
+    if i == len(managers):
+        yield prev
+        return
+    manager = managers[i]
+    print(f"Step {i + 1}: {manager}")
+    with manager(prev) as managed:
+        visualize(disk_img)
+        with manage(disk_img, managers, i + 1, managed) as res:
+            yield res
+
+
 def main() -> int:
     with disk_image() as disk_img:
-        visualize(disk_img)
-        with loopback_device(disk_img) as loop_dev:
-            with reversed_device(loop_dev) as reversed_dev:
-                with partition(reversed_dev) as part_dev:
-                    visualize(disk_img)
-                    with luks(part_dev) as luks_dev:
-                        visualize(disk_img)
-                        with lvm(luks_dev) as lv_dev:
-                            visualize(disk_img)
-                            with btrfs_mount(lv_dev) as mount_point:
-                                visualize(disk_img)
-                                file_test(mount_point)
-                                visualize(disk_img)
-                                multifile_test(mount_point)
-                                visualize(disk_img)
-                                print("Script completed.")
-    return 0
+        managers = [
+            loopback_device,
+            reversed_device,
+            partition,
+            luks,
+            lvm,
+            btrfs_mount,
+        ]
+        with manage(disk_img, managers, 0, disk_img) as mount_point:
+            file_test(mount_point)
+            visualize(disk_img)
+            multifile_test(mount_point)
+            visualize(disk_img)
+            print("Script completed.")
+        return 0
 
 
 if __name__ == "__main__":
