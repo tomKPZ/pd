@@ -192,8 +192,8 @@ def file_test(mount_point):
             "dd",
             "if=/dev/urandom",
             f"of={mount_point}/random_file",
-            "bs=128M",
-            "count=1",
+            "bs=1M",
+            "count=128",
         ]
     )
     cmd(["sync"])
@@ -208,8 +208,8 @@ def multifile_test(mount_point):
                 "dd",
                 "if=/dev/urandom",
                 f"of={mount_point}/random_file",
-                "bs=128M",
-                "count=1",
+                "bs=1M",
+                "count=128",
             ]
         )
         cmd(["sync"])
