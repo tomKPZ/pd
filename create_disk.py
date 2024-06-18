@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import uuid
 from contextlib import contextmanager
 
 
@@ -55,7 +56,7 @@ def reversed_device(loop_dev):
     CHUNK_SIZE = 8 * 1024 * 1024
     SECTOR_SIZE = 512
     SECTORS_PER_CHUNK = CHUNK_SIZE // SECTOR_SIZE
-    REVERSED_NAME = "reversed"
+    REVERSED_NAME = f"reversed_{uuid.uuid4()}"
     REVERSED_DEV = f"/dev/mapper/{REVERSED_NAME}"
 
     num_sectors = int(cmd_output(["blockdev", "--getsz", loop_dev]))
@@ -79,7 +80,7 @@ def reversed_device(loop_dev):
 def partition(reversed_dev):
     cmd(["fdisk", reversed_dev], input=b"o\nn\np\n1\n\n\nw\n", check=False)
     cmd(["kpartx", "-a", reversed_dev])
-    part_dev = f"{reversed_dev}1"
+    part_dev = f"{reversed_dev}p1" if reversed_dev[-1].isdigit() else f"{reversed_dev}1"
     try:
         yield part_dev
     finally:
@@ -89,7 +90,7 @@ def partition(reversed_dev):
 @contextmanager
 def luks(part_dev):
     LUKS_PASSWORD = "test"
-    LUKS_NAME = "luks_test"
+    LUKS_NAME = f"luks_test_{uuid.uuid4()}"
     LUKS_DEV = f"/dev/mapper/{LUKS_NAME}"
 
     cmd(
@@ -116,7 +117,7 @@ def luks(part_dev):
 @contextmanager
 def lvm(luks_dev):
     LV_NAME = "test_lv"
-    VG_NAME = "test_vg"
+    VG_NAME = f"test_vg_{uuid.uuid4()}"
     THINPOOL_NAME = "thinpool"
     THINPOOL_DEV = f"/dev/{VG_NAME}/{THINPOOL_NAME}"
     LV_DEV = f"/dev/{VG_NAME}/{LV_NAME}"
@@ -164,7 +165,7 @@ def lvm(luks_dev):
 
 @contextmanager
 def btrfs_mount(lv_dev):
-    MOUNT_NAME = "btrfs_mount"
+    MOUNT_NAME = f"btrfs_mount_{uuid.uuid4()}"
     MOUNT_POINT = f"/mnt/{MOUNT_NAME}"
 
     cmd(["mkfs.btrfs", lv_dev])
