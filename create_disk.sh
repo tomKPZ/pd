@@ -21,15 +21,15 @@ LOOP_DEV=""
 
 cleanup() {
 	echo "Cleaning up"
-	sudo umount $MOUNT_POINT || echo "unmount failed"
-	sudo lvremove -f $LV_DEV || echo "lvremove failed"
-	sudo lvremove -f $THINPOOL_DEV || echo "lvremove failed"
-	sudo vgremove -f $LVM_NAME || echo "vgremove failed"
-	sudo pvremove -f $LUKS_DEV || echo "pvremove failed"
-	sudo cryptsetup close $LUKS_PART || echo "cryptsetup close failed"
-	sudo kpartx -d "$REVERSED_DEV" || echo "kpartx -d failed"
-	sudo losetup -d "$LOOP_DEV" || echo "losetup -d failed"
-	sudo dmsetup remove "$REVERSED_DEV" || echo "dmsetup remove failed"
+	umount $MOUNT_POINT || echo "unmount failed"
+	lvremove -f $LV_DEV || echo "lvremove failed"
+	lvremove -f $THINPOOL_DEV || echo "lvremove failed"
+	vgremove -f $LVM_NAME || echo "vgremove failed"
+	pvremove -f $LUKS_DEV || echo "pvremove failed"
+	cryptsetup close $LUKS_PART || echo "cryptsetup close failed"
+	kpartx -d "$REVERSED_DEV" || echo "kpartx -d failed"
+	losetup -d "$LOOP_DEV" || echo "losetup -d failed"
+	dmsetup remove "$REVERSED_DEV" || echo "dmsetup remove failed"
 	rm "$DISK_IMG" || echo "rm failed"
 }
 
@@ -54,14 +54,14 @@ EOF
 visualize
 
 # Attach the loop device
-LOOP_DEV=$(sudo losetup -f --show "$DISK_IMG")
+LOOP_DEV=$(losetup -f --show "$DISK_IMG")
 
 # Step 2: Reverse the loop device in chunks
 echo "Step 2: Reversing the loop device in chunks of 64MiB"
 CHUNK_SIZE=$((8 * 1024 * 1024)) # chunk size
 SECTOR_SIZE=512                 # 512 bytes per sector
 SECTORS_PER_CHUNK=$((CHUNK_SIZE / SECTOR_SIZE))
-num_sectors=$(sudo blockdev --getsz "$LOOP_DEV")
+num_sectors=$(blockdev --getsz "$LOOP_DEV")
 num_chunks=$((num_sectors / SECTORS_PER_CHUNK))
 {
 	for ((i = 0; i < num_chunks; i++)); do
@@ -69,75 +69,75 @@ num_chunks=$((num_sectors / SECTORS_PER_CHUNK))
 		reverse_start_sector=$((num_sectors - (i + 1) * SECTORS_PER_CHUNK))
 		echo "${start_sector} ${SECTORS_PER_CHUNK} linear $LOOP_DEV ${reverse_start_sector}"
 	done
-} | sudo dmsetup create "$(basename $REVERSED_DEV)"
+} | dmsetup create "$(basename $REVERSED_DEV)"
 
 # Step 3: Create an MBR on reversed device
 echo "Step 3: Creating an MBR on reversed device"
 # fdisk has a non-zero exit code to warn to run partx.
-echo -e "o\nn\np\n1\n\n\nw" | sudo fdisk $REVERSED_DEV || true
+echo -e "o\nn\np\n1\n\n\nw" | fdisk $REVERSED_DEV || true
 # Create a loop device with partitions
-sudo kpartx -a "$REVERSED_DEV"
+kpartx -a "$REVERSED_DEV"
 PART_DEV="${REVERSED_DEV}1"
 visualize
 
 # Step 4: Create a LUKS partition with password "test"
 echo "Step 4: Creating a LUKS partition"
-echo -n "$LUKS_PASSWORD" | sudo cryptsetup luksFormat \
+echo -n "$LUKS_PASSWORD" | cryptsetup luksFormat \
 	--pbkdf-force-iterations 4 \
 	--pbkdf-parallel 4 \
 	"$PART_DEV" -
-echo -n "$LUKS_PASSWORD" | sudo cryptsetup open "$PART_DEV" $LUKS_PART -
+echo -n "$LUKS_PASSWORD" | cryptsetup open "$PART_DEV" $LUKS_PART -
 visualize
 
 # Step 5: Create an LVM with the LUKS partition as its only PV
 echo "Step 5: Creating LVM with thin provisioning"
-sudo pvcreate $LUKS_DEV
-sudo vgcreate $LVM_NAME $LUKS_DEV
+pvcreate $LUKS_DEV
+vgcreate $LVM_NAME $LUKS_DEV
 # 32M -> 2G for 2TB?
 POOLMETASIZE=32M
-sudo lvcreate \
+lvcreate \
 	--type thin-pool \
 	--thinpool $THINPOOL_NAME \
 	--poolmetadatasize ${POOLMETASIZE} \
 	-L 4M \
 	$LVM_NAME
 # Optionally make the blocks contiguous
-# sudo pvmove --alloc anywhere $LUKS_DEV:8 $LUKS_DEV:17
-# sudo pvmove --alloc anywhere $LUKS_DEV:9-16 $LUKS_DEV:18-25
-# sudo pvmove --alloc anywhere $LUKS_DEV:18-25 $LUKS_DEV:8-15
-# sudo pvmove --alloc anywhere $LUKS_DEV:17 $LUKS_DEV:16
-sudo lvextend -l+100%FREE $LVM_NAME
-sudo pvdisplay -v -m
-sudo pvs --segments -v
-POOL_SIZE=$(sudo lvs --units m --noheadings -o lv_size $THINPOOL_DEV | awk '{print $1}')
-sudo lvcreate --thin $THINPOOL_DEV --name $LV_NAME --virtualsize "$POOL_SIZE"
-sudo lvdisplay -v -m
-sudo lvs --segments -v
+# pvmove --alloc anywhere $LUKS_DEV:8 $LUKS_DEV:17
+# pvmove --alloc anywhere $LUKS_DEV:9-16 $LUKS_DEV:18-25
+# pvmove --alloc anywhere $LUKS_DEV:18-25 $LUKS_DEV:8-15
+# pvmove --alloc anywhere $LUKS_DEV:17 $LUKS_DEV:16
+lvextend -l+100%FREE $LVM_NAME
+pvdisplay -v -m
+pvs --segments -v
+POOL_SIZE=$(lvs --units m --noheadings -o lv_size $THINPOOL_DEV | awk '{print $1}')
+lvcreate --thin $THINPOOL_DEV --name $LV_NAME --virtualsize "$POOL_SIZE"
+lvdisplay -v -m
+lvs --segments -v
 visualize
 
 # Step 6: Create an btrfs filesystem on the LV
 echo "Step 6: Creating btrfs filesystem"
-sudo mkfs.btrfs $LV_DEV
-sudo mkdir -p $MOUNT_POINT
-sudo mount $LV_DEV $MOUNT_POINT -o \
+mkfs.btrfs $LV_DEV
+mkdir -p $MOUNT_POINT
+mount $LV_DEV $MOUNT_POINT -o \
 	'defaults,relatime,lazytime,autodefrag,ssd,discard=async,compress=zstd:3,space_cache=v2'
 visualize
 
 # Step 7: Write a 128MiB file from /dev/urandom to the btrfs partition
 echo "Step 7: Writing a 128MiB file from /dev/urandom"
-sudo dd if=/dev/urandom of=$MOUNT_POINT/random_file bs=128M count=1
-sudo sync
-sudo rm $MOUNT_POINT/random_file
-sudo sync
+dd if=/dev/urandom of=$MOUNT_POINT/random_file bs=128M count=1
+sync
+rm $MOUNT_POINT/random_file
+sync
 visualize
 
 # Step 8: Multiple writes
 echo "Step 8: Writing multiple files from /dev/urandom"
 for _ in $(seq 1 16); do
-	sudo dd if=/dev/urandom of=$MOUNT_POINT/random_file bs=128M count=1
-	sudo sync
-	sudo rm $MOUNT_POINT/random_file
-	sudo sync
+	dd if=/dev/urandom of=$MOUNT_POINT/random_file bs=128M count=1
+	sync
+	rm $MOUNT_POINT/random_file
+	sync
 done
 visualize
 
