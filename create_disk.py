@@ -1,9 +1,10 @@
+import contextlib
+import functools
 import os
 import subprocess
 import sys
 import tempfile
 import uuid
-from contextlib import contextmanager
 
 
 def cmd(*args, check=True, **kwargs):
@@ -23,7 +24,7 @@ def visualize(DISK_IMG):
     )
 
 
-@contextmanager
+@contextlib.contextmanager
 def disk_image():
     DISK_SIZE = "1G"
     CHUNK_SIZE = 1024 * 1024
@@ -42,7 +43,7 @@ def disk_image():
         os.remove(disk_img)
 
 
-@contextmanager
+@contextlib.contextmanager
 def loopback_device(disk_img):
     loop_dev = cmd_output(["losetup", "-f", "--show", disk_img])
     try:
@@ -51,8 +52,11 @@ def loopback_device(disk_img):
         cmd(["losetup", "-d", loop_dev])
 
 
-@contextmanager
-def reversed_device(loop_dev):
+@contextlib.contextmanager
+def reversed_device(reverse, loop_dev):
+    if not reverse:
+        yield loop_dev
+        return
     CHUNK_SIZE = 8 * 1024 * 1024
     SECTOR_SIZE = 512
     SECTORS_PER_CHUNK = CHUNK_SIZE // SECTOR_SIZE
@@ -76,18 +80,19 @@ def reversed_device(loop_dev):
         cmd(["dmsetup", "remove", REVERSED_DEV])
 
 
-@contextmanager
+@contextlib.contextmanager
 def partition(reversed_dev):
     cmd(["fdisk", reversed_dev], input=b"o\nn\np\n1\n\n\nw\n", check=False)
+    name = cmd_output(["kpartx", "-l", reversed_dev]).split()[0]
     cmd(["kpartx", "-a", reversed_dev])
-    part_dev = f"{reversed_dev}p1" if reversed_dev[-1].isdigit() else f"{reversed_dev}1"
+    part_dev = f"/dev/mapper/{name}"
     try:
         yield part_dev
     finally:
         cmd(["kpartx", "-d", reversed_dev])
 
 
-@contextmanager
+@contextlib.contextmanager
 def luks(part_dev):
     LUKS_PASSWORD = "test"
     LUKS_NAME = f"luks_test_{uuid.uuid4()}"
@@ -114,7 +119,7 @@ def luks(part_dev):
         cmd(["cryptsetup", "close", LUKS_NAME])
 
 
-@contextmanager
+@contextlib.contextmanager
 def lvm(luks_dev):
     LV_NAME = "test_lv"
     VG_NAME = f"test_vg_{uuid.uuid4()}"
@@ -163,7 +168,7 @@ def lvm(luks_dev):
         cmd(["pvremove", "-f", luks_dev], check=False)
 
 
-@contextmanager
+@contextlib.contextmanager
 def btrfs_mount(lv_dev):
     MOUNT_NAME = f"btrfs_mount_{uuid.uuid4()}"
     MOUNT_POINT = f"/mnt/{MOUNT_NAME}"
@@ -217,7 +222,7 @@ def multifile_test(mount_point):
         cmd(["sync"])
 
 
-@contextmanager
+@contextlib.contextmanager
 def manage(disk_img, managers, i, prev):
     if i == len(managers):
         yield prev
@@ -230,22 +235,28 @@ def manage(disk_img, managers, i, prev):
             yield res
 
 
+def managers(reverse):
+    return [
+        loopback_device,
+        functools.partial(reversed_device, reverse),
+        partition,
+        luks,
+        lvm,
+        btrfs_mount,
+    ]
+
+
 def main() -> int:
     with disk_image() as disk_img:
-        managers = [
-            loopback_device,
-            reversed_device,
-            partition,
-            luks,
-            lvm,
-            btrfs_mount,
-        ]
-        with manage(disk_img, managers, 0, disk_img) as mount_point:
-            file_test(mount_point)
-            visualize(disk_img)
-            multifile_test(mount_point)
-            visualize(disk_img)
-            print("Script completed.")
+        with manage(disk_img, managers(False), 0, disk_img) as mount1:
+            with manage(disk_img, managers(True), 0, disk_img) as mount2:
+                file_test(mount1)
+                file_test(mount2)
+                visualize(disk_img)
+                multifile_test(mount1)
+                multifile_test(mount2)
+                visualize(disk_img)
+                print("Script completed.")
         return 0
 
 
