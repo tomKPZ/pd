@@ -7,6 +7,8 @@ DISK_IMG="$(mktemp --suffix=.img)"
 DISK_SIZE="1G"
 DISPLAY_CHUNK_SIZE=$((1024 * 1024)) # 1MiB in bytes
 LUKS_PASSWORD="test"
+LUKS_NAME="luks_partition"
+LUKS_DEV="/dev/mapper/$LUKS_NAME"
 LVM_NAME="test_vg"
 THINPOOL_NAME="thinpool"
 LV_NAME="test_lv"
@@ -21,8 +23,8 @@ cleanup() {
 	sudo lvremove -f /dev/$LVM_NAME/$LV_NAME || echo "lvremove failed"
 	sudo lvremove -f /dev/$LVM_NAME/$THINPOOL_NAME || echo "lvremove failed"
 	sudo vgremove -f $LVM_NAME || echo "vgremove failed"
-	sudo pvremove -f /dev/mapper/luks_partition || echo "pvremove failed"
-	sudo cryptsetup close luks_partition || echo "cryptsetup close failed"
+	sudo pvremove -f $LUKS_DEV || echo "pvremove failed"
+	sudo cryptsetup close $LUKS_NAME || echo "cryptsetup close failed"
 	sudo kpartx -d "$REVERSED_DEV" || echo "kpartx -d failed"
 	sudo losetup -d "$LOOP_DEV" || echo "losetup -d failed"
 	sudo dmsetup remove "$REVERSED_DEV" || echo "dmsetup remove failed"
@@ -82,13 +84,13 @@ echo -n "$LUKS_PASSWORD" | sudo cryptsetup luksFormat \
 	--pbkdf-force-iterations 4 \
 	--pbkdf-parallel 4 \
 	"$PART_DEV" -
-echo -n "$LUKS_PASSWORD" | sudo cryptsetup open "$PART_DEV" luks_partition -
+echo -n "$LUKS_PASSWORD" | sudo cryptsetup open "$PART_DEV" $LUKS_NAME -
 visualize
 
 # Step 5: Create an LVM with the LUKS partition as its only PV
 echo "Step 5: Creating LVM with thin provisioning"
-sudo pvcreate /dev/mapper/luks_partition
-sudo vgcreate $LVM_NAME /dev/mapper/luks_partition
+sudo pvcreate $LUKS_DEV
+sudo vgcreate $LVM_NAME $LUKS_DEV
 # 32M -> 2G for 2TB?
 POOLMETASIZE=32M
 sudo lvcreate \
@@ -98,10 +100,10 @@ sudo lvcreate \
 	-L 4M \
 	$LVM_NAME
 # Optionally make the blocks contiguous
-# sudo pvmove --alloc anywhere /dev/mapper/luks_partition:8 /dev/mapper/luks_partition:17
-# sudo pvmove --alloc anywhere /dev/mapper/luks_partition:9-16 /dev/mapper/luks_partition:18-25
-# sudo pvmove --alloc anywhere /dev/mapper/luks_partition:18-25 /dev/mapper/luks_partition:8-15
-# sudo pvmove --alloc anywhere /dev/mapper/luks_partition:17 /dev/mapper/luks_partition:16
+# sudo pvmove --alloc anywhere $LUKS_DEV:8 $LUKS_DEV:17
+# sudo pvmove --alloc anywhere $LUKS_DEV:9-16 $LUKS_DEV:18-25
+# sudo pvmove --alloc anywhere $LUKS_DEV:18-25 $LUKS_DEV:8-15
+# sudo pvmove --alloc anywhere $LUKS_DEV:17 $LUKS_DEV:16
 sudo lvextend -l+100%FREE $LVM_NAME
 sudo pvdisplay -v -m
 sudo pvs --segments -v
