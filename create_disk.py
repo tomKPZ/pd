@@ -55,7 +55,8 @@ def reversed_device(loop_dev):
     CHUNK_SIZE = 8 * 1024 * 1024
     SECTOR_SIZE = 512
     SECTORS_PER_CHUNK = CHUNK_SIZE // SECTOR_SIZE
-    REVERSED_DEV = "/dev/mapper/reversed"
+    REVERSED_NAME = "reversed"
+    REVERSED_DEV = f"/dev/mapper/{REVERSED_NAME}"
 
     num_sectors = int(cmd_output(["blockdev", "--getsz", loop_dev]))
     num_chunks = num_sectors // SECTORS_PER_CHUNK
@@ -163,7 +164,8 @@ def lvm(luks_dev):
 
 @contextmanager
 def btrfs_mount(lv_dev):
-    MOUNT_POINT = "/mnt/test_lv"
+    MOUNT_NAME = "btrfs_mount"
+    MOUNT_POINT = f"/mnt/{MOUNT_NAME}"
 
     cmd(["mkfs.btrfs", lv_dev])
     os.mkdir(MOUNT_POINT)
