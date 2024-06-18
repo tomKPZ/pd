@@ -54,8 +54,8 @@ def disk_image():
 
 
 @contextlib.contextmanager
-def loopback_device(disk_img):
-    loop_dev = cmd_output(["losetup", "-f", "--show", disk_img])
+def loopback_device(file_path):
+    loop_dev = cmd_output(["losetup", "-f", "--show", file_path])
     try:
         yield loop_dev
     finally:
@@ -63,9 +63,9 @@ def loopback_device(disk_img):
 
 
 @contextlib.contextmanager
-def reversed_device(reverse, loop_dev):
+def reversed_device(reverse, wrap_dev):
     if not reverse:
-        yield loop_dev
+        yield wrap_dev
         return
     CHUNK_SIZE = 8 * 1024 * 1024
     SECTOR_SIZE = 512
@@ -73,13 +73,13 @@ def reversed_device(reverse, loop_dev):
     REVERSED_NAME = f"reversed_{uuid.uuid4()}"
     REVERSED_DEV = f"/dev/mapper/{REVERSED_NAME}"
 
-    num_sectors = int(cmd_output(["blockdev", "--getsz", loop_dev]))
+    num_sectors = int(cmd_output(["blockdev", "--getsz", wrap_dev]))
     num_chunks = num_sectors // SECTORS_PER_CHUNK
     dmsetup_input = ""
     for i in range(num_chunks):
         start_sector = i * SECTORS_PER_CHUNK
         reverse_start_sector = num_sectors - (i + 1) * SECTORS_PER_CHUNK
-        dmsetup_input += f"{start_sector} {SECTORS_PER_CHUNK} linear {loop_dev} {reverse_start_sector}\n"
+        dmsetup_input += f"{start_sector} {SECTORS_PER_CHUNK} linear {wrap_dev} {reverse_start_sector}\n"
     cmd(
         ["dmsetup", "create", os.path.basename(REVERSED_DEV)],
         input=dmsetup_input.encode(),
@@ -91,19 +91,19 @@ def reversed_device(reverse, loop_dev):
 
 
 @contextlib.contextmanager
-def partition(reversed_dev):
-    cmd(["fdisk", reversed_dev], input=b"o\nn\np\n1\n\n\nw\n", check=False)
-    name = cmd_output(["kpartx", "-l", reversed_dev]).split()[0]
-    cmd(["kpartx", "-a", reversed_dev])
+def partition(wrap_dev):
+    cmd(["fdisk", wrap_dev], input=b"o\nn\np\n1\n\n\nw\n", check=False)
+    name = cmd_output(["kpartx", "-l", wrap_dev]).split()[0]
+    cmd(["kpartx", "-a", wrap_dev])
     part_dev = f"/dev/mapper/{name}"
     try:
         yield part_dev
     finally:
-        cmd(["kpartx", "-d", reversed_dev])
+        cmd(["kpartx", "-d", wrap_dev])
 
 
 @contextlib.contextmanager
-def luks(part_dev):
+def luks(wrap_dev):
     LUKS_PASSWORD = "test"
     LUKS_NAME = f"luks_test_{uuid.uuid4()}"
     LUKS_DEV = f"/dev/mapper/{LUKS_NAME}"
@@ -116,12 +116,12 @@ def luks(part_dev):
             "4",
             "--pbkdf-parallel",
             "4",
-            part_dev,
+            wrap_dev,
         ],
         input=f"{LUKS_PASSWORD}\n".encode(),
     )
     cmd(
-        ["cryptsetup", "open", part_dev, LUKS_NAME], input=f"{LUKS_PASSWORD}\n".encode()
+        ["cryptsetup", "open", wrap_dev, LUKS_NAME], input=f"{LUKS_PASSWORD}\n".encode()
     )
     try:
         yield LUKS_DEV
@@ -130,15 +130,15 @@ def luks(part_dev):
 
 
 @contextlib.contextmanager
-def lvm(luks_dev):
+def lvm(wrap_dev):
     LV_NAME = "test_lv"
     VG_NAME = f"test_vg_{uuid.uuid4()}"
     THINPOOL_NAME = "thinpool"
     THINPOOL_DEV = f"/dev/{VG_NAME}/{THINPOOL_NAME}"
     LV_DEV = f"/dev/{VG_NAME}/{LV_NAME}"
 
-    cmd(["pvcreate", luks_dev])
-    cmd(["vgcreate", VG_NAME, luks_dev])
+    cmd(["pvcreate", wrap_dev])
+    cmd(["vgcreate", VG_NAME, wrap_dev])
     POOLMETASIZE = "32M"
     cmd(
         [
@@ -175,20 +175,20 @@ def lvm(luks_dev):
         cmd(["lvremove", "-f", LV_DEV], check=False)
         cmd(["lvremove", "-f", THINPOOL_DEV], check=False)
         cmd(["vgremove", "-f", VG_NAME], check=False)
-        cmd(["pvremove", "-f", luks_dev], check=False)
+        cmd(["pvremove", "-f", wrap_dev], check=False)
 
 
 @contextlib.contextmanager
-def btrfs_mount(lv_dev):
+def btrfs_mount(wrap_dev):
     MOUNT_NAME = f"btrfs_mount_{uuid.uuid4()}"
     MOUNT_POINT = f"/mnt/{MOUNT_NAME}"
 
-    cmd(["mkfs.btrfs", lv_dev])
+    cmd(["mkfs.btrfs", wrap_dev])
     os.mkdir(MOUNT_POINT)
     cmd(
         [
             "mount",
-            lv_dev,
+            wrap_dev,
             MOUNT_POINT,
             "-o",
             "defaults,relatime,lazytime,autodefrag,ssd,discard=async,compress=zstd:3,space_cache=v2",
@@ -201,16 +201,16 @@ def btrfs_mount(lv_dev):
         os.rmdir(MOUNT_POINT)
 
 
-def file_test(mount_point, dummy):
-    cmd(["dd", f"if={dummy}", f"of={mount_point}/dummy", "bs=4M"])
+def file_test(mount_point, file_path):
+    cmd(["dd", f"if={file_path}", f"of={mount_point}/dummy", "bs=4M"])
     cmd(["sync"])
     os.remove(f"{mount_point}/dummy")
     cmd(["sync"])
 
 
-def multifile_test(mount_point, dummy):
+def multifile_test(mount_point, file_path):
     for _ in range(16):
-        file_test(mount_point, dummy)
+        file_test(mount_point, file_path)
 
 
 @contextlib.contextmanager
