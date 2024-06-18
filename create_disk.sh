@@ -7,11 +7,13 @@ DISK_IMG="$(mktemp --suffix=.img)"
 DISK_SIZE="1G"
 DISPLAY_CHUNK_SIZE=$((1024 * 1024)) # 1MiB in bytes
 LUKS_PASSWORD="test"
-LUKS_NAME="luks_partition"
-LUKS_DEV="/dev/mapper/$LUKS_NAME"
+LUKS_PART="luks_partition"
+LUKS_DEV="/dev/mapper/$LUKS_PART"
 LVM_NAME="test_vg"
 THINPOOL_NAME="thinpool"
+THINPOOL_DEV="/dev/$LVM_NAME/$THINPOOL_NAME"
 LV_NAME="test_lv"
+LV_DEV="/dev/$LVM_NAME/$LV_NAME"
 MOUNT_POINT="/mnt/test_lv"
 DISK_CHECK_SCRIPT="disk_check.py"
 REVERSED_DEV="/dev/mapper/reversed"
@@ -20,11 +22,11 @@ LOOP_DEV=""
 cleanup() {
 	echo "Cleaning up"
 	sudo umount $MOUNT_POINT || echo "unmount failed"
-	sudo lvremove -f /dev/$LVM_NAME/$LV_NAME || echo "lvremove failed"
-	sudo lvremove -f /dev/$LVM_NAME/$THINPOOL_NAME || echo "lvremove failed"
+	sudo lvremove -f $LV_DEV || echo "lvremove failed"
+	sudo lvremove -f $THINPOOL_DEV || echo "lvremove failed"
 	sudo vgremove -f $LVM_NAME || echo "vgremove failed"
 	sudo pvremove -f $LUKS_DEV || echo "pvremove failed"
-	sudo cryptsetup close $LUKS_NAME || echo "cryptsetup close failed"
+	sudo cryptsetup close $LUKS_PART || echo "cryptsetup close failed"
 	sudo kpartx -d "$REVERSED_DEV" || echo "kpartx -d failed"
 	sudo losetup -d "$LOOP_DEV" || echo "losetup -d failed"
 	sudo dmsetup remove "$REVERSED_DEV" || echo "dmsetup remove failed"
@@ -84,7 +86,7 @@ echo -n "$LUKS_PASSWORD" | sudo cryptsetup luksFormat \
 	--pbkdf-force-iterations 4 \
 	--pbkdf-parallel 4 \
 	"$PART_DEV" -
-echo -n "$LUKS_PASSWORD" | sudo cryptsetup open "$PART_DEV" $LUKS_NAME -
+echo -n "$LUKS_PASSWORD" | sudo cryptsetup open "$PART_DEV" $LUKS_PART -
 visualize
 
 # Step 5: Create an LVM with the LUKS partition as its only PV
@@ -96,7 +98,7 @@ POOLMETASIZE=32M
 sudo lvcreate \
 	--type thin-pool \
 	--thinpool $THINPOOL_NAME \
-	--poolmetadatasize ${POOLMETASIZE}M \
+	--poolmetadatasize ${POOLMETASIZE} \
 	-L 4M \
 	$LVM_NAME
 # Optionally make the blocks contiguous
@@ -107,17 +109,17 @@ sudo lvcreate \
 sudo lvextend -l+100%FREE $LVM_NAME
 sudo pvdisplay -v -m
 sudo pvs --segments -v
-POOL_SIZE=$(sudo lvs --units m --noheadings -o lv_size $LVM_NAME/$THINPOOL_NAME | awk '{print $1}')
-sudo lvcreate --thin $LVM_NAME/$THINPOOL_NAME --name $LV_NAME --virtualsize "$POOL_SIZE"
+POOL_SIZE=$(sudo lvs --units m --noheadings -o lv_size $THINPOOL_DEV | awk '{print $1}')
+sudo lvcreate --thin $THINPOOL_DEV --name $LV_NAME --virtualsize "$POOL_SIZE"
 sudo lvdisplay -v -m
 sudo lvs --segments -v
 visualize
 
 # Step 6: Create an btrfs filesystem on the LV
 echo "Step 6: Creating btrfs filesystem"
-sudo mkfs.btrfs /dev/$LVM_NAME/$LV_NAME
+sudo mkfs.btrfs $LV_DEV
 sudo mkdir -p $MOUNT_POINT
-sudo mount /dev/$LVM_NAME/$LV_NAME $MOUNT_POINT -o \
+sudo mount $LV_DEV $MOUNT_POINT -o \
 	'defaults,relatime,lazytime,autodefrag,ssd,discard=async,compress=zstd:3,space_cache=v2'
 visualize
 
@@ -129,7 +131,7 @@ sudo rm $MOUNT_POINT/random_file
 sudo sync
 visualize
 
-# Step 8: Stress test
+# Step 8: Multiple writes
 echo "Step 8: Writing multiple files from /dev/urandom"
 for _ in $(seq 1 16); do
 	sudo dd if=/dev/urandom of=$MOUNT_POINT/random_file bs=128M count=1
