@@ -260,18 +260,17 @@ def managers(reverse):
 
 
 def main() -> int:
-    with dummy_file() as dummy:
-        with disk_image() as disk_img:
-            with manage(disk_img, managers(False), 0, disk_img) as mount1:
-                with manage(disk_img, managers(True), 0, disk_img) as mount2:
-                    file_test(mount1, dummy)
-                    file_test(mount2, dummy)
-                    visualize(disk_img)
-                    multifile_test(mount1, dummy)
-                    multifile_test(mount2, dummy)
-                    visualize(disk_img)
-                    print("Script completed.")
-                    return 0
+    with dummy_file() as dummy, disk_image() as disk_img:
+        with manage(disk_img, managers(False), 0, disk_img) as mount1:
+            with manage(disk_img, managers(True), 0, disk_img) as mount2:
+                file_test(mount1, dummy)
+                file_test(mount2, dummy)
+                visualize(disk_img)
+                multifile_test(mount1, dummy)
+                multifile_test(mount2, dummy)
+                visualize(disk_img)
+                print("Script completed.")
+                return 0
 
 
 if __name__ == "__main__":
