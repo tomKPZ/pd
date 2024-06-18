@@ -18,12 +18,12 @@ PYTHON_INTERP = "pypy3"
 DISK_CHECK_SCRIPT = "disk_check.py"
 
 
-def cmd(command, check=True, input=None):
-    subprocess.run(command, check=check, input=input)
+def cmd(*args, check=True, **kwargs):
+    return subprocess.run(*args, check=check, **kwargs)
 
 
-def cmd_with_output(command):
-    return subprocess.check_output(command).decode().strip()
+def cmd_output(*args, **kwargs):
+    return cmd(*args, stdout=subprocess.PIPE, **kwargs).stdout.decode().strip()
 
 
 def visualize():
@@ -61,14 +61,14 @@ if __name__ == "__main__":
         visualize()
 
         # Attach the loop device
-        LOOP_DEV = cmd_with_output(["losetup", "-f", "--show", DISK_IMG])
+        LOOP_DEV = cmd_output(["losetup", "-f", "--show", DISK_IMG])
 
         # Step 2: Reverse the loop device in chunks
         print("Step 2: Reversing the loop device in chunks")
         CHUNK_SIZE = 8 * 1024 * 1024  # chunk size
         SECTOR_SIZE = 512  # 512 bytes per sector
         SECTORS_PER_CHUNK = CHUNK_SIZE // SECTOR_SIZE
-        num_sectors = int(cmd_with_output(["blockdev", "--getsz", LOOP_DEV]))
+        num_sectors = int(cmd_output(["blockdev", "--getsz", LOOP_DEV]))
         num_chunks = num_sectors // SECTORS_PER_CHUNK
         dmsetup_input = ""
         for i in range(num_chunks):
@@ -129,7 +129,7 @@ if __name__ == "__main__":
         cmd(["lvextend", "-l+100%FREE", LVM_NAME])
         cmd(["pvdisplay", "-v", "-m"])
         cmd(["pvs", "--segments", "-v"])
-        POOL_SIZE = cmd_with_output(
+        POOL_SIZE = cmd_output(
             ["lvs", "--units", "m", "--noheadings", "-o", "lv_size", THINPOOL_DEV]
         ).split()[0]
         cmd(
