@@ -103,7 +103,7 @@ def partition(wrap_dev):
 
 
 @contextlib.contextmanager
-def luks(wrap_dev):
+def crypt(wrap_dev):
     LUKS_PASSWORD = "test"
     LUKS_NAME = f"luks_test_{uuid.uuid4()}"
     LUKS_DEV = f"/dev/mapper/{LUKS_NAME}"
@@ -127,6 +127,28 @@ def luks(wrap_dev):
         yield LUKS_DEV
     finally:
         cmd(["cryptsetup", "close", LUKS_NAME])
+
+
+@contextlib.contextmanager
+def integrity(wrap_dev):
+    INTEGRITY_NAME = f"integrity_test_{uuid.uuid4()}"
+    INTEGRITY_DEV = f"/dev/mapper/{INTEGRITY_NAME}"
+
+    cmd(
+        [
+            "integritysetup",
+            "format",
+            "--batch-mode",
+            "--integrity-no-journal",
+            "--sector-size=4096",
+            wrap_dev,
+        ]
+    )
+    cmd(["integritysetup", "open", wrap_dev, INTEGRITY_NAME])
+    try:
+        yield INTEGRITY_DEV
+    finally:
+        cmd(["integritysetup", "close", INTEGRITY_NAME])
 
 
 @contextlib.contextmanager
@@ -183,7 +205,7 @@ def btrfs_mount(wrap_dev):
     MOUNT_NAME = f"btrfs_mount_{uuid.uuid4()}"
     MOUNT_POINT = f"/mnt/{MOUNT_NAME}"
 
-    cmd(["mkfs.btrfs", wrap_dev])
+    cmd(["mkfs.btrfs", wrap_dev, "--csum=xxhash"])
     os.mkdir(MOUNT_POINT)
     cmd(
         [
@@ -231,7 +253,7 @@ def managers(reverse):
         loopback_device,
         functools.partial(reversed_device, reverse),
         partition,
-        luks,
+        crypt,
         lvm,
         btrfs_mount,
     ]
