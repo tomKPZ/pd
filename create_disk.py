@@ -182,55 +182,54 @@ def btrfs_mount(lv_dev):
         cmd(["umount", MOUNT_POINT], check=False)
 
 
-def main():
+def file_test(mount_point):
+    cmd(
+        [
+            "dd",
+            "if=/dev/urandom",
+            f"of={mount_point}/random_file",
+            "bs=128M",
+            "count=1",
+        ]
+    )
+    cmd(["sync"])
+    os.remove(f"{mount_point}/random_file")
+    cmd(["sync"])
+
+
+def multifile_test(mount_point):
+    for _ in range(16):
+        cmd(
+            [
+                "dd",
+                "if=/dev/urandom",
+                f"of={mount_point}/random_file",
+                "bs=128M",
+                "count=1",
+            ]
+        )
+        cmd(["sync"])
+        os.remove(f"{mount_point}/random_file")
+        cmd(["sync"])
+
+
+def main() -> int:
     with disk_image() as disk_img:
         visualize(disk_img)
         with loopback_device(disk_img) as loop_dev:
             with reversed_device(loop_dev) as reversed_dev:
                 with partition(reversed_dev) as part_dev:
                     visualize(disk_img)
-                    with luks(part_dev) as luks_Dev:
+                    with luks(part_dev) as luks_dev:
                         visualize(disk_img)
-                        with lvm(luks_Dev) as lv_dev:
+                        with lvm(luks_dev) as lv_dev:
                             visualize(disk_img)
                             with btrfs_mount(lv_dev) as mount_point:
                                 visualize(disk_img)
-
-                                # Step 7: Write a 128MiB file from /dev/urandom to the btrfs partition
-                                print("Step 7: Writing a 128MiB file from /dev/urandom")
-                                cmd(
-                                    [
-                                        "dd",
-                                        "if=/dev/urandom",
-                                        f"of={mount_point}/random_file",
-                                        "bs=128M",
-                                        "count=1",
-                                    ]
-                                )
-                                cmd(["sync"])
-                                os.remove(f"{mount_point}/random_file")
-                                cmd(["sync"])
+                                file_test(mount_point)
                                 visualize(disk_img)
-
-                                # Step 8: Multiple writes
-                                print(
-                                    "Step 8: Writing multiple files from /dev/urandom"
-                                )
-                                for _ in range(16):
-                                    cmd(
-                                        [
-                                            "dd",
-                                            "if=/dev/urandom",
-                                            f"of={mount_point}/random_file",
-                                            "bs=128M",
-                                            "count=1",
-                                        ]
-                                    )
-                                    cmd(["sync"])
-                                    os.remove(f"{mount_point}/random_file")
-                                    cmd(["sync"])
+                                multifile_test(mount_point)
                                 visualize(disk_img)
-
                                 print("Script completed.")
     return 0
 
