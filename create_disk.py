@@ -25,6 +25,16 @@ def visualize(DISK_IMG):
 
 
 @contextlib.contextmanager
+def dummy_file():
+    file = tempfile.mktemp()
+    try:
+        cmd(["dd", "if=/dev/urandom", f"of={file}", "bs=4M", "count=32"])
+        yield file
+    finally:
+        os.remove(file)
+
+
+@contextlib.contextmanager
 def disk_image():
     DISK_SIZE = "1G"
     CHUNK_SIZE = 1024 * 1024
@@ -191,35 +201,16 @@ def btrfs_mount(lv_dev):
         os.rmdir(MOUNT_POINT)
 
 
-def file_test(mount_point):
-    cmd(
-        [
-            "dd",
-            "if=/dev/urandom",
-            f"of={mount_point}/random_file",
-            "bs=1M",
-            "count=128",
-        ]
-    )
+def file_test(mount_point, dummy):
+    cmd(["dd", f"if={dummy}", f"of={mount_point}/dummy", "bs=4M"])
     cmd(["sync"])
-    os.remove(f"{mount_point}/random_file")
+    os.remove(f"{mount_point}/dummy")
     cmd(["sync"])
 
 
-def multifile_test(mount_point):
+def multifile_test(mount_point, dummy):
     for _ in range(16):
-        cmd(
-            [
-                "dd",
-                "if=/dev/urandom",
-                f"of={mount_point}/random_file",
-                "bs=1M",
-                "count=128",
-            ]
-        )
-        cmd(["sync"])
-        os.remove(f"{mount_point}/random_file")
-        cmd(["sync"])
+        file_test(mount_point, dummy)
 
 
 @contextlib.contextmanager
@@ -247,17 +238,18 @@ def managers(reverse):
 
 
 def main() -> int:
-    with disk_image() as disk_img:
-        with manage(disk_img, managers(False), 0, disk_img) as mount1:
-            with manage(disk_img, managers(True), 0, disk_img) as mount2:
-                file_test(mount1)
-                file_test(mount2)
-                visualize(disk_img)
-                multifile_test(mount1)
-                multifile_test(mount2)
-                visualize(disk_img)
-                print("Script completed.")
-        return 0
+    with dummy_file() as dummy:
+        with disk_image() as disk_img:
+            with manage(disk_img, managers(False), 0, disk_img) as mount1:
+                with manage(disk_img, managers(True), 0, disk_img) as mount2:
+                    file_test(mount1, dummy)
+                    file_test(mount2, dummy)
+                    visualize(disk_img)
+                    multifile_test(mount1, dummy)
+                    multifile_test(mount2, dummy)
+                    visualize(disk_img)
+                    print("Script completed.")
+                    return 0
 
 
 if __name__ == "__main__":
