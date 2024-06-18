@@ -5,7 +5,6 @@ set -euo pipefail
 # Define variables
 DISK_IMG="$(mktemp --suffix=.img)"
 DISK_SIZE="1G"
-DISPLAY_CHUNK_SIZE=$((1024 * 1024)) # 1MiB in bytes
 LUKS_PASSWORD="test"
 LUKS_PART="luks_partition"
 LUKS_DEV="/dev/mapper/$LUKS_PART"
@@ -15,9 +14,12 @@ THINPOOL_DEV="/dev/$LVM_NAME/$THINPOOL_NAME"
 LV_NAME="test_lv"
 LV_DEV="/dev/$LVM_NAME/$LV_NAME"
 MOUNT_POINT="/mnt/test_lv"
-DISK_CHECK_SCRIPT="disk_check.py"
 REVERSED_DEV="/dev/mapper/reversed"
 LOOP_DEV=""
+
+PYTHON_INTERP="pypy3"
+DISK_CHECK_SCRIPT="disk_check.py"
+DISPLAY_CHUNK_SIZE=$((1024 * 1024))
 
 cleanup() {
 	echo "Cleaning up"
@@ -32,13 +34,12 @@ cleanup() {
 	dmsetup remove "$REVERSED_DEV" || echo "dmsetup remove failed"
 	rm "$DISK_IMG" || echo "rm failed"
 }
+trap cleanup EXIT
 
 visualize() {
 	sync
-	pypy3 $DISK_CHECK_SCRIPT "$DISK_IMG" $DISPLAY_CHUNK_SIZE
+	$PYTHON_INTERP $DISK_CHECK_SCRIPT "$DISK_IMG" $DISPLAY_CHUNK_SIZE
 }
-
-trap cleanup EXIT
 
 # Step 1: Create disk.img of size 1GiB and fill it with 0x7dc2655a
 echo "Step 1: Creating disk.img and filling with 0x7dc2655a"
@@ -57,7 +58,7 @@ visualize
 LOOP_DEV=$(losetup -f --show "$DISK_IMG")
 
 # Step 2: Reverse the loop device in chunks
-echo "Step 2: Reversing the loop device in chunks of 64MiB"
+echo "Step 2: Reversing the loop device in chunks"
 CHUNK_SIZE=$((8 * 1024 * 1024)) # chunk size
 SECTOR_SIZE=512                 # 512 bytes per sector
 SECTORS_PER_CHUNK=$((CHUNK_SIZE / SECTOR_SIZE))
