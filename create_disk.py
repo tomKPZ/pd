@@ -1,10 +1,43 @@
 import contextlib
 import functools
+import mmap
 import os
 import subprocess
 import sys
 import tempfile
 import uuid
+
+from termcolor import colored
+
+
+def visualize(file_path):
+    chunk_size = 1024 * 1024
+    value = 0x7DC2655A
+    chunks_per_line = 64
+
+    chunk_expect = value.to_bytes(4, byteorder="little") * (chunk_size // 4)
+
+    with open(file_path, "rb") as f:
+        file_size = os.path.getsize(file_path)
+        num_chunks = (file_size + chunk_size - 1) // chunk_size
+
+        with mmap.mmap(f.fileno(), length=0, access=mmap.ACCESS_READ) as mm:
+            for chunk_idx in range(num_chunks):
+                chunk_start = chunk_idx * chunk_size
+                chunk_end = min(chunk_start + chunk_size, file_size)
+                chunk = mm[chunk_start:chunk_end]
+
+                if chunk == chunk_expect:
+                    print(colored(" ", "white", "on_green"), end="")
+                else:
+                    print(colored(" ", "white", "on_red"), end="")
+
+                if (chunk_idx + 1) % chunks_per_line == 0:
+                    print()
+
+            # Print a newline if the last line is not complete
+            if num_chunks % chunks_per_line != 0:
+                print()
 
 
 def cmd(*args, check=True, **kwargs):
@@ -13,15 +46,6 @@ def cmd(*args, check=True, **kwargs):
 
 def cmd_output(*args, **kwargs):
     return cmd(*args, stdout=subprocess.PIPE, **kwargs).stdout.decode().strip()
-
-
-def visualize(DISK_IMG):
-    DISPLAY_CHUNK_SIZE = 1024 * 1024
-    PYTHON_INTERP = "pypy3"
-    DISK_CHECK_SCRIPT = "disk_check.py"
-    subprocess.run(
-        [PYTHON_INTERP, DISK_CHECK_SCRIPT, DISK_IMG, str(DISPLAY_CHUNK_SIZE)]
-    )
 
 
 @contextlib.contextmanager
