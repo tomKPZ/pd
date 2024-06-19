@@ -1,43 +1,10 @@
 import contextlib
 import functools
-import mmap
 import os
 import subprocess
 import sys
 import tempfile
 import uuid
-
-from termcolor import colored
-
-
-def visualize(file_path):
-    chunk_size = 1024 * 1024
-    value = 0x7DC2655A
-    chunks_per_line = 64
-
-    chunk_expect = value.to_bytes(4, byteorder="little") * (chunk_size // 4)
-
-    with open(file_path, "rb") as f:
-        file_size = os.path.getsize(file_path)
-        num_chunks = (file_size + chunk_size - 1) // chunk_size
-
-        with mmap.mmap(f.fileno(), length=0, access=mmap.ACCESS_READ) as mm:
-            for chunk_idx in range(num_chunks):
-                chunk_start = chunk_idx * chunk_size
-                chunk_end = min(chunk_start + chunk_size, file_size)
-                chunk = mm[chunk_start:chunk_end]
-
-                if chunk == chunk_expect:
-                    print(colored(" ", "white", "on_green"), end="")
-                else:
-                    print(colored(" ", "white", "on_red"), end="")
-
-                if (chunk_idx + 1) % chunks_per_line == 0:
-                    print()
-
-            # Print a newline if the last line is not complete
-            if num_chunks % chunks_per_line != 0:
-                print()
 
 
 def cmd(*args, check=True, **kwargs):
@@ -46,6 +13,25 @@ def cmd(*args, check=True, **kwargs):
 
 def cmd_output(*args, **kwargs):
     return cmd(*args, stdout=subprocess.PIPE, **kwargs).stdout.decode().strip()
+
+
+def batched(xs, n):
+    assert len(xs) % n == 0
+    return [xs[i * n : i * n + n] for i in range(len(xs) // n)]
+
+
+def visualize(device):
+    chunk_size = 1024 * 1024
+    chunks_per_line = 64
+    chunk_expect = b"\0" * chunk_size
+
+    data = cmd(["dd", f"if={device}"], stdout=subprocess.PIPE).stdout
+    changes = [chunk != chunk_expect for chunk in batched(data, chunk_size)]
+    for line in batched(changes, chunks_per_line):
+        for change in line:
+            code = [42, 41][change]
+            print(f"\033[{code}m \033[0m", end="")
+        print()
 
 
 @contextlib.contextmanager
@@ -61,17 +47,10 @@ def dummy_file():
 @contextlib.contextmanager
 def disk_image():
     DISK_SIZE = "1G"
-    CHUNK_SIZE = 1024 * 1024
 
     disk_img = tempfile.mktemp(suffix=".img")
     try:
         cmd(["dd", "if=/dev/zero", f"of={disk_img}", f"bs={DISK_SIZE}", "count=1"])
-        with open(disk_img, "rb+") as f:
-            value = (0x7DC2655A).to_bytes(4, byteorder="little")
-            chunk = value * (CHUNK_SIZE // 4)
-            num_chunks = int(1024 * 1024 * 1024 / CHUNK_SIZE)
-            for _ in range(num_chunks):
-                f.write(chunk)
         yield disk_img
     finally:
         os.remove(disk_img)
@@ -276,15 +255,15 @@ def multifile_test(mount_point, file_path):
 
 
 @contextlib.contextmanager
-def manage(disk_img, managers, i, prev):
+def manage(device, managers, i, prev):
     if i == len(managers):
         yield prev
         return
     manager = managers[i]
     print(f"Step {i + 1}: {manager}")
     with manager(prev) as managed:
-        visualize(disk_img)
-        with manage(disk_img, managers, i + 1, managed) as res:
+        visualize(device)
+        with manage(device, managers, i + 1, managed) as res:
             yield res
 
 
@@ -302,15 +281,16 @@ def managers(reverse):
 def main() -> int:
     with disk_image() as disk_img:
         with plain_dmcrypt(disk_img) as plain:
-            with manage(disk_img, managers(False), 0, disk_img) as mount1:
-                with manage(disk_img, managers(True), 0, disk_img) as mount2:
+            cmd(["dd", "if=/dev/zero", f"of={plain}", f"bs=4M", "count=256"])
+            with manage(plain, managers(False), 0, disk_img) as mount1:
+                with manage(plain, managers(True), 0, disk_img) as mount2:
                     with dummy_file() as dummy:
                         file_test(mount1, dummy)
                         file_test(mount2, dummy)
-                        visualize(disk_img)
+                        visualize(plain)
                         multifile_test(mount1, dummy)
                         multifile_test(mount2, dummy)
-                        visualize(disk_img)
+                        visualize(plain)
                         print("Script completed.")
                         return 0
 
