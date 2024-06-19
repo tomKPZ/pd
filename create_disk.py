@@ -127,7 +127,7 @@ def partition(wrap_dev):
 
 
 @contextlib.contextmanager
-def crypt(wrap_dev):
+def luks(wrap_dev):
     LUKS_PASSWORD = "test"
     LUKS_NAME = f"luks_test_{uuid.uuid4()}"
     LUKS_DEV = f"/dev/mapper/{LUKS_NAME}"
@@ -151,6 +151,22 @@ def crypt(wrap_dev):
         yield LUKS_DEV
     finally:
         cmd(["cryptsetup", "close", LUKS_NAME])
+
+
+@contextlib.contextmanager
+def plain_dmcrypt(wrap_dev):
+    CRYPT_PASSWORD = "test"
+    CRYPT_NAME = f"dmcrypt_test_{uuid.uuid4()}"
+    CRYPT_DEV = f"/dev/mapper/{CRYPT_NAME}"
+
+    cmd(
+        ["cryptsetup", "open", "--type", "plain", wrap_dev, CRYPT_NAME],
+        input=f"{CRYPT_PASSWORD}\n".encode(),
+    )
+    try:
+        yield CRYPT_DEV
+    finally:
+        cmd(["cryptsetup", "close", CRYPT_NAME])
 
 
 @contextlib.contextmanager
@@ -277,24 +293,26 @@ def managers(reverse):
         loopback_device,
         functools.partial(reversed_device, reverse),
         partition,
-        crypt,
+        luks,
         lvm,
         btrfs_mount,
     ]
 
 
 def main() -> int:
-    with dummy_file() as dummy, disk_image() as disk_img:
-        with manage(disk_img, managers(False), 0, disk_img) as mount1:
-            with manage(disk_img, managers(True), 0, disk_img) as mount2:
-                file_test(mount1, dummy)
-                file_test(mount2, dummy)
-                visualize(disk_img)
-                multifile_test(mount1, dummy)
-                multifile_test(mount2, dummy)
-                visualize(disk_img)
-                print("Script completed.")
-                return 0
+    with disk_image() as disk_img:
+        with plain_dmcrypt(disk_img) as plain:
+            with manage(disk_img, managers(False), 0, disk_img) as mount1:
+                with manage(disk_img, managers(True), 0, disk_img) as mount2:
+                    with dummy_file() as dummy:
+                        file_test(mount1, dummy)
+                        file_test(mount2, dummy)
+                        visualize(disk_img)
+                        multifile_test(mount1, dummy)
+                        multifile_test(mount2, dummy)
+                        visualize(disk_img)
+                        print("Script completed.")
+                        return 0
 
 
 if __name__ == "__main__":
