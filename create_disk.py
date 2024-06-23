@@ -249,11 +249,6 @@ def file_test(mount_point, file_path):
     cmd(["sync"])
 
 
-def multifile_test(mount_point, file_path):
-    for _ in range(16):
-        file_test(mount_point, file_path)
-
-
 @contextlib.contextmanager
 def manage(device, managers, i, prev, acc=None):
     if acc is None:
@@ -285,15 +280,29 @@ def bidi(disk_img, plain):
     def dir(reverse):
         return manage(plain, managers(reverse), 0, disk_img)
 
-    with dir(False) as (_, _, _, _, _, mount1):
-        with dir(True) as (_, _, _, _, _, mount2):
+    def remount(lv, mount):
+        vg = os.path.basename(os.path.dirname(lv))
+        cmd(["fstrim", mount, "-v"])
+        cmd(["umount", mount])
+        cmd(["vgchange", "-an", vg])
+        cmd(["sync"])
+        cmd(["vgchange", "-ay", vg])
+        cmd(["mount", lv, mount])
+
+    with dir(False) as (_, _, _, _, lv1, mount1):
+        with dir(True) as (_, _, _, _, lv2, mount2):
             with dummy_file() as dummy:
                 file_test(mount1, dummy)
                 file_test(mount2, dummy)
+                remount(lv1, mount1)
+                remount(lv2, mount2)
                 visualize(plain)
-                multifile_test(mount1, dummy)
-                multifile_test(mount2, dummy)
-                visualize(plain)
+                for _ in range(16):
+                    file_test(mount1, dummy)
+                    file_test(mount2, dummy)
+                    remount(lv1, mount1)
+                    remount(lv2, mount2)
+                    visualize(plain)
 
 
 def main() -> int:
