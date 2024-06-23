@@ -255,15 +255,18 @@ def multifile_test(mount_point, file_path):
 
 
 @contextlib.contextmanager
-def manage(device, managers, i, prev):
+def manage(device, managers, i, prev, acc=None):
+    if acc is None:
+        acc = []
     if i == len(managers):
-        yield prev
+        yield acc
         return
     manager = managers[i]
     print(f"Step {i + 1}: {manager}")
     with manager(prev) as managed:
+        acc.append(managed)
         visualize(device)
-        with manage(device, managers, i + 1, managed) as res:
+        with manage(device, managers, i + 1, managed, acc) as res:
             yield res
 
 
@@ -278,21 +281,28 @@ def managers(reverse):
     ]
 
 
+def bidi(disk_img, plain):
+    def dir(reverse):
+        return manage(plain, managers(reverse), 0, disk_img)
+
+    with dir(False) as (_, _, _, _, _, mount1):
+        with dir(True) as (_, _, _, _, _, mount2):
+            with dummy_file() as dummy:
+                file_test(mount1, dummy)
+                file_test(mount2, dummy)
+                visualize(plain)
+                multifile_test(mount1, dummy)
+                multifile_test(mount2, dummy)
+                visualize(plain)
+
+
 def main() -> int:
     with disk_image() as disk_img:
         with plain_dmcrypt(disk_img) as plain:
             cmd(["dd", "if=/dev/zero", f"of={plain}", f"bs=4M", "count=256"])
-            with manage(plain, managers(False), 0, disk_img) as mount1:
-                with manage(plain, managers(True), 0, disk_img) as mount2:
-                    with dummy_file() as dummy:
-                        file_test(mount1, dummy)
-                        file_test(mount2, dummy)
-                        visualize(plain)
-                        multifile_test(mount1, dummy)
-                        multifile_test(mount2, dummy)
-                        visualize(plain)
-                        print("Script completed.")
-                        return 0
+            bidi(disk_img, plain)
+            print("Script completed. Cleaning up.")
+            return 0
 
 
 if __name__ == "__main__":
