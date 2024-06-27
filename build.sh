@@ -55,6 +55,7 @@ add_binary /usr/bin/pvcreate
 add_binary /usr/bin/pvdisplay
 add_binary /usr/bin/pvremove
 add_binary /usr/bin/pvs
+add_binary /usr/bin/vgchange
 add_binary /usr/bin/vgcreate
 add_binary /usr/bin/vgremove
 add_binary /usr/lib/ossl-modules/legacy.so
