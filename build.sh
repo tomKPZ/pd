@@ -77,6 +77,6 @@ cp "$SCRIPT_DIR/init" "$ROOT"
 
 tree "$ROOT"
 SAVE_DIR="$(pwd)"
-(cd "$ROOT" && find . -print | cpio -ov | gzip -9 >"$SAVE_DIR/archive.cpio.gz")
+(cd "$ROOT" && find . -print0 | cpio --null -ov --format=newc | gzip -9 >"$SAVE_DIR/archive.cpio.gz")
 
 exit 0
