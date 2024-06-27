@@ -30,6 +30,10 @@ add_binary() {
 	add_file "$bin"
 	strip --strip-all "$ROOT/$bin"
 
+	find -L "$(dirname "$bin")" -samefile "$bin" -xtype l | while read -r link; do
+		ln -s "$(basename "$bin")" "$ROOT/$link"
+	done
+
 	dependencies=$( (ldd "$bin" 2>/dev/null || true) | awk '{ if ($3 ~ /^\//) print $3 }')
 	for dep in $dependencies; do
 		add_library "$dep"
@@ -49,21 +53,10 @@ add_binary /usr/bin/cryptsetup
 add_binary /usr/bin/dmsetup
 add_binary /usr/bin/kexec
 add_binary /usr/bin/kpartx
-add_binary /usr/bin/lvcreate
-add_binary /usr/bin/lvdisplay
-add_binary /usr/bin/lvextend
 add_binary /usr/bin/lvm
-add_binary /usr/bin/lvremove
-add_binary /usr/bin/lvs
 add_binary /usr/bin/mkfs.btrfs
 add_binary /usr/bin/mkfs.ext4
-add_binary /usr/bin/pvcreate
-add_binary /usr/bin/pvdisplay
-add_binary /usr/bin/pvremove
-add_binary /usr/bin/pvs
-add_binary /usr/bin/vgchange
-add_binary /usr/bin/vgcreate
-add_binary /usr/bin/vgremove
+add_binary /usr/bin/pdata_tools
 
 add_library /usr/lib/ossl-modules/legacy.so
 
