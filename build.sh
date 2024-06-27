@@ -58,5 +58,7 @@ touch "$ROOT/etc/lvm/lvm.conf"
 ldconfig -r "$ROOT"
 
 tree "$ROOT"
-find "$ROOT" -print0 | cpio --null -ov --format=newc | gzip -9 >initramfs.cpio.gz
+SAVE_DIR="$(pwd)"
+(cd "$ROOT" && find . -print | cpio -ov | gzip -9 >"$SAVE_DIR/archive.cpio.gz")
+
 exit 0
