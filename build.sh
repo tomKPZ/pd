@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 ROOT="$(mktemp -d)"
 
 cleanup() {
@@ -14,6 +16,7 @@ add_file() {
 	if [ ! -r "$ROOT/$FILE" ]; then
 		mkdir -p "$ROOT/$(dirname "$FILE")"
 		cp "$FILE" "$ROOT/$FILE"
+		# TODO: strip
 	fi
 }
 
@@ -56,6 +59,8 @@ mkdir "$ROOT/etc/lvm"
 touch "$ROOT/etc/lvm/lvm.conf"
 
 ldconfig -r "$ROOT"
+
+cp "$SCRIPT_DIR/init" "$ROOT"
 
 tree "$ROOT"
 SAVE_DIR="$(pwd)"
