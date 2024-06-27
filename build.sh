@@ -12,21 +12,27 @@ cleanup() {
 trap cleanup EXIT
 
 add_file() {
-	FILE="$1"
-	if [ ! -r "$ROOT/$FILE" ]; then
-		mkdir -p "$ROOT/$(dirname "$FILE")"
-		cp "$FILE" "$ROOT/$FILE"
-		# TODO: strip
+	local file="$1"
+	mkdir -p "$ROOT/$(dirname "$file")"
+	cp "$file" "$ROOT/$file"
+}
+
+add_library() {
+	local lib="$1"
+	if [ ! -r "$ROOT/$lib" ]; then
+		add_file "$lib"
+		strip --strip-unneeded "$ROOT/$lib"
 	fi
 }
 
 add_binary() {
-	BIN="$1"
-	add_file "$BIN"
+	local bin="$1"
+	add_file "$bin"
+	strip --strip-all "$ROOT/$bin"
 
-	dependencies=$( (ldd "$BIN" 2>/dev/null || true) | awk '{ if ($3 ~ /^\//) print $3 }')
+	dependencies=$( (ldd "$bin" 2>/dev/null || true) | awk '{ if ($3 ~ /^\//) print $3 }')
 	for dep in $dependencies; do
-		add_file "$dep"
+		add_library "$dep"
 	done
 }
 
@@ -58,7 +64,8 @@ add_binary /usr/bin/pvs
 add_binary /usr/bin/vgchange
 add_binary /usr/bin/vgcreate
 add_binary /usr/bin/vgremove
-add_binary /usr/lib/ossl-modules/legacy.so
+
+add_library /usr/lib/ossl-modules/legacy.so
 
 add_binary /usr/bin/busybox
 for applet in $(/usr/bin/busybox --list | grep -v busybox); do
@@ -79,5 +86,3 @@ cp "$SCRIPT_DIR/init" "$ROOT"
 tree "$ROOT"
 SAVE_DIR="$(pwd)"
 (cd "$ROOT" && find . -print0 | cpio --null -ov --format=newc | gzip -9 >"$SAVE_DIR/archive.cpio.gz")
-
-exit 0
