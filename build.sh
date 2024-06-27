@@ -39,11 +39,24 @@ ln -s "../run" "$ROOT/var/run"
 ln -s "lib" "$ROOT/usr/lib64"
 ln -s "usr/lib" "$ROOT/lib64"
 
-# add_binary /usr/bin/blkid
 add_binary /usr/bin/cryptsetup
 add_binary /usr/bin/dmsetup
 add_binary /usr/bin/kexec
+add_binary /usr/bin/kpartx
+add_binary /usr/bin/lvcreate
+add_binary /usr/bin/lvdisplay
+add_binary /usr/bin/lvextend
 add_binary /usr/bin/lvm
+add_binary /usr/bin/lvremove
+add_binary /usr/bin/lvs
+add_binary /usr/bin/mkfs.btrfs
+add_binary /usr/bin/mkfs.ext4
+add_binary /usr/bin/pvcreate
+add_binary /usr/bin/pvdisplay
+add_binary /usr/bin/pvremove
+add_binary /usr/bin/pvs
+add_binary /usr/bin/vgcreate
+add_binary /usr/bin/vgremove
 add_binary /usr/lib/ossl-modules/legacy.so
 
 add_binary /usr/bin/busybox
