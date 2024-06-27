@@ -49,6 +49,7 @@ ln -s "../run" "$ROOT/var/run"
 ln -s "lib" "$ROOT/usr/lib64"
 ln -s "usr/lib" "$ROOT/lib64"
 
+add_binary /usr/bin/argon2
 add_binary /usr/bin/cryptsetup
 add_binary /usr/bin/dmsetup
 add_binary /usr/bin/kexec
