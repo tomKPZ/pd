@@ -11,4 +11,4 @@ ln -sfT /proc/self/fd/1 /dev/stdout
 ln -sfT /proc/self/fd/2 /dev/stderr
 
 /bin/ash
-halt -f
+poweroff -f
