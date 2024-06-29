@@ -282,7 +282,7 @@ def file_test(mount_point, file_path):
 
 
 @contextlib.contextmanager
-def manage(device, managers, i, prev, acc=None):
+def manage(device, managers, prev, i=0, acc=None):
     if acc is None:
         acc = []
     if i == len(managers):
@@ -293,7 +293,7 @@ def manage(device, managers, i, prev, acc=None):
     with manager(prev) as managed:
         acc.append(managed)
         visualize(device)
-        with manage(device, managers, i + 1, managed, acc) as res:
+        with manage(device, managers, managed, i + 1, acc) as res:
             yield res
 
 
@@ -309,14 +309,13 @@ def managers(reverse):
 
 def bidi(disk_img, plain):
     def dir(reverse):
-        return manage(plain, managers(reverse), 0, disk_img)
+        return manage(plain, managers(reverse), disk_img)
 
     def remount(lv, mount):
         vg = os.path.basename(os.path.dirname(lv))
         cmd(["fstrim", mount, "-v"])
         cmd(["umount", mount])
         cmd(["vgchange", "-an", vg])
-        cmd(["sync"])
         cmd(["vgchange", "-ay", vg])
         cmd(["mount", lv, mount])
 
