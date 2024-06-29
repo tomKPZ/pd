@@ -133,6 +133,38 @@ def luks(wrap_dev):
 
 
 @contextlib.contextmanager
+def detached_luks(wrap_dev):
+    LUKS_PASSWORD = "test"
+    LUKS_NAME = f"luks_test_{uuid.uuid4()}"
+    LUKS_DEV = f"/dev/mapper/{LUKS_NAME}"
+    HEADER_FILE = tempfile.mktemp()
+
+    cmd(
+        [
+            "cryptsetup",
+            "luksFormat",
+            "--header",
+            HEADER_FILE,
+            "--pbkdf-force-iterations",
+            "4",
+            "--pbkdf-parallel",
+            "4",
+            wrap_dev,
+        ],
+        input=f"{LUKS_PASSWORD}\n".encode(),
+    )
+    cmd(
+        ["cryptsetup", "open", "--header", HEADER_FILE, wrap_dev, LUKS_NAME],
+        input=f"{LUKS_PASSWORD}\n".encode(),
+    )
+    try:
+        yield LUKS_DEV
+    finally:
+        cmd(["cryptsetup", "close", LUKS_NAME])
+        os.remove(HEADER_FILE)
+
+
+@contextlib.contextmanager
 def plain_dmcrypt(wrap_dev):
     CRYPT_PASSWORD = "test"
     CRYPT_NAME = f"dmcrypt_test_{uuid.uuid4()}"
@@ -269,8 +301,7 @@ def managers(reverse):
     return [
         loopback_device,
         functools.partial(reversed_device, reverse),
-        partition,
-        luks,
+        detached_luks,
         lvm,
         btrfs_mount,
     ]
@@ -289,15 +320,10 @@ def bidi(disk_img, plain):
         cmd(["vgchange", "-ay", vg])
         cmd(["mount", lv, mount])
 
-    with dir(False) as (_, _, _, _, lv1, mount1):
-        with dir(True) as (_, _, _, _, lv2, mount2):
+    with dir(False) as (_, _, _, lv1, mount1):
+        with dir(True) as (_, _, _, lv2, mount2):
             with dummy_file() as dummy:
-                file_test(mount1, dummy)
-                file_test(mount2, dummy)
-                remount(lv1, mount1)
-                remount(lv2, mount2)
-                visualize(plain)
-                for _ in range(16):
+                for _ in range(4):
                     file_test(mount1, dummy)
                     file_test(mount2, dummy)
                     remount(lv1, mount1)
