@@ -190,7 +190,7 @@ def lvm(wrap_dev):
     thinpool_dev = f"/dev/{vg_name}/{thinpool_name}"
     lv_dev = f"/dev/{vg_name}/{lv_name}"
 
-    dd(_if="/dev/zero", of=wrap_dev, bs="4m", count=1)
+    dd(_if="/dev/zero", of=wrap_dev, bs="4M", count=1)
     cmd(["pvcreate", wrap_dev])
     try:
         cmd(
@@ -372,15 +372,16 @@ def setup_device(device):
             with plain_dmcrypt(meta_dev, key_file) as meta_enc:
                 dd(_if="/dev/zero", of=meta_enc, bs="4M", check=False)
                 with device_view(meta_enc, 4 * 1024, META_SIZE - 8 * 1024) as meta_part:
-                    with btrfs_mount(meta_part) as btrfs:
+                    with btrfs_mount(meta_part) as btrfs_meta:
                         with device_view(
                             device, META_SIZE, DISK_SIZE - META_SIZE
                         ) as data_part:
                             with detached_luks(
-                                data_part, key_file, "64", f"{btrfs}/header.dat"
+                                data_part, key_file, "64", f"{btrfs_meta}/header.dat"
                             ) as data:
                                 with lvm(data) as lv:
-                                    print(lv)
+                                    with btrfs_mount(lv) as btrfs_data:
+                                        cmd(["mkdir", f"{btrfs_data}/boot"])
 
 
 def main() -> int:
