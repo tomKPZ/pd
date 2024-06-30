@@ -12,7 +12,7 @@ import uuid
 DISK_SIZE = 1024 * 1024 * 1024
 SWAP_SIZE_PE = 64 // 4
 PASSWORD = "test"
-META_SIZE = 128 * 1024 * 1024
+META_END = 128 * 1024 * 1024
 MOVE_PES = False
 DMSETUP_SECTOR_SIZE = 512
 
@@ -163,6 +163,30 @@ def detached_luks(wrap_dev, key_file, key_file_offset, header_file):
 
 
 @contextlib.contextmanager
+def integrity(wrap_dev):
+    integrity_name = f"integrity_test_{uuid.uuid4()}"
+    integrity_dev = f"/dev/mapper/{integrity_name}"
+
+    cmd(
+        [
+            "integritysetup",
+            "format",
+            "--integrity=sha512",
+            "--batch-mode",
+            "--integrity-no-journal",
+            "--sector-size=4096",
+            wrap_dev,
+        ]
+    )
+    cmd(["integritysetup", "open", wrap_dev, integrity_name])
+    try:
+        dd(_if="/dev/zero", of=integrity_dev, bs="4M", check=False)
+        yield integrity_dev
+    finally:
+        cmd(["integritysetup", "close", integrity_name])
+
+
+@contextlib.contextmanager
 def lvm(wrap_dev):
     lv_name = "test_lv"
     vg_name = f"system_{uuid.uuid4()}"
@@ -273,6 +297,30 @@ def lvm(wrap_dev):
 
 
 @contextlib.contextmanager
+def ext4_mount(wrap_dev):
+    mount_name = f"ext4_mount_{uuid.uuid4()}"
+    mount_point = f"/mnt/{mount_name}"
+
+    cmd(["mkfs.ext4", wrap_dev, "-E", "nodiscard"])
+    os.mkdir(mount_point)
+    try:
+        cmd(
+            [
+                "mount",
+                wrap_dev,
+                mount_point,
+                "-o,defaults,nodiscard",
+            ]
+        )
+        try:
+            yield mount_point
+        finally:
+            cmd(["umount", mount_point], check=False)
+    finally:
+        os.rmdir(mount_point)
+
+
+@contextlib.contextmanager
 def btrfs_mount(wrap_dev):
     mount_name = f"btrfs_mount_{uuid.uuid4()}"
     mount_point = f"/mnt/{mount_name}"
@@ -281,7 +329,7 @@ def btrfs_mount(wrap_dev):
         [
             "mkfs.btrfs",
             wrap_dev,
-            "--csum=sha256",
+            "--csum=xxhash",
             "--force",
             "--nodiscard",
         ]
@@ -293,7 +341,7 @@ def btrfs_mount(wrap_dev):
                 "mount",
                 wrap_dev,
                 mount_point,
-                "-o,defaults,ssd,nodiscard,compress=zstd:3",
+                "-o,defaults,relatime,lazytime,autodefrag,ssd,nodiscard,compress=zstd:3",
             ]
         )
         try:
@@ -340,16 +388,13 @@ def setup_device(device):
     assert len(key_bytes) == 128
     with temp_file() as key_file:
         dd(of=key_file, input=key_bytes)
-        with device_view(device, 8 * 1024, META_SIZE) as meta_dev:
+        with device_view(device, 8 * 1024, META_END) as meta_dev:
             with plain_dmcrypt(meta_dev, key_file) as meta_enc:
-                dd(_if="/dev/zero", of=meta_enc, bs="4M", check=False)
-                with device_view(meta_enc, 4 * 1024, META_SIZE - 8 * 1024) as meta_part:
-                    with btrfs_mount(meta_part) as btrfs_meta:
-                        with device_view(
-                            device, META_SIZE, DISK_SIZE - META_SIZE
-                        ) as data_part:
+                with integrity(meta_enc) as meta_part:
+                    with ext4_mount(meta_part) as ext4_meta:
+                        with device_view(device, META_END, DISK_SIZE) as data_part:
                             with detached_luks(
-                                data_part, key_file, "64", f"{btrfs_meta}/header.dat"
+                                data_part, key_file, "64", f"{ext4_meta}/header.dat"
                             ) as data:
                                 with lvm(data) as lv:
                                     with btrfs_mount(lv) as btrfs_data:
