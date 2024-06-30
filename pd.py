@@ -213,8 +213,8 @@ def lvm(wrap_dev):
                     "-n",
                 ]
             )
-            thin_pes = (math.ceil(float(thin_size_str)) + 3) // 4
-            thin_size_m = 4 * thin_pes
+            thin_meta_pe = (math.ceil(float(thin_size_str)) + 3) // 4
+            thin_meta_m = 4 * thin_meta_pe
             cmd(
                 [
                     "lvcreate",
@@ -225,62 +225,29 @@ def lvm(wrap_dev):
                     "--chunksize",
                     "64k",
                     "--poolmetadatasize",
-                    f"{thin_size_m}m",
+                    f"{thin_meta_m}m",
                     "--size",
                     "4m",
                     vg_name,
                 ]
             )
             try:
-                #  --- Physical Segments ---
-                # Physical extent 0 to 1:
-                #   Logical volume	/dev/system_bfc74b80-a671-402e-b4a0-30f09c16cd66/lvol0_pmspare
-                #   Logical extents	0 to 1
-                # Physical extent 2 to 2:
-                #   Logical volume	/dev/system_bfc74b80-a671-402e-b4a0-30f09c16cd66/thinpool_tdata
-                #   Logical extents	0 to 0
-                # Physical extent 3 to 4:
-                #   Logical volume	/dev/system_bfc74b80-a671-402e-b4a0-30f09c16cd66/thinpool_tmeta
-                #   Logical extents	0 to 1
-                # Physical extent 5 to 190:
-                #   Logical volume	/dev/system_bfc74b80-a671-402e-b4a0-30f09c16cd66/thinpool_tdata
-                #   Logical extents	1 to 186
-                cmd(
-                    [
-                        "pvmove",
-                        "--alloc",
-                        "anywhere",
-                        f"{wrap_dev}:3-4",
-                        f"{wrap_dev}:5-6",
-                    ]
-                )
-                cmd(
-                    [
-                        "pvmove",
-                        "--alloc",
-                        "anywhere",
-                        f"{wrap_dev}:2",
-                        f"{wrap_dev}:7",
-                    ]
-                )
-                cmd(
-                    [
-                        "pvmove",
-                        "--alloc",
-                        "anywhere",
-                        f"{wrap_dev}:5-6",
-                        f"{wrap_dev}:2-3",
-                    ]
-                )
-                cmd(
-                    [
-                        "pvmove",
-                        "--alloc",
-                        "anywhere",
-                        f"{wrap_dev}:7",
-                        f"{wrap_dev}:4",
-                    ]
-                )
+
+                def move(src, dst, size):
+                    cmd(
+                        [
+                            "pvmove",
+                            "--alloc",
+                            "anywhere",
+                            f"{wrap_dev}:{src}-{src + size - 1}",
+                            f"{wrap_dev}:{dst}-{dst + size - 1}",
+                        ]
+                    )
+
+                move(thin_meta_pe + 1, 2 * thin_meta_pe + 1, thin_meta_pe)
+                move(thin_meta_pe, 3 * thin_meta_pe + 1, 1)
+                move(2 * thin_meta_pe + 1, thin_meta_pe, thin_meta_pe)
+                move(3 * thin_meta_pe + 1, 2 * thin_meta_pe, 1)
                 cmd(["lvextend", "-l+100%FREE", vg_name])
                 POOL_SIZE = cmd_output(
                     [
