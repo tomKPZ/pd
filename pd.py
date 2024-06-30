@@ -367,18 +367,14 @@ def setup_device(device):
         "argon2",
         salt512,
         "-id",
-        "-t",
-        "3",
-        "-m",
-        "12",
-        "-p",
-        "1",
-        "-l",
-        "128",
-        "-v",
-        "13",
+        "-t=3",
+        "-m=12",
+        "-p=1",
+        "-l=128",
+        "-v=13",
         "-r",
     ]
+    argon_cmd = [p for arg in argon_cmd for p in arg.split("=")]
     key_hex = (
         cmd(argon_cmd, input=PASSWORD.encode(), stdout=subprocess.PIPE)
         .stdout.decode()
