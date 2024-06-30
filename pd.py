@@ -77,6 +77,27 @@ def temp_file():
 
 
 @contextlib.contextmanager
+def device_view(wrap_dev, start, end):
+    sector_size = int(cmd_output(["blockdev", "--getss", wrap_dev]))
+    start_sector, start_rem = divmod(start, sector_size)
+    end_sector, end_rem = divmod(end, sector_size)
+    assert start_rem == 0 and end_rem == 0
+
+    device_name = f"view_{uuid.uuid4()}"
+    device_path = f"/dev/mapper/{device_name}"
+
+    dmsetup_input = f"0 {end_sector-start_sector} linear {wrap_dev} {start_sector}"
+    cmd(
+        ["dmsetup", "create", os.path.basename(device_path)],
+        input=dmsetup_input.encode(),
+    )
+    try:
+        yield device_path
+    finally:
+        cmd(["dmsetup", "remove", device_path])
+
+
+@contextlib.contextmanager
 def plain_dmcrypt(wrap_dev, key_file):
     crypt_name = f"dmcrypt_test_{uuid.uuid4()}"
     crypt_dev = f"/dev/mapper/{crypt_name}"
@@ -139,8 +160,9 @@ def setup_device(device):
     assert len(key_bytes) == 128
     with temp_file() as key_file:
         dd(of=key_file, input=key_bytes)
-        print(key_file)
-        cmd(["hexdump", "-C", key_file])
+        with device_view(device, 8 * 1024, 32 * 1024 * 1024) as meta_dev:
+            with plain_dmcrypt(meta_dev, key_file) as meta_enc:
+                dd(_if="/dev/zero", of=meta_enc, bs="4M", check=False)
 
 
 def main() -> int:
