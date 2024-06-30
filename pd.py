@@ -134,6 +134,7 @@ def detached_luks(wrap_dev, key_file, key_file_offset, header_file):
         [
             "cryptsetup",
             "luksFormat",
+            "--batch-mode",
             "--hash",
             "sha512",
             "--cipher",
