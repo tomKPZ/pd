@@ -186,43 +186,57 @@ def lvm(wrap_dev):
     lv_dev = f"/dev/{vg_name}/{lv_name}"
 
     cmd(["pvcreate", wrap_dev])
-    cmd(["vgcreate", vg_name, wrap_dev])
-    POOLMETASIZE = "32M"
-    cmd(
-        [
-            "lvcreate",
-            "--type",
-            "thin-pool",
-            "--thinpool",
-            thinpool_name,
-            "--poolmetadatasize",
-            POOLMETASIZE,
-            "-L",
-            "4M",
-            vg_name,
-        ]
-    )
-    cmd(["lvextend", "-l+100%FREE", vg_name])
-    POOL_SIZE = cmd_output(
-        ["lvs", "--units", "m", "--noheadings", "-o", "lv_size", thinpool_dev]
-    ).split()[0]
-    cmd(
-        [
-            "lvcreate",
-            "--thin",
-            thinpool_dev,
-            "--name",
-            lv_name,
-            "--virtualsize",
-            POOL_SIZE,
-        ]
-    )
     try:
-        yield lv_dev
+        cmd(["vgcreate", vg_name, wrap_dev])
+        try:
+            POOLMETASIZE = "32M"
+            cmd(
+                [
+                    "lvcreate",
+                    "--type",
+                    "thin-pool",
+                    "--thinpool",
+                    thinpool_name,
+                    "--poolmetadatasize",
+                    POOLMETASIZE,
+                    "-L",
+                    "4M",
+                    vg_name,
+                ]
+            )
+            try:
+                cmd(["lvextend", "-l+100%FREE", vg_name])
+                POOL_SIZE = cmd_output(
+                    [
+                        "lvs",
+                        "--units",
+                        "m",
+                        "--noheadings",
+                        "-o",
+                        "lv_size",
+                        thinpool_dev,
+                    ]
+                ).split()[0]
+                cmd(
+                    [
+                        "lvcreate",
+                        "--thin",
+                        thinpool_dev,
+                        "--name",
+                        lv_name,
+                        "--virtualsize",
+                        POOL_SIZE,
+                    ]
+                )
+                try:
+                    yield lv_dev
+                finally:
+                    cmd(["lvremove", "-f", lv_dev], check=False)
+            finally:
+                cmd(["lvremove", "-f", thinpool_dev], check=False)
+        finally:
+            cmd(["vgremove", "-f", vg_name], check=False)
     finally:
-        cmd(["lvremove", "-f", lv_dev], check=False)
-        cmd(["lvremove", "-f", thinpool_dev], check=False)
-        cmd(["vgremove", "-f", vg_name], check=False)
         cmd(["pvremove", "-f", wrap_dev], check=False)
 
 
