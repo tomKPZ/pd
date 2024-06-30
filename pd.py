@@ -2,6 +2,7 @@
 
 import base64
 import contextlib
+import math
 import os
 import subprocess
 import sys
@@ -197,7 +198,23 @@ def lvm(wrap_dev):
             ]
         )
         try:
-            POOLMETASIZE = "32m"
+            thin_size_str = cmd_output(
+                [
+                    "thin_metadata_size",
+                    "--block-size",
+                    "64k",
+                    # TODO: set this
+                    "--pool-size",
+                    "1g",
+                    "--max-thins",
+                    "1024",
+                    "-u",
+                    "m",
+                    "-n",
+                ]
+            )
+            thin_pes = (math.ceil(float(thin_size_str)) + 3) // 4
+            thin_size_m = 4 * thin_pes
             cmd(
                 [
                     "lvcreate",
@@ -208,7 +225,7 @@ def lvm(wrap_dev):
                     "--chunksize",
                     "64k",
                     "--poolmetadatasize",
-                    POOLMETASIZE,
+                    f"{thin_size_m}m",
                     "--size",
                     "4m",
                     vg_name,
@@ -239,6 +256,7 @@ def lvm(wrap_dev):
                     ]
                 )
                 try:
+                    cmd(["pvdisplay", "-v", "-m"])
                     yield lv_dev
                 finally:
                     cmd(["lvremove", "-f", lv_dev], check=False)
