@@ -10,6 +10,7 @@ import uuid
 
 DISK_SIZE = "1G"
 PASSWORD = "test"
+META_SIZE = 128 * 1024 * 1024
 
 
 def cmd(*args, check=True, **kwargs):
@@ -21,7 +22,7 @@ def cmd_output(*args, **kwargs):
 
 
 def dd(**kwargs):
-    OPS = {
+    DD_OPS = {
         "bs",
         "cbs",
         "conv",
@@ -40,7 +41,7 @@ def dd(**kwargs):
     forward_kwargs = {}
     for k, v in kwargs.items():
         k = k.lstrip("_")
-        if k in OPS:
+        if k in DD_OPS:
             dd_cmd.append(f"{k}={v}")
         else:
             forward_kwargs[k] = v
@@ -78,9 +79,9 @@ def temp_file():
 
 @contextlib.contextmanager
 def device_view(wrap_dev, start, end):
-    sector_size = int(cmd_output(["blockdev", "--getss", wrap_dev]))
-    start_sector, start_rem = divmod(start, sector_size)
-    end_sector, end_rem = divmod(end, sector_size)
+    DMSETUP_SECTOR_SIZE = 512
+    start_sector, start_rem = divmod(start, DMSETUP_SECTOR_SIZE)
+    end_sector, end_rem = divmod(end, DMSETUP_SECTOR_SIZE)
     assert start_rem == 0 and end_rem == 0
 
     device_name = f"view_{uuid.uuid4()}"
@@ -124,6 +125,31 @@ def plain_dmcrypt(wrap_dev, key_file):
         cmd(["cryptsetup", "close", crypt_name])
 
 
+@contextlib.contextmanager
+def btrfs_mount(wrap_dev):
+    MOUNT_NAME = f"btrfs_mount_{uuid.uuid4()}"
+    MOUNT_POINT = f"/mnt/{MOUNT_NAME}"
+
+    cmd(["mkfs.btrfs", wrap_dev, "--csum=sha256", "--force", "--nodiscard"])
+    os.mkdir(MOUNT_POINT)
+    try:
+        cmd(
+            [
+                "mount",
+                wrap_dev,
+                MOUNT_POINT,
+                "-o",
+                "defaults,ssd,nodiscard,compress=zstd:3",
+            ]
+        )
+        try:
+            yield MOUNT_POINT
+        finally:
+            cmd(["umount", MOUNT_POINT], check=False)
+    finally:
+        os.rmdir(MOUNT_POINT)
+
+
 def setup_device(device):
     with temp_file() as key_file:
         dd(_if="/dev/urandom", of=key_file, bs=64, count=1)
@@ -160,9 +186,14 @@ def setup_device(device):
     assert len(key_bytes) == 128
     with temp_file() as key_file:
         dd(of=key_file, input=key_bytes)
-        with device_view(device, 8 * 1024, 32 * 1024 * 1024) as meta_dev:
+        with device_view(device, 8 * 1024, META_SIZE) as meta_dev:
             with plain_dmcrypt(meta_dev, key_file) as meta_enc:
                 dd(_if="/dev/zero", of=meta_enc, bs="4M", check=False)
+                with device_view(meta_enc, 4 * 1024, META_SIZE - 8 * 1024) as meta_part:
+                    with btrfs_mount(meta_part) as btrfs:
+                        print(btrfs)
+                        dd(_if="/dev/urandom", of=f"{btrfs}/rand.txt", check=False)
+                        pass
 
 
 def main() -> int:
