@@ -10,6 +10,7 @@ import tempfile
 import uuid
 
 DISK_SIZE = 1024 * 1024 * 1024
+SWAP_SIZE_PE = 64 // 4
 PASSWORD = "test"
 META_SIZE = 128 * 1024 * 1024
 
@@ -182,6 +183,8 @@ def detached_luks(wrap_dev, key_file, key_file_offset, header_file):
 def lvm(wrap_dev):
     lv_name = "test_lv"
     vg_name = f"system_{uuid.uuid4()}"
+    swap_name = "swap"
+    swap_dev = f"/dev/{vg_name}/{swap_name}"
     thinpool_name = "thinpool"
     thinpool_dev = f"/dev/{vg_name}/{thinpool_name}"
     lv_dev = f"/dev/{vg_name}/{lv_name}"
@@ -198,86 +201,101 @@ def lvm(wrap_dev):
             ]
         )
         try:
-            thin_size_str = cmd_output(
-                [
-                    "thin_metadata_size",
-                    "--block-size",
-                    "64k",
-                    # TODO: set this
-                    "--pool-size",
-                    "1g",
-                    "--max-thins",
-                    "1024",
-                    "-u",
-                    "m",
-                    "-n",
-                ]
-            )
-            thin_meta_pe = (math.ceil(float(thin_size_str)) + 3) // 4
-            thin_meta_m = 4 * thin_meta_pe
             cmd(
                 [
                     "lvcreate",
                     "--type",
-                    "thin-pool",
-                    "--thinpool",
-                    thinpool_name,
-                    "--chunksize",
-                    "64k",
-                    "--poolmetadatasize",
-                    f"{thin_meta_m}m",
+                    "linear",
                     "--size",
-                    "4m",
+                    f"{4 * SWAP_SIZE_PE}m",
+                    "--name",
+                    swap_name,
                     vg_name,
                 ]
             )
             try:
-
-                def move(src, dst, size):
-                    cmd(
-                        [
-                            "pvmove",
-                            "--alloc",
-                            "anywhere",
-                            f"{wrap_dev}:{src}-{src + size - 1}",
-                            f"{wrap_dev}:{dst}-{dst + size - 1}",
-                        ]
-                    )
-
-                move(thin_meta_pe + 1, 2 * thin_meta_pe + 1, thin_meta_pe)
-                move(thin_meta_pe, 3 * thin_meta_pe + 1, 1)
-                move(2 * thin_meta_pe + 1, thin_meta_pe, thin_meta_pe)
-                move(3 * thin_meta_pe + 1, 2 * thin_meta_pe, 1)
-                cmd(["lvextend", "-l+100%FREE", vg_name])
-                POOL_SIZE = cmd_output(
+                thin_size_str = cmd_output(
                     [
-                        "lvs",
-                        "--units",
+                        "thin_metadata_size",
+                        "--block-size",
+                        "64k",
+                        # TODO: set this
+                        "--pool-size",
+                        "1g",
+                        "--max-thins",
+                        "1024",
+                        "-u",
                         "m",
-                        "--noheadings",
-                        "-o",
-                        "lv_size",
-                        thinpool_dev,
+                        "-n",
                     ]
-                ).split()[0]
+                )
+                thin_meta_pe = (math.ceil(float(thin_size_str)) + 3) // 4
+                thin_meta_m = 4 * thin_meta_pe
                 cmd(
                     [
                         "lvcreate",
-                        "--thin",
-                        thinpool_dev,
-                        "--name",
-                        lv_name,
-                        "--virtualsize",
-                        POOL_SIZE,
+                        "--type",
+                        "thin-pool",
+                        "--thinpool",
+                        thinpool_name,
+                        "--chunksize",
+                        "64k",
+                        "--poolmetadatasize",
+                        f"{thin_meta_m}m",
+                        "--size",
+                        "4m",
+                        vg_name,
                     ]
                 )
                 try:
-                    cmd(["pvdisplay", "-v", "-m"])
-                    yield lv_dev
+
+                    def move(src, dst, size):
+                        cmd(
+                            [
+                                "pvmove",
+                                "--alloc",
+                                "anywhere",
+                                f"{wrap_dev}:{SWAP_SIZE_PE + src}-{SWAP_SIZE_PE + src + size - 1}",
+                                f"{wrap_dev}:{SWAP_SIZE_PE + dst}-{SWAP_SIZE_PE + dst + size - 1}",
+                            ]
+                        )
+
+                    move(thin_meta_pe + 1, 2 * thin_meta_pe + 1, thin_meta_pe)
+                    move(thin_meta_pe, 3 * thin_meta_pe + 1, 1)
+                    move(2 * thin_meta_pe + 1, thin_meta_pe, thin_meta_pe)
+                    move(3 * thin_meta_pe + 1, 2 * thin_meta_pe, 1)
+                    cmd(["lvextend", "-l+100%FREE", thinpool_dev])
+                    POOL_SIZE = cmd_output(
+                        [
+                            "lvs",
+                            "--units",
+                            "m",
+                            "--noheadings",
+                            "-o",
+                            "lv_size",
+                            thinpool_dev,
+                        ]
+                    ).split()[0]
+                    cmd(
+                        [
+                            "lvcreate",
+                            "--thin",
+                            thinpool_dev,
+                            "--name",
+                            lv_name,
+                            "--virtualsize",
+                            POOL_SIZE,
+                        ]
+                    )
+                    try:
+                        cmd(["pvdisplay", "-v", "-m"])
+                        yield lv_dev
+                    finally:
+                        cmd(["lvremove", "-f", lv_dev], check=False)
                 finally:
-                    cmd(["lvremove", "-f", lv_dev], check=False)
+                    cmd(["lvremove", "-f", thinpool_dev], check=False)
             finally:
-                cmd(["lvremove", "-f", thinpool_dev], check=False)
+                cmd(["lvremove", "-f", swap_dev], check=False)
         finally:
             cmd(["vgremove", "-f", vg_name], check=False)
     finally:
