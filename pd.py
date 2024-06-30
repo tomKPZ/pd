@@ -20,21 +20,39 @@ def cmd_output(*args, **kwargs):
     return cmd(*args, stdout=subprocess.PIPE, **kwargs).stdout.decode().strip()
 
 
+def dd(**kwargs):
+    OPS = {
+        "bs",
+        "cbs",
+        "conv",
+        "count",
+        "ibs",
+        "if",
+        "iflag",
+        "obs",
+        "of",
+        "oflag",
+        "seek",
+        "skip",
+        "status",
+    }
+    dd_cmd = ["dd"]
+    forward_kwargs = {}
+    for k, v in kwargs.items():
+        k = k.lstrip("_")
+        if k in OPS:
+            dd_cmd.append(f"{k}={v}")
+        else:
+            forward_kwargs[k] = v
+    return cmd(dd_cmd, **forward_kwargs)
+
+
 @contextlib.contextmanager
 def disk_image():
 
     disk_img = tempfile.mktemp(suffix=".img")
     try:
-        cmd(
-            [
-                "dd",
-                "if=/dev/zero",
-                f"of={disk_img}",
-                f"bs={DISK_SIZE}",
-                "count=1",
-                "status=progress",
-            ]
-        )
+        dd(_if="/dev/zero", of=disk_img, bs=DISK_SIZE, count=1, status="progress")
         yield disk_img
     finally:
         os.remove(disk_img)
@@ -87,19 +105,14 @@ def plain_dmcrypt(wrap_dev, key_file):
 
 def setup_device(device):
     with temp_file() as key_file:
-        cmd(["dd", "if=/dev/urandom", f"of={key_file}", f"bs=64", "count=1"])
+        dd(_if="/dev/urandom", of=key_file, bs=64, count=1)
         with open(key_file, mode="rb") as key:
             shred_key = base64.encodebytes(key.read()).decode()
             print("Using shredding key", shred_key.replace("\n", ""))
         with plain_dmcrypt(device, key_file) as plain:
-            cmd(
-                ["dd", "if=/dev/zero", f"of={plain}", "bs=4M", "status=progress"],
-                check=False,
-            )
-    cmd(["dd", "if=/dev/zero", f"of={device}", "bs=4K", "count=1"])
-    salt4k = cmd(
-        ["dd", f"if={device}", "bs=4K", "skip=1", "count=1"], stdout=subprocess.PIPE
-    ).stdout
+            dd(_if="/dev/zero", of=plain, bs="4M", status="progress", check=False)
+    dd(_if="/dev/zero", of=device, bs="4K", count=1)
+    salt4k = dd(_if=device, bs="4K", skip=1, count=1, stdout=subprocess.PIPE).stdout
     salt512 = cmd_output(["sha512sum"], input=salt4k).split()[0]
     argon_cmd = [
         "argon2",
@@ -125,7 +138,7 @@ def setup_device(device):
     key_bytes = bytes.fromhex(key_hex)
     assert len(key_bytes) == 128
     with temp_file() as key_file:
-        cmd(["dd", f"of={key_file}"], input=key_bytes)
+        dd(of=key_file, input=key_bytes)
         print(key_file)
         cmd(["hexdump", "-C", key_file])
 
