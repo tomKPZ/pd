@@ -108,16 +108,11 @@ def plain_dmcrypt(wrap_dev, key_file):
     cryptsetup_cmd = [
         "cryptsetup",
         "open",
-        "--type",
-        "plain",
-        "--cipher",
-        "aes-xts-plain64",
-        "--key-size",
-        "512",
-        "--key-file",
-        key_file,
-        "--sector-size",
-        "4096",
+        "--type=plain",
+        "--cipher=aes-xts-plain64",
+        "--key-size=512",
+        f"--key-file={key_file}",
+        "--sector-size=4096",
         wrap_dev,
         crypt_name,
     ]
@@ -138,25 +133,15 @@ def detached_luks(wrap_dev, key_file, key_file_offset, header_file):
             "cryptsetup",
             "luksFormat",
             "--batch-mode",
-            "--hash",
-            "sha512",
-            "--cipher",
-            "aes-xts-plain64",
-            "--key-size",
-            "512",
-            "--sector-size",
-            "4096",
-            "--key-file",
-            key_file,
-            "--keyfile-offset",
-            key_file_offset,
-            "--header",
-            header_file,
+            "--hash=sha512",
+            "--cipher=aes-xts-plain64",
+            "--key-size=512",
+            "--sector-size=4096",
+            f"--key-file={key_file}",
+            f"--keyfile-offset={key_file_offset}",
+            f"--header={header_file}",
             # Remove this for real impl
-            "--pbkdf-force-iterations",
-            "4",
-            "--pbkdf-parallel",
-            "4",
+            "--pbkdf-force-iterations=4",
             wrap_dev,
         ],
     )
@@ -164,12 +149,9 @@ def detached_luks(wrap_dev, key_file, key_file_offset, header_file):
         [
             "cryptsetup",
             "open",
-            "--key-file",
-            key_file,
-            "--keyfile-offset",
-            key_file_offset,
-            "--header",
-            header_file,
+            f"--key-file={key_file}",
+            f"--keyfile-offset={key_file_offset}",
+            f"--header={header_file}",
             wrap_dev,
             luks_name,
         ],
@@ -196,8 +178,7 @@ def lvm(wrap_dev):
         cmd(
             [
                 "vgcreate",
-                "--physicalextentsize",
-                "4m",
+                "--physicalextentsize=4m",
                 vg_name,
                 wrap_dev,
             ]
@@ -206,12 +187,9 @@ def lvm(wrap_dev):
             cmd(
                 [
                     "lvcreate",
-                    "--type",
-                    "linear",
-                    "--size",
-                    f"{4 * SWAP_SIZE_PE}m",
-                    "--name",
-                    swap_name,
+                    "--type=linear",
+                    f"--size={4 * SWAP_SIZE_PE}m",
+                    f"--name={swap_name}",
                     vg_name,
                 ]
             )
@@ -221,14 +199,10 @@ def lvm(wrap_dev):
                 thin_size_str = cmd_output(
                     [
                         "thin_metadata_size",
-                        "--block-size",
-                        "64k",
-                        "--pool-size",
-                        f"{DISK_SIZE}b",
-                        "--max-thins",
-                        "1024",
-                        "-u",
-                        "m",
+                        "--block-size=64k",
+                        f"--pool-size={DISK_SIZE}b",
+                        "--max-thins=1024",
+                        "-u=m",
                         "-n",
                     ]
                 )
@@ -237,16 +211,11 @@ def lvm(wrap_dev):
                 cmd(
                     [
                         "lvcreate",
-                        "--type",
-                        "thin-pool",
-                        "--thinpool",
-                        thinpool_name,
-                        "--chunksize",
-                        "64k",
-                        "--poolmetadatasize",
-                        f"{thin_meta_m}m",
-                        "--size",
-                        "4m",
+                        "--type=thin-pool",
+                        f"--thinpool={thinpool_name}",
+                        "--chunksize=64k",
+                        f"--poolmetadatasize={thin_meta_m}m",
+                        "--size=4m",
                         vg_name,
                     ]
                 )
@@ -258,8 +227,7 @@ def lvm(wrap_dev):
                         cmd(
                             [
                                 "pvmove",
-                                "--alloc",
-                                "anywhere",
+                                "--alloc=anywhere",
                                 f"{wrap_dev}:{SWAP_SIZE_PE + src}-{SWAP_SIZE_PE + src + size - 1}",
                                 f"{wrap_dev}:{SWAP_SIZE_PE + dst}-{SWAP_SIZE_PE + dst + size - 1}",
                             ]
@@ -273,8 +241,7 @@ def lvm(wrap_dev):
                     pool_size = cmd_output(
                         [
                             "lvs",
-                            "--units",
-                            "m",
+                            "--units=m",
                             "--noheadings",
                             "-o",
                             "lv_size",
@@ -285,11 +252,9 @@ def lvm(wrap_dev):
                         [
                             "lvcreate",
                             "--thin",
+                            f"--name={lv_name}",
+                            f"--virtualsize={pool_size}",
                             thinpool_dev,
-                            "--name",
-                            lv_name,
-                            "--virtualsize",
-                            pool_size,
                         ]
                     )
                     try:
@@ -312,7 +277,15 @@ def btrfs_mount(wrap_dev):
     mount_name = f"btrfs_mount_{uuid.uuid4()}"
     mount_point = f"/mnt/{mount_name}"
 
-    cmd(["mkfs.btrfs", wrap_dev, "--csum=sha256", "--force", "--nodiscard"])
+    cmd(
+        [
+            "mkfs.btrfs",
+            wrap_dev,
+            "--csum=sha256",
+            "--force",
+            "--nodiscard",
+        ]
+    )
     os.mkdir(mount_point)
     try:
         cmd(
@@ -320,8 +293,7 @@ def btrfs_mount(wrap_dev):
                 "mount",
                 wrap_dev,
                 mount_point,
-                "-o",
-                "defaults,ssd,nodiscard,compress=zstd:3",
+                "-o,defaults,ssd,nodiscard,compress=zstd:3",
             ]
         )
         try:
@@ -355,9 +327,9 @@ def setup_device(device):
         "1",
         "-l",
         "128",
-        "-r",
         "-v",
         "13",
+        "-r",
     ]
     key_hex = (
         cmd(argon_cmd, input=PASSWORD.encode(), stdout=subprocess.PIPE)
