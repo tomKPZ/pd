@@ -8,7 +8,7 @@ import sys
 import tempfile
 import uuid
 
-DISK_SIZE = "1G"
+DISK_SIZE = 1024 * 1024 * 1024
 PASSWORD = "test"
 META_SIZE = 128 * 1024 * 1024
 
@@ -126,6 +126,57 @@ def plain_dmcrypt(wrap_dev, key_file):
 
 
 @contextlib.contextmanager
+def detached_luks(wrap_dev, key_file, key_file_offset, header_file):
+    luks_name = f"luks_test_{uuid.uuid4()}"
+    luks_dev = f"/dev/mapper/{luks_name}"
+
+    cmd(
+        [
+            "cryptsetup",
+            "luksFormat",
+            "--hash",
+            "sha512",
+            "--cipher",
+            "aes-xts-plain64",
+            "--key-size",
+            "512",
+            "--sector-size",
+            "4096",
+            "--key-file",
+            key_file,
+            "--keyfile-offset",
+            key_file_offset,
+            "--header",
+            header_file,
+            # Remove this for real impl
+            "--pbkdf-force-iterations",
+            "4",
+            "--pbkdf-parallel",
+            "4",
+            wrap_dev,
+        ],
+    )
+    cmd(
+        [
+            "cryptsetup",
+            "open",
+            "--key-file",
+            key_file,
+            "--keyfile-offset",
+            key_file_offset,
+            "--header",
+            header_file,
+            wrap_dev,
+            luks_name,
+        ],
+    )
+    try:
+        yield luks_dev
+    finally:
+        cmd(["cryptsetup", "close", luks_name])
+
+
+@contextlib.contextmanager
 def btrfs_mount(wrap_dev):
     MOUNT_NAME = f"btrfs_mount_{uuid.uuid4()}"
     MOUNT_POINT = f"/mnt/{MOUNT_NAME}"
@@ -191,9 +242,14 @@ def setup_device(device):
                 dd(_if="/dev/zero", of=meta_enc, bs="4M", check=False)
                 with device_view(meta_enc, 4 * 1024, META_SIZE - 8 * 1024) as meta_part:
                     with btrfs_mount(meta_part) as btrfs:
-                        print(btrfs)
-                        dd(_if="/dev/urandom", of=f"{btrfs}/rand.txt", check=False)
-                        pass
+                        with device_view(
+                            device, META_SIZE, DISK_SIZE - META_SIZE
+                        ) as data_part:
+                            with detached_luks(
+                                data_part, key_file, "64", f"{btrfs}/header.dat"
+                            ) as data:
+                                cmd(["strings", "-n", "20", f"{btrfs}/header.dat"])
+                                print(data)
 
 
 def main() -> int:
