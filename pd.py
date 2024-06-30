@@ -14,6 +14,7 @@ SWAP_SIZE_PE = 64 // 4
 PASSWORD = "test"
 META_SIZE = 128 * 1024 * 1024
 MOVE_PES = False
+DMSETUP_SECTOR_SIZE = 512
 
 
 def cmd(*args, check=True, **kwargs):
@@ -82,7 +83,6 @@ def temp_file():
 
 @contextlib.contextmanager
 def device_view(wrap_dev, start, end):
-    DMSETUP_SECTOR_SIZE = 512
     start_sector, start_rem = divmod(start, DMSETUP_SECTOR_SIZE)
     end_sector, end_rem = divmod(end, DMSETUP_SECTOR_SIZE)
     assert start_rem == 0 and end_rem == 0
@@ -270,7 +270,7 @@ def lvm(wrap_dev):
                     move(2 * thin_meta_pe + 1, thin_meta_pe, thin_meta_pe)
                     move(3 * thin_meta_pe + 1, 2 * thin_meta_pe, 1)
                     cmd(["lvextend", "-l+100%FREE", thinpool_dev])
-                    POOL_SIZE = cmd_output(
+                    pool_size = cmd_output(
                         [
                             "lvs",
                             "--units",
@@ -289,7 +289,7 @@ def lvm(wrap_dev):
                             "--name",
                             lv_name,
                             "--virtualsize",
-                            POOL_SIZE,
+                            pool_size,
                         ]
                     )
                     try:
@@ -309,27 +309,27 @@ def lvm(wrap_dev):
 
 @contextlib.contextmanager
 def btrfs_mount(wrap_dev):
-    MOUNT_NAME = f"btrfs_mount_{uuid.uuid4()}"
-    MOUNT_POINT = f"/mnt/{MOUNT_NAME}"
+    mount_name = f"btrfs_mount_{uuid.uuid4()}"
+    mount_point = f"/mnt/{mount_name}"
 
     cmd(["mkfs.btrfs", wrap_dev, "--csum=sha256", "--force", "--nodiscard"])
-    os.mkdir(MOUNT_POINT)
+    os.mkdir(mount_point)
     try:
         cmd(
             [
                 "mount",
                 wrap_dev,
-                MOUNT_POINT,
+                mount_point,
                 "-o",
                 "defaults,ssd,nodiscard,compress=zstd:3",
             ]
         )
         try:
-            yield MOUNT_POINT
+            yield mount_point
         finally:
-            cmd(["umount", MOUNT_POINT], check=False)
+            cmd(["umount", mount_point], check=False)
     finally:
-        os.rmdir(MOUNT_POINT)
+        os.rmdir(mount_point)
 
 
 def setup_device(device):
