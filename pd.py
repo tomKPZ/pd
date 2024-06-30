@@ -13,6 +13,7 @@ DISK_SIZE = 1024 * 1024 * 1024
 SWAP_SIZE_PE = 64 // 4
 PASSWORD = "test"
 META_SIZE = 128 * 1024 * 1024
+MOVE_PES = False
 
 
 def cmd(*args, check=True, **kwargs):
@@ -214,6 +215,8 @@ def lvm(wrap_dev):
                 ]
             )
             try:
+                dd(_if="/dev/zero", of=swap_dev, bs="4M", check=False)
+                cmd(["mkswap", swap_dev])
                 thin_size_str = cmd_output(
                     [
                         "thin_metadata_size",
@@ -250,6 +253,8 @@ def lvm(wrap_dev):
                 try:
 
                     def move(src, dst, size):
+                        if not MOVE_PES:
+                            return
                         cmd(
                             [
                                 "pvmove",
