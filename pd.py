@@ -187,9 +187,17 @@ def lvm(wrap_dev):
 
     cmd(["pvcreate", wrap_dev])
     try:
-        cmd(["vgcreate", vg_name, wrap_dev])
+        cmd(
+            [
+                "vgcreate",
+                "--physicalextentsize",
+                "4m",
+                vg_name,
+                wrap_dev,
+            ]
+        )
         try:
-            POOLMETASIZE = "32M"
+            POOLMETASIZE = "32m"
             cmd(
                 [
                     "lvcreate",
@@ -197,10 +205,12 @@ def lvm(wrap_dev):
                     "thin-pool",
                     "--thinpool",
                     thinpool_name,
+                    "--chunksize",
+                    "64k",
                     "--poolmetadatasize",
                     POOLMETASIZE,
-                    "-L",
-                    "4M",
+                    "--size",
+                    "4m",
                     vg_name,
                 ]
             )
