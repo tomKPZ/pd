@@ -178,6 +178,55 @@ def detached_luks(wrap_dev, key_file, key_file_offset, header_file):
 
 
 @contextlib.contextmanager
+def lvm(wrap_dev):
+    lv_name = "test_lv"
+    vg_name = f"system_{uuid.uuid4()}"
+    thinpool_name = "thinpool"
+    thinpool_dev = f"/dev/{vg_name}/{thinpool_name}"
+    lv_dev = f"/dev/{vg_name}/{lv_name}"
+
+    cmd(["pvcreate", wrap_dev])
+    cmd(["vgcreate", vg_name, wrap_dev])
+    POOLMETASIZE = "32M"
+    cmd(
+        [
+            "lvcreate",
+            "--type",
+            "thin-pool",
+            "--thinpool",
+            thinpool_name,
+            "--poolmetadatasize",
+            POOLMETASIZE,
+            "-L",
+            "4M",
+            vg_name,
+        ]
+    )
+    cmd(["lvextend", "-l+100%FREE", vg_name])
+    POOL_SIZE = cmd_output(
+        ["lvs", "--units", "m", "--noheadings", "-o", "lv_size", thinpool_dev]
+    ).split()[0]
+    cmd(
+        [
+            "lvcreate",
+            "--thin",
+            thinpool_dev,
+            "--name",
+            lv_name,
+            "--virtualsize",
+            POOL_SIZE,
+        ]
+    )
+    try:
+        yield lv_dev
+    finally:
+        cmd(["lvremove", "-f", lv_dev], check=False)
+        cmd(["lvremove", "-f", thinpool_dev], check=False)
+        cmd(["vgremove", "-f", vg_name], check=False)
+        cmd(["pvremove", "-f", wrap_dev], check=False)
+
+
+@contextlib.contextmanager
 def btrfs_mount(wrap_dev):
     MOUNT_NAME = f"btrfs_mount_{uuid.uuid4()}"
     MOUNT_POINT = f"/mnt/{MOUNT_NAME}"
@@ -249,8 +298,8 @@ def setup_device(device):
                             with detached_luks(
                                 data_part, key_file, "64", f"{btrfs}/header.dat"
                             ) as data:
-                                cmd(["strings", "-n", "20", f"{btrfs}/header.dat"])
-                                print(data)
+                                with lvm(data) as lv:
+                                    print(lv)
 
 
 def main() -> int:
