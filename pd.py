@@ -8,6 +8,9 @@ import sys
 import tempfile
 import uuid
 
+DISK_SIZE = "1G"
+PASSWORD = "test"
+
 
 def cmd(*args, check=True, **kwargs):
     return subprocess.run(*args, check=check, **kwargs)
@@ -19,7 +22,6 @@ def cmd_output(*args, **kwargs):
 
 @contextlib.contextmanager
 def disk_image():
-    DISK_SIZE = "1G"
 
     disk_img = tempfile.mktemp(suffix=".img")
     try:
@@ -48,59 +50,84 @@ def loopback_device(file_path):
 
 
 @contextlib.contextmanager
-def temp_file(size):
+def temp_file():
     file = tempfile.mktemp()
     try:
-        cmd(
-            [
-                "dd",
-                "if=/dev/urandom",
-                f"of={file}",
-                f"bs={size}",
-                "count=1",
-                "status=progress",
-            ]
-        )
         yield file
     finally:
         os.remove(file)
 
 
 @contextlib.contextmanager
-def plain_dmcrypt(wrap_dev):
-    CRYPT_NAME = f"dmcrypt_test_{uuid.uuid4()}"
-    CRYPT_DEV = f"/dev/mapper/{CRYPT_NAME}"
-    with temp_file(64) as key:
-        with open(key, mode="rb") as file:
-            shred_key = base64.encodebytes(file.read()).decode()
-            print("Using shredding key", shred_key.replace("\n", ""))
-        cmd(
-            [
-                "cryptsetup",
-                "open",
-                "--type",
-                "plain",
-                "--cipher",
-                "aes-xts-plain64",
-                "--key-size",
-                "512",
-                "--key-file",
-                key,
-                "--sector-size",
-                "4096",
-                wrap_dev,
-                CRYPT_NAME,
-            ]
-        )
-        try:
-            yield CRYPT_DEV
-        finally:
-            cmd(["cryptsetup", "close", CRYPT_NAME])
+def plain_dmcrypt(wrap_dev, key_file):
+    crypt_name = f"dmcrypt_test_{uuid.uuid4()}"
+    crypt_dev = f"/dev/mapper/{crypt_name}"
+    cryptsetup_cmd = [
+        "cryptsetup",
+        "open",
+        "--type",
+        "plain",
+        "--cipher",
+        "aes-xts-plain64",
+        "--key-size",
+        "512",
+        "--key-file",
+        key_file,
+        "--sector-size",
+        "4096",
+        wrap_dev,
+        crypt_name,
+    ]
+    cmd(cryptsetup_cmd)
+    try:
+        yield crypt_dev
+    finally:
+        cmd(["cryptsetup", "close", crypt_name])
 
 
 def setup_device(device):
-    with plain_dmcrypt(device) as plain:
-        cmd(["dd", "if=/dev/zero", f"of={plain}", f"bs=4M", "count=256"])
+    with temp_file() as key_file:
+        cmd(["dd", "if=/dev/urandom", f"of={key_file}", f"bs=64", "count=1"])
+        with open(key_file, mode="rb") as key:
+            shred_key = base64.encodebytes(key.read()).decode()
+            print("Using shredding key", shred_key.replace("\n", ""))
+        with plain_dmcrypt(device, key_file) as plain:
+            cmd(
+                ["dd", "if=/dev/zero", f"of={plain}", "bs=4M", "status=progress"],
+                check=False,
+            )
+    cmd(["dd", "if=/dev/zero", f"of={device}", "bs=4K", "count=1"])
+    salt4k = cmd(
+        ["dd", f"if={device}", "bs=4K", "skip=1", "count=1"], stdout=subprocess.PIPE
+    ).stdout
+    salt512 = cmd_output(["sha512sum"], input=salt4k).split()[0]
+    argon_cmd = [
+        "argon2",
+        salt512,
+        "-id",
+        "-t",
+        "3",
+        "-m",
+        "12",
+        "-p",
+        "1",
+        "-l",
+        "128",
+        "-r",
+        "-v",
+        "13",
+    ]
+    key_hex = (
+        cmd(argon_cmd, input=PASSWORD.encode(), stdout=subprocess.PIPE)
+        .stdout.decode()
+        .strip()
+    )
+    key_bytes = bytes.fromhex(key_hex)
+    assert len(key_bytes) == 128
+    with temp_file() as key_file:
+        cmd(["dd", f"of={key_file}"], input=key_bytes)
+        print(key_file)
+        cmd(["hexdump", "-C", key_file])
 
 
 def main() -> int:
