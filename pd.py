@@ -190,6 +190,7 @@ def lvm(wrap_dev):
     thinpool_dev = f"/dev/{vg_name}/{thinpool_name}"
     lv_dev = f"/dev/{vg_name}/{lv_name}"
 
+    dd(_if="/dev/zero", of=wrap_dev, bs="4m", count=1)
     cmd(["pvcreate", wrap_dev])
     try:
         cmd(
@@ -222,9 +223,8 @@ def lvm(wrap_dev):
                         "thin_metadata_size",
                         "--block-size",
                         "64k",
-                        # TODO: set this
                         "--pool-size",
-                        "1g",
+                        f"{DISK_SIZE}b",
                         "--max-thins",
                         "1024",
                         "-u",
