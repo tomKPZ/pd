@@ -18,7 +18,7 @@ DMSETUP_SECTOR_SIZE = 512
 
 
 def cmd(*args, check=True, **kwargs):
-    return subprocess.run(*args, check=check, **kwargs)
+    return subprocess.run(args, check=check, **kwargs)
 
 
 def cmd_output(*args, **kwargs):
@@ -41,15 +41,15 @@ def dd(**kwargs):
         "skip",
         "status",
     }
-    dd_cmd = ["dd"]
+    dd = ["dd"]
     forward_kwargs = {}
     for k, v in kwargs.items():
         k = k.lstrip("_")
         if k in DD_OPS:
-            dd_cmd.append(f"{k}={v}")
+            dd.append(f"{k}={v}")
         else:
             forward_kwargs[k] = v
-    return cmd(dd_cmd, **forward_kwargs)
+    return cmd(*dd, **forward_kwargs)
 
 
 @contextlib.contextmanager
@@ -65,11 +65,11 @@ def disk_image():
 
 @contextlib.contextmanager
 def loopback_device(file_path):
-    loop_dev = cmd_output(["losetup", "-f", "--show", file_path])
+    loop_dev = cmd_output("losetup", "-f", "--show", file_path)
     try:
         yield loop_dev
     finally:
-        cmd(["losetup", "-d", loop_dev])
+        cmd("losetup", "-d", loop_dev)
 
 
 @contextlib.contextmanager
@@ -92,20 +92,22 @@ def device_view(wrap_dev, start, end):
 
     dmsetup_input = f"0 {end_sector-start_sector} linear {wrap_dev} {start_sector}"
     cmd(
-        ["dmsetup", "create", os.path.basename(device_path)],
+        "dmsetup",
+        "create",
+        os.path.basename(device_path),
         input=dmsetup_input.encode(),
     )
     try:
         yield device_path
     finally:
-        cmd(["dmsetup", "remove", device_path])
+        cmd("dmsetup", "remove", device_path)
 
 
 @contextlib.contextmanager
 def plain_dmcrypt(wrap_dev, key_file):
     crypt_name = f"dmcrypt_test_{uuid.uuid4()}"
     crypt_dev = f"/dev/mapper/{crypt_name}"
-    cryptsetup_cmd = [
+    cmd(
         "cryptsetup",
         "open",
         "--type=plain",
@@ -115,12 +117,11 @@ def plain_dmcrypt(wrap_dev, key_file):
         "--sector-size=4096",
         wrap_dev,
         crypt_name,
-    ]
-    cmd(cryptsetup_cmd)
+    )
     try:
         yield crypt_dev
     finally:
-        cmd(["cryptsetup", "close", crypt_name])
+        cmd("cryptsetup", "close", crypt_name)
 
 
 @contextlib.contextmanager
@@ -129,37 +130,33 @@ def detached_luks(wrap_dev, key_file, key_file_offset, header_file):
     luks_dev = f"/dev/mapper/{luks_name}"
 
     cmd(
-        [
-            "cryptsetup",
-            "luksFormat",
-            "--batch-mode",
-            "--hash=sha512",
-            "--cipher=aes-xts-plain64",
-            "--key-size=512",
-            "--sector-size=4096",
-            f"--key-file={key_file}",
-            f"--keyfile-offset={key_file_offset}",
-            f"--header={header_file}",
-            # Remove this for real impl
-            "--pbkdf-force-iterations=4",
-            wrap_dev,
-        ],
+        "cryptsetup",
+        "luksFormat",
+        "--batch-mode",
+        "--hash=sha512",
+        "--cipher=aes-xts-plain64",
+        "--key-size=512",
+        "--sector-size=4096",
+        f"--key-file={key_file}",
+        f"--keyfile-offset={key_file_offset}",
+        f"--header={header_file}",
+        # Remove this for real impl
+        "--pbkdf-force-iterations=4",
+        wrap_dev,
     )
     cmd(
-        [
-            "cryptsetup",
-            "open",
-            f"--key-file={key_file}",
-            f"--keyfile-offset={key_file_offset}",
-            f"--header={header_file}",
-            wrap_dev,
-            luks_name,
-        ],
+        "cryptsetup",
+        "open",
+        f"--key-file={key_file}",
+        f"--keyfile-offset={key_file_offset}",
+        f"--header={header_file}",
+        wrap_dev,
+        luks_name,
     )
     try:
         yield luks_dev
     finally:
-        cmd(["cryptsetup", "close", luks_name])
+        cmd("cryptsetup", "close", luks_name)
 
 
 @contextlib.contextmanager
@@ -168,22 +165,20 @@ def integrity(wrap_dev):
     integrity_dev = f"/dev/mapper/{integrity_name}"
 
     cmd(
-        [
-            "integritysetup",
-            "format",
-            "--integrity=sha512",
-            "--batch-mode",
-            "--integrity-no-journal",
-            "--sector-size=4096",
-            wrap_dev,
-        ]
+        "integritysetup",
+        "format",
+        "--integrity=sha512",
+        "--batch-mode",
+        "--integrity-no-journal",
+        "--sector-size=4096",
+        wrap_dev,
     )
-    cmd(["integritysetup", "open", wrap_dev, integrity_name])
+    cmd("integritysetup", "open", wrap_dev, integrity_name)
     try:
         dd(_if="/dev/zero", of=integrity_dev, bs="4M", check=False)
         yield integrity_dev
     finally:
-        cmd(["integritysetup", "close", integrity_name])
+        cmd("integritysetup", "close", integrity_name)
 
 
 @contextlib.contextmanager
@@ -197,59 +192,49 @@ def lvm(wrap_dev):
     lv_dev = f"/dev/{vg_name}/{lv_name}"
 
     dd(_if="/dev/zero", of=wrap_dev, bs="4M", count=1)
-    cmd(["pvcreate", wrap_dev])
+    cmd("pvcreate", wrap_dev)
     cmd(
-        [
-            "vgcreate",
-            "--physicalextentsize=4m",
-            vg_name,
-            wrap_dev,
-        ]
+        "vgcreate",
+        "--physicalextentsize=4m",
+        vg_name,
+        wrap_dev,
     )
     try:
         cmd(
-            [
-                "lvcreate",
-                "--type=linear",
-                f"--size={4 * SWAP_SIZE_PE}m",
-                f"--name={swap_name}",
-                vg_name,
-            ]
+            "lvcreate",
+            "--type=linear",
+            f"--size={4 * SWAP_SIZE_PE}m",
+            f"--name={swap_name}",
+            vg_name,
         )
         dd(_if="/dev/zero", of=swap_dev, bs="4M", check=False)
-        cmd(["mkswap", swap_dev])
+        cmd("mkswap", swap_dev)
         thin_size_str = cmd_output(
-            [
-                "thin_metadata_size",
-                "--block-size=64k",
-                f"--pool-size={DISK_SIZE}b",
-                "--max-thins=1024",
-                "-u=m",
-                "-n",
-            ]
+            "thin_metadata_size",
+            "--block-size=64k",
+            f"--pool-size={DISK_SIZE}b",
+            "--max-thins=1024",
+            "-u=m",
+            "-n",
         )
         thin_meta_pe = (math.ceil(float(thin_size_str)) + 3) // 4
         thin_meta_m = 4 * thin_meta_pe
         cmd(
-            [
-                "lvcreate",
-                "--type=thin-pool",
-                f"--thinpool={thinpool_name}",
-                "--chunksize=64k",
-                f"--poolmetadatasize={thin_meta_m}m",
-                "--size=4m",
-                vg_name,
-            ]
+            "lvcreate",
+            "--type=thin-pool",
+            f"--thinpool={thinpool_name}",
+            "--chunksize=64k",
+            f"--poolmetadatasize={thin_meta_m}m",
+            "--size=4m",
+            vg_name,
         )
 
         def move(src, dst, size):
             cmd(
-                [
-                    "pvmove",
-                    "--alloc=anywhere",
-                    f"{wrap_dev}:{SWAP_SIZE_PE + src}-{SWAP_SIZE_PE + src + size - 1}",
-                    f"{wrap_dev}:{SWAP_SIZE_PE + dst}-{SWAP_SIZE_PE + dst + size - 1}",
-                ]
+                "pvmove",
+                "--alloc=anywhere",
+                f"{wrap_dev}:{SWAP_SIZE_PE + src}-{SWAP_SIZE_PE + src + size - 1}",
+                f"{wrap_dev}:{SWAP_SIZE_PE + dst}-{SWAP_SIZE_PE + dst + size - 1}",
             )
 
         if MOVE_PES:
@@ -257,30 +242,26 @@ def lvm(wrap_dev):
             move(thin_meta_pe, 3 * thin_meta_pe + 1, 1)
             move(2 * thin_meta_pe + 1, thin_meta_pe, thin_meta_pe)
             move(3 * thin_meta_pe + 1, 2 * thin_meta_pe, 1)
-        cmd(["lvextend", "-l+100%FREE", thinpool_dev])
+        cmd("lvextend", "-l+100%FREE", thinpool_dev)
         pool_size = cmd_output(
-            [
-                "lvs",
-                "--units=m",
-                "--noheadings",
-                "-o",
-                "lv_size",
-                thinpool_dev,
-            ]
+            "lvs",
+            "--units=m",
+            "--noheadings",
+            "-o",
+            "lv_size",
+            thinpool_dev,
         ).split()[0]
         cmd(
-            [
-                "lvcreate",
-                "--thin",
-                f"--name={lv_name}",
-                f"--virtualsize={pool_size}",
-                thinpool_dev,
-            ]
+            "lvcreate",
+            "--thin",
+            f"--name={lv_name}",
+            f"--virtualsize={pool_size}",
+            thinpool_dev,
         )
-        cmd(["pvdisplay", "-v", "-m"])
+        cmd("pvdisplay", "-v", "-m")
         yield lv_dev
     finally:
-        cmd(["vgchange", "-an", vg_name])
+        cmd("vgchange", "-an", vg_name)
 
 
 @contextlib.contextmanager
@@ -288,21 +269,19 @@ def ext4_mount(wrap_dev):
     mount_name = f"ext4_mount_{uuid.uuid4()}"
     mount_point = f"/mnt/{mount_name}"
 
-    cmd(["mkfs.ext4", wrap_dev, "-E", "nodiscard"])
+    cmd("mkfs.ext4", wrap_dev, "-E", "nodiscard")
     os.mkdir(mount_point)
     try:
         cmd(
-            [
-                "mount",
-                wrap_dev,
-                mount_point,
-                "-o,defaults,nodiscard",
-            ]
+            "mount",
+            wrap_dev,
+            mount_point,
+            "-o,defaults,nodiscard",
         )
         try:
             yield mount_point
         finally:
-            cmd(["umount", mount_point], check=False)
+            cmd("umount", mount_point, check=False)
     finally:
         os.rmdir(mount_point)
 
@@ -313,28 +292,24 @@ def btrfs_mount(wrap_dev):
     mount_point = f"/mnt/{mount_name}"
 
     cmd(
-        [
-            "mkfs.btrfs",
-            wrap_dev,
-            "--csum=xxhash",
-            "--force",
-            "--nodiscard",
-        ]
+        "mkfs.btrfs",
+        wrap_dev,
+        "--csum=xxhash",
+        "--force",
+        "--nodiscard",
     )
     os.mkdir(mount_point)
     try:
         cmd(
-            [
-                "mount",
-                wrap_dev,
-                mount_point,
-                "-o,defaults,relatime,lazytime,autodefrag,ssd,nodiscard,compress=zstd:3",
-            ]
+            "mount",
+            wrap_dev,
+            mount_point,
+            "-o,defaults,relatime,lazytime,autodefrag,ssd,nodiscard,compress=zstd:3",
         )
         try:
             yield mount_point
         finally:
-            cmd(["umount", mount_point], check=False)
+            cmd("umount", mount_point, check=False)
     finally:
         os.rmdir(mount_point)
 
@@ -349,7 +324,7 @@ def setup_device(device):
             dd(_if="/dev/zero", of=plain, bs="4M", status="progress", check=False)
     dd(_if="/dev/zero", of=device, bs="4K", count=1)
     salt4k = dd(_if=device, bs="4K", skip=1, count=1, stdout=subprocess.PIPE).stdout
-    salt512 = cmd_output(["sha512sum"], input=salt4k).split()[0]
+    salt512 = cmd_output("sha512sum", input=salt4k).split()[0]
     argon_cmd = [
         "argon2",
         salt512,
@@ -363,7 +338,7 @@ def setup_device(device):
     ]
     argon_cmd = [p for arg in argon_cmd for p in arg.split("=")]
     key_hex = (
-        cmd(argon_cmd, input=PASSWORD.encode(), stdout=subprocess.PIPE)
+        cmd(*argon_cmd, input=PASSWORD.encode(), stdout=subprocess.PIPE)
         .stdout.decode()
         .strip()
     )
@@ -381,7 +356,7 @@ def setup_device(device):
                             ) as data:
                                 with lvm(data) as lv:
                                     with btrfs_mount(lv) as btrfs_data:
-                                        cmd(["mkdir", f"{btrfs_data}/boot"])
+                                        cmd("mkdir", f"{btrfs_data}/boot")
 
 
 def main() -> int:
