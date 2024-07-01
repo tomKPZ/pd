@@ -198,102 +198,89 @@ def lvm(wrap_dev):
 
     dd(_if="/dev/zero", of=wrap_dev, bs="4M", count=1)
     cmd(["pvcreate", wrap_dev])
+    cmd(
+        [
+            "vgcreate",
+            "--physicalextentsize=4m",
+            vg_name,
+            wrap_dev,
+        ]
+    )
     try:
         cmd(
             [
-                "vgcreate",
-                "--physicalextentsize=4m",
+                "lvcreate",
+                "--type=linear",
+                f"--size={4 * SWAP_SIZE_PE}m",
+                f"--name={swap_name}",
                 vg_name,
-                wrap_dev,
             ]
         )
-        try:
+        dd(_if="/dev/zero", of=swap_dev, bs="4M", check=False)
+        cmd(["mkswap", swap_dev])
+        thin_size_str = cmd_output(
+            [
+                "thin_metadata_size",
+                "--block-size=64k",
+                f"--pool-size={DISK_SIZE}b",
+                "--max-thins=1024",
+                "-u=m",
+                "-n",
+            ]
+        )
+        thin_meta_pe = (math.ceil(float(thin_size_str)) + 3) // 4
+        thin_meta_m = 4 * thin_meta_pe
+        cmd(
+            [
+                "lvcreate",
+                "--type=thin-pool",
+                f"--thinpool={thinpool_name}",
+                "--chunksize=64k",
+                f"--poolmetadatasize={thin_meta_m}m",
+                "--size=4m",
+                vg_name,
+            ]
+        )
+
+        def move(src, dst, size):
             cmd(
                 [
-                    "lvcreate",
-                    "--type=linear",
-                    f"--size={4 * SWAP_SIZE_PE}m",
-                    f"--name={swap_name}",
-                    vg_name,
+                    "pvmove",
+                    "--alloc=anywhere",
+                    f"{wrap_dev}:{SWAP_SIZE_PE + src}-{SWAP_SIZE_PE + src + size - 1}",
+                    f"{wrap_dev}:{SWAP_SIZE_PE + dst}-{SWAP_SIZE_PE + dst + size - 1}",
                 ]
             )
-            try:
-                dd(_if="/dev/zero", of=swap_dev, bs="4M", check=False)
-                cmd(["mkswap", swap_dev])
-                thin_size_str = cmd_output(
-                    [
-                        "thin_metadata_size",
-                        "--block-size=64k",
-                        f"--pool-size={DISK_SIZE}b",
-                        "--max-thins=1024",
-                        "-u=m",
-                        "-n",
-                    ]
-                )
-                thin_meta_pe = (math.ceil(float(thin_size_str)) + 3) // 4
-                thin_meta_m = 4 * thin_meta_pe
-                cmd(
-                    [
-                        "lvcreate",
-                        "--type=thin-pool",
-                        f"--thinpool={thinpool_name}",
-                        "--chunksize=64k",
-                        f"--poolmetadatasize={thin_meta_m}m",
-                        "--size=4m",
-                        vg_name,
-                    ]
-                )
-                try:
 
-                    def move(src, dst, size):
-                        if not MOVE_PES:
-                            return
-                        cmd(
-                            [
-                                "pvmove",
-                                "--alloc=anywhere",
-                                f"{wrap_dev}:{SWAP_SIZE_PE + src}-{SWAP_SIZE_PE + src + size - 1}",
-                                f"{wrap_dev}:{SWAP_SIZE_PE + dst}-{SWAP_SIZE_PE + dst + size - 1}",
-                            ]
-                        )
-
-                    move(thin_meta_pe + 1, 2 * thin_meta_pe + 1, thin_meta_pe)
-                    move(thin_meta_pe, 3 * thin_meta_pe + 1, 1)
-                    move(2 * thin_meta_pe + 1, thin_meta_pe, thin_meta_pe)
-                    move(3 * thin_meta_pe + 1, 2 * thin_meta_pe, 1)
-                    cmd(["lvextend", "-l+100%FREE", thinpool_dev])
-                    pool_size = cmd_output(
-                        [
-                            "lvs",
-                            "--units=m",
-                            "--noheadings",
-                            "-o",
-                            "lv_size",
-                            thinpool_dev,
-                        ]
-                    ).split()[0]
-                    cmd(
-                        [
-                            "lvcreate",
-                            "--thin",
-                            f"--name={lv_name}",
-                            f"--virtualsize={pool_size}",
-                            thinpool_dev,
-                        ]
-                    )
-                    try:
-                        cmd(["pvdisplay", "-v", "-m"])
-                        yield lv_dev
-                    finally:
-                        cmd(["lvremove", "-f", lv_dev], check=False)
-                finally:
-                    cmd(["lvremove", "-f", thinpool_dev], check=False)
-            finally:
-                cmd(["lvremove", "-f", swap_dev], check=False)
-        finally:
-            cmd(["vgremove", "-f", vg_name], check=False)
+        if MOVE_PES:
+            move(thin_meta_pe + 1, 2 * thin_meta_pe + 1, thin_meta_pe)
+            move(thin_meta_pe, 3 * thin_meta_pe + 1, 1)
+            move(2 * thin_meta_pe + 1, thin_meta_pe, thin_meta_pe)
+            move(3 * thin_meta_pe + 1, 2 * thin_meta_pe, 1)
+        cmd(["lvextend", "-l+100%FREE", thinpool_dev])
+        pool_size = cmd_output(
+            [
+                "lvs",
+                "--units=m",
+                "--noheadings",
+                "-o",
+                "lv_size",
+                thinpool_dev,
+            ]
+        ).split()[0]
+        cmd(
+            [
+                "lvcreate",
+                "--thin",
+                f"--name={lv_name}",
+                f"--virtualsize={pool_size}",
+                thinpool_dev,
+            ]
+        )
+        cmd(["pvdisplay", "-v", "-m"])
+        yield lv_dev
     finally:
-        cmd(["pvremove", "-f", wrap_dev], check=False)
+        cmd(["vgchange", "-an", vg_name])
 
 
 @contextlib.contextmanager
