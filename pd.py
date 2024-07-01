@@ -356,16 +356,16 @@ def setup_device(device):
             ext4_mount,
         ]
         with cascade(header_stack, device) as (_, _, _, ext4_meta):
+            header_file = f"{ext4_meta}/header.dat"
             data_stack = [
                 functools.partial(device_view, META_END, DISK_SIZE),
-                functools.partial(
-                    detached_luks, key_file, "64", f"{ext4_meta}/header.dat"
-                ),
+                functools.partial(detached_luks, key_file, "64", header_file),
                 lvm,
                 btrfs_mount,
             ]
             with cascade(data_stack, device) as (_, _, _, btrfs_data):
                 cmd("mkdir", f"{btrfs_data}/boot")
+                # TODO: install kernel, initramfs, and cmdline
 
 
 def main() -> int:
