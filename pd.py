@@ -2,6 +2,7 @@
 
 import base64
 import contextlib
+import functools
 import math
 import os
 import subprocess
@@ -53,17 +54,6 @@ def dd(**kwargs):
 
 
 @contextlib.contextmanager
-def disk_image():
-
-    disk_img = tempfile.mktemp(suffix=".img")
-    try:
-        dd(_if="/dev/zero", of=disk_img, bs=DISK_SIZE, count=1, status="progress")
-        yield disk_img
-    finally:
-        os.remove(disk_img)
-
-
-@contextlib.contextmanager
 def loopback_device(file_path):
     loop_dev = cmd_output("losetup", "-f", "--show", file_path)
     try:
@@ -73,8 +63,8 @@ def loopback_device(file_path):
 
 
 @contextlib.contextmanager
-def temp_file():
-    file = tempfile.mktemp()
+def temp_file(suffix=""):
+    file = tempfile.mktemp(suffix=suffix)
     try:
         yield file
     finally:
@@ -82,7 +72,7 @@ def temp_file():
 
 
 @contextlib.contextmanager
-def device_view(wrap_dev, start, end):
+def device_view(start, end, wrap_dev):
     start_sector, start_rem = divmod(start, DMSETUP_SECTOR_SIZE)
     end_sector, end_rem = divmod(end, DMSETUP_SECTOR_SIZE)
     assert start_rem == 0 and end_rem == 0
@@ -104,7 +94,7 @@ def device_view(wrap_dev, start, end):
 
 
 @contextlib.contextmanager
-def plain_dmcrypt(wrap_dev, key_file):
+def plain_dmcrypt(key_file, wrap_dev):
     crypt_name = f"dmcrypt_test_{uuid.uuid4()}"
     crypt_dev = f"/dev/mapper/{crypt_name}"
     cmd(
@@ -125,7 +115,7 @@ def plain_dmcrypt(wrap_dev, key_file):
 
 
 @contextlib.contextmanager
-def detached_luks(wrap_dev, key_file, key_file_offset, header_file):
+def detached_luks(key_file, key_file_offset, header_file, wrap_dev):
     luks_name = f"luks_test_{uuid.uuid4()}"
     luks_dev = f"/dev/mapper/{luks_name}"
 
@@ -258,7 +248,6 @@ def lvm(wrap_dev):
             f"--virtualsize={pool_size}",
             thinpool_dev,
         )
-        cmd("pvdisplay", "-v", "-m")
         yield lv_dev
     finally:
         cmd("vgchange", "-an", vg_name)
@@ -314,13 +303,27 @@ def btrfs_mount(wrap_dev):
         os.rmdir(mount_point)
 
 
+@contextlib.contextmanager
+def cascade(managers, prev, i=0, acc=None):
+    if acc is None:
+        acc = []
+    if i == len(managers):
+        yield acc
+        return
+    manager = managers[i]
+    with manager(prev) as managed:
+        acc.append(managed)
+        with cascade(managers, managed, i + 1, acc) as res:
+            yield res
+
+
 def setup_device(device):
     with temp_file() as key_file:
         dd(_if="/dev/urandom", of=key_file, bs=64, count=1)
         with open(key_file, mode="rb") as key:
             shred_key = base64.encodebytes(key.read()).decode()
             print("Using shredding key", shred_key.replace("\n", ""))
-        with plain_dmcrypt(device, key_file) as plain:
+        with plain_dmcrypt(key_file, device) as plain:
             dd(_if="/dev/zero", of=plain, bs="4M", status="progress", check=False)
     dd(_if="/dev/zero", of=device, bs="4K", count=1)
     salt4k = dd(_if=device, bs="4K", skip=1, count=1, stdout=subprocess.PIPE).stdout
@@ -346,21 +349,28 @@ def setup_device(device):
     assert len(key_bytes) == 128
     with temp_file() as key_file:
         dd(of=key_file, input=key_bytes)
-        with device_view(device, 8 * 1024, META_END) as meta_dev:
-            with plain_dmcrypt(meta_dev, key_file) as meta_enc:
-                with integrity(meta_enc) as meta_part:
-                    with ext4_mount(meta_part) as ext4_meta:
-                        with device_view(device, META_END, DISK_SIZE) as data_part:
-                            with detached_luks(
-                                data_part, key_file, "64", f"{ext4_meta}/header.dat"
-                            ) as data:
-                                with lvm(data) as lv:
-                                    with btrfs_mount(lv) as btrfs_data:
-                                        cmd("mkdir", f"{btrfs_data}/boot")
+        header_stack = [
+            functools.partial(device_view, 8 * 1024, META_END),
+            functools.partial(plain_dmcrypt, key_file),
+            integrity,
+            ext4_mount,
+        ]
+        with cascade(header_stack, device) as (_, _, _, ext4_meta):
+            data_stack = [
+                functools.partial(device_view, META_END, DISK_SIZE),
+                functools.partial(
+                    detached_luks, key_file, "64", f"{ext4_meta}/header.dat"
+                ),
+                lvm,
+                btrfs_mount,
+            ]
+            with cascade(data_stack, device) as (_, _, _, btrfs_data):
+                cmd("mkdir", f"{btrfs_data}/boot")
 
 
 def main() -> int:
-    with disk_image() as disk_img:
+    with temp_file(".img") as disk_img:
+        dd(_if="/dev/zero", of=disk_img, bs=DISK_SIZE, count=1, status="progress")
         with loopback_device(disk_img) as loop:
             setup_device(loop)
     return 0
