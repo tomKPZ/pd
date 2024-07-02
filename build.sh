@@ -72,6 +72,7 @@ touch "$ROOT/etc/lvm/lvm.conf"
 
 ldconfig -r "$ROOT"
 
+cp "$SCRIPT_DIR/bootstrap.sh" "$ROOT"
 cp "$SCRIPT_DIR/init" "$ROOT"
 
 tree "$ROOT"
