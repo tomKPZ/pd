@@ -77,7 +77,7 @@ def device_view(start, end, wrap_dev):
     end_sector, end_rem = divmod(end, DMSETUP_SECTOR_SIZE)
     assert start_rem == 0 and end_rem == 0
 
-    device_name = f"view_{uuid.uuid4()}"
+    device_name = f"view_{str(uuid.uuid4()).replace('-', '_')}"
     device_path = f"/dev/mapper/{device_name}"
 
     dmsetup_input = f"0 {end_sector-start_sector} linear {wrap_dev} {start_sector}"
@@ -95,7 +95,7 @@ def device_view(start, end, wrap_dev):
 
 @contextlib.contextmanager
 def plain_dmcrypt(key_file, wrap_dev):
-    crypt_name = f"dmcrypt_test_{uuid.uuid4()}"
+    crypt_name = f"dmcrypt_test_{str(uuid.uuid4()).replace('-', '_')}"
     crypt_dev = f"/dev/mapper/{crypt_name}"
     cmd(
         "cryptsetup",
@@ -116,7 +116,7 @@ def plain_dmcrypt(key_file, wrap_dev):
 
 @contextlib.contextmanager
 def detached_luks(key_file, key_file_offset, header_file, wrap_dev):
-    luks_name = f"luks_test_{uuid.uuid4()}"
+    luks_name = f"luks_test_{str(uuid.uuid4()).replace('-', '_')}"
     luks_dev = f"/dev/mapper/{luks_name}"
 
     cmd(
@@ -130,8 +130,12 @@ def detached_luks(key_file, key_file_offset, header_file, wrap_dev):
         f"--key-file={key_file}",
         f"--keyfile-offset={key_file_offset}",
         f"--header={header_file}",
-        # Remove this for real impl
+        # The password has already passed through a KDF, but LUKS doesn't
+        # support raw key files, so set the PBKDF parameters to the minimum.
+        "--pbkdf=argon2id",
         "--pbkdf-force-iterations=4",
+        "--pbkdf-memory=32",
+        "--pbkdf-parallel=1",
         wrap_dev,
     )
     cmd(
@@ -151,7 +155,7 @@ def detached_luks(key_file, key_file_offset, header_file, wrap_dev):
 
 @contextlib.contextmanager
 def integrity(wrap_dev):
-    integrity_name = f"integrity_test_{uuid.uuid4()}"
+    integrity_name = f"integrity_test_{str(uuid.uuid4()).replace('-', '_')}"
     integrity_dev = f"/dev/mapper/{integrity_name}"
 
     cmd(
@@ -174,7 +178,7 @@ def integrity(wrap_dev):
 @contextlib.contextmanager
 def lvm(wrap_dev):
     lv_name = "test_lv"
-    vg_name = f"system_{uuid.uuid4()}"
+    vg_name = f"system_{str(uuid.uuid4()).replace('-', '_')}"
     swap_name = "swap"
     swap_dev = f"/dev/{vg_name}/{swap_name}"
     thinpool_name = "thinpool"
@@ -255,7 +259,7 @@ def lvm(wrap_dev):
 
 @contextlib.contextmanager
 def ext4_mount(wrap_dev):
-    mount_name = f"ext4_mount_{uuid.uuid4()}"
+    mount_name = f"ext4_mount_{str(uuid.uuid4()).replace('-', '_')}"
     mount_point = f"/mnt/{mount_name}"
 
     cmd("mkfs.ext4", wrap_dev, "-E", "nodiscard")
@@ -277,7 +281,7 @@ def ext4_mount(wrap_dev):
 
 @contextlib.contextmanager
 def btrfs_mount(wrap_dev):
-    mount_name = f"btrfs_mount_{uuid.uuid4()}"
+    mount_name = f"btrfs_mount_{str(uuid.uuid4()).replace('-', '_')}"
     mount_point = f"/mnt/{mount_name}"
 
     cmd(
@@ -327,7 +331,7 @@ def setup_device(device):
             dd(_if="/dev/zero", of=plain, bs="4M", status="progress", check=False)
     dd(_if="/dev/zero", of=device, bs="4K", count=1)
     salt4k = dd(_if=device, bs="4K", skip=1, count=1, stdout=subprocess.PIPE).stdout
-    salt512 = cmd_output("sha512sum", input=salt4k).split()[0]
+    salt512 = cmd_output("sha512sum", "--binary", input=salt4k).split()[0]
     argon_cmd = [
         "argon2",
         salt512,
@@ -373,6 +377,23 @@ def main() -> int:
         dd(_if="/dev/zero", of=disk_img, bs=DISK_SIZE, count=1, status="progress")
         with loopback_device(disk_img) as loop:
             setup_device(loop)
+        subprocess.run(
+            [
+                "qemu-system-x86_64",
+                "-kernel",
+                "/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage",
+                "-initrd",
+                "/home/tom/dev/local/initrd/archive.cpio.gz",
+                "-nographic",
+                "-append",
+                "console=ttyS0",
+                "-enable-kvm",
+                "-m",
+                "1G",
+                "-hda",
+                disk_img,
+            ]
+        )
     return 0
 
 
