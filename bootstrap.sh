@@ -11,8 +11,9 @@ mkdir -p /mnt/plain
 mount /dev/mapper/integrity /mnt/plain -o,defaults,nodiscard,ro
 echo '0 1835008 linear /dev/sda 262144' | dmsetup create dm-luks
 cryptsetup open --key-file=/key.bin --keyfile-offset=64 --header=/mnt/plain/header.dat /dev/dm-3 luks
-ln -s /dev/dm-4 /dev/mapper/myvg-thinpool_tmeta
-vgchange -ay --ignoremonitoring myvg
+VG=$(vgs --headings none | awk '{print $1;}' | head -n 1)
+ln -s /dev/dm-4 /dev/mapper/$VG-thinpool_tmeta
+vgchange -ay --ignoremonitoring -qq $VG
 mkdir /mnt/luks
 mount /dev/dm-10 /mnt/luks -o,defaults,nodiscard,ro
 ls /mnt/luks
