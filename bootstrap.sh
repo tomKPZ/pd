@@ -17,5 +17,6 @@ VG=$(vgs --headings none | awk '{print $1;}' | head -n 1)
 ln -s /dev/dm-4 /dev/mapper/$VG-thinpool_tmeta
 vgchange -ay --ignoremonitoring -qq $VG
 mkdir /mnt/luks
-mount /dev/dm-10 /mnt/luks -o,defaults,nodiscard,ro
+dmsetup mknodes $VG-test_lv
+mount /dev/mapper/$VG-test_lv /mnt/luks -o,defaults,nodiscard,ro
 ls /mnt/luks

@@ -55,6 +55,7 @@ add_binary /usr/bin/dmsetup
 add_binary /usr/bin/integritysetup
 add_binary /usr/bin/kexec
 add_binary /usr/bin/lvm
+add_binary /usr/bin/pdata_tools
 
 add_library /usr/lib/ossl-modules/legacy.so
 
