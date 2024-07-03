@@ -40,7 +40,7 @@ add_binary() {
 	done
 }
 
-install -dm755 "$ROOT"/{proc,sys,dev,run,tmp,var,etc,usr/{local{,/bin,/sbin,/lib},lib,bin}}
+install -dm755 "$ROOT"/{proc,sys,dev,run,tmp,var,etc,usr/{lib,bin}}
 ln -s "usr/lib" "$ROOT/lib"
 ln -s "bin" "$ROOT/usr/sbin"
 ln -s "usr/bin" "$ROOT/bin"
