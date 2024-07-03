@@ -360,6 +360,7 @@ def setup_device(device):
             ext4_mount,
         ]
         with cascade(header_stack, device) as (_, _, _, ext4_meta):
+            cmd("cp", "late.sh", ext4_meta)
             header_file = f"{ext4_meta}/header.dat"
             data_stack = [
                 functools.partial(device_view, META_END, DISK_SIZE),

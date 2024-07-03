@@ -10,6 +10,6 @@ ln -sfT /proc/self/fd/0 /dev/stdin
 ln -sfT /proc/self/fd/1 /dev/stdout
 ln -sfT /proc/self/fd/2 /dev/stderr
 
-/bootstrap.sh
+/early.sh
 /bin/ash
 poweroff -f
