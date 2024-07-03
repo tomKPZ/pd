@@ -11,6 +11,15 @@ vgchange -ay --ignoremonitoring -qq $VG
 vgmknodes $VG
 mkdir /mnt/luks
 mount /dev/mapper/$VG-test_lv /mnt/luks -o,defaults,nodiscard,ro
-ls /mnt/luks
-kexec -l /mnt/luks/boot/vmlinuz-linux --initrd=/mnt/luks/boot/initramfs-linux.img --command-line="$(cat /mnt/luks/boot/cmdline-linux.txt)"
-# kexec -e
+
+cp /mnt/luks/boot/initramfs-linux.img /
+size=$(stat -c%s /initramfs-linux.img)
+padding=$(((4 - (size % 4)) % 4))
+dd if=/dev/zero bs=1 count=$padding >>/initramfs-linux.img
+cd /tmp
+echo 'echo Hello World' >early.sh
+chmod +x early.sh
+find . -print0 | cpio --null -ov --format=newc >>/initramfs-linux.img
+cd /
+kexec -l /mnt/luks/boot/vmlinuz-linux --initrd=/initramfs-linux.img --command-line="$(cat /mnt/luks/boot/cmdline-linux.txt)"
+kexec -e
