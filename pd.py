@@ -383,7 +383,7 @@ def main() -> int:
                 "-kernel",
                 "/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage",
                 "-initrd",
-                "/home/tom/dev/local/initrd/archive.cpio.gz",
+                "archive.cpio.gz",
                 "-nographic",
                 "-append",
                 "console=ttyS0",
