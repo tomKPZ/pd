@@ -17,6 +17,8 @@ META_END = 128 * 1024 * 1024
 MOVE_PES = False
 DMSETUP_SECTOR_SIZE = 512
 
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+
 
 def cmd(*args, check=True, **kwargs):
     return subprocess.run(args, check=check, **kwargs)
@@ -360,7 +362,7 @@ def setup_device(device):
             ext4_mount,
         ]
         with cascade(header_stack, device) as (_, _, _, ext4_meta):
-            cmd("cp", "late.sh", ext4_meta)
+            cmd("cp", os.path.join(SCRIPT_DIR, "late.sh"), ext4_meta)
             header_file = f"{ext4_meta}/header.dat"
             data_stack = [
                 functools.partial(device_view, META_END, DISK_SIZE),
