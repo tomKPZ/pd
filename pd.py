@@ -372,7 +372,18 @@ def setup_device(device):
             ]
             with cascade(data_stack, device) as (_, _, _, btrfs_data):
                 cmd("mkdir", f"{btrfs_data}/boot")
-                # TODO: install kernel, initramfs, and cmdline
+                cmd(
+                    "cp",
+                    "/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage",
+                    f"{btrfs_data}/boot/vmlinuz-linux",
+                )
+                cmd(
+                    "cp",
+                    os.path.join(SCRIPT_DIR, "archive.cpio.gz"),
+                    f"{btrfs_data}/boot/initramfs-linux.img",
+                )
+                with open(f"{btrfs_data}/boot/cmdline-linux.txt", "w") as cmdline:
+                    print("ro console=ttyS0", file=cmdline)
 
 
 def main() -> int:
@@ -386,10 +397,10 @@ def main() -> int:
                 "-kernel",
                 "/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage",
                 "-initrd",
-                "archive.cpio.gz",
+                os.path.join(SCRIPT_DIR, "archive.cpio.gz"),
                 "-nographic",
                 "-append",
-                "console=ttyS0",
+                "ro console=ttyS0",
                 "-enable-kvm",
                 "-m",
                 "1G",

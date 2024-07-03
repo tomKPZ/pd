@@ -12,3 +12,5 @@ vgmknodes $VG
 mkdir /mnt/luks
 mount /dev/mapper/$VG-test_lv /mnt/luks -o,defaults,nodiscard,ro
 ls /mnt/luks
+kexec -l /mnt/luks/boot/vmlinuz-linux --initrd=/mnt/luks/boot/initramfs-linux.img --command-line="$(cat /mnt/luks/boot/cmdline-linux.txt)"
+# kexec -e
