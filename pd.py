@@ -128,13 +128,32 @@ def common_initrd(root):
     shutil.copy(os.path.join(SCRIPT_DIR, "init"), root)
 
 
-def bootstrap_initrd(out_file):
+def bootstrap_decoy_initrd(out_file):
     with tempfile.TemporaryDirectory() as root:
         common_initrd(root)
 
         shutil.copy(os.path.join(SCRIPT_DIR, "early.sh"), root)
         with open(os.path.join(root, "table.txt"), "w") as table:
             print(dmsetup_table(8 * 1024, META_SIZE, "/dev/disk"), file=table)
+
+        subprocess.run(
+            f"find . -print0 | cpio --null -o --format=newc | gzip -{INITRD_GZ_LEVEL} >{out_file}",
+            cwd=root,
+            shell=True,
+            check=True,
+        )
+
+
+def bootstrap_hidden_initrd(out_file):
+    with tempfile.TemporaryDirectory() as root:
+        common_initrd(root)
+
+        shutil.copy(os.path.join(SCRIPT_DIR, "early.sh"), root)
+        with open(os.path.join(root, "table.txt"), "w") as table:
+            print(
+                dmsetup_table(DISK_SIZE - META_SIZE + 4096, DISK_SIZE, "/dev/disk"),
+                file=table,
+            )
 
         subprocess.run(
             f"find . -print0 | cpio --null -o --format=newc | gzip -{INITRD_GZ_LEVEL} >{out_file}",
@@ -477,9 +496,9 @@ def cascade(managers, prev, i=0, acc=None):
             yield res
 
 
-def init_volumes(device: str, reverse: bool):
-    meta_begin = DISK_SIZE - META_SIZE if reverse else 4096
-    salt_skip = meta_begin // 4096 if reverse else 1
+def init_volumes(device: str, hidden: bool):
+    meta_begin = DISK_SIZE - META_SIZE if hidden else 4096
+    salt_skip = meta_begin // 4096 if hidden else 1
     salt4k = dd(
         _if=device, bs="4K", skip=salt_skip, count=1, stdout=subprocess.PIPE
     ).stdout
@@ -508,7 +527,7 @@ def init_volumes(device: str, reverse: bool):
         header_stack = [
             lambda dev: device_view(
                 dmsetup_table(
-                    meta_begin + 4096, DISK_SIZE if reverse else META_SIZE, dev
+                    meta_begin + 4096, DISK_SIZE if hidden else META_SIZE, dev
                 )
             ),
             functools.partial(plain_dmcrypt, key_file),
@@ -521,7 +540,7 @@ def init_volumes(device: str, reverse: bool):
                 print(
                     (
                         reversed_table(0, DISK_SIZE - META_SIZE, "/dev/disk")
-                        if reverse
+                        if hidden
                         else dmsetup_table(META_SIZE, DISK_SIZE, "/dev/disk")
                     ),
                     file=table,
@@ -530,7 +549,7 @@ def init_volumes(device: str, reverse: bool):
             data_stack = [
                 lambda dev: device_view(
                     reversed_table(0, DISK_SIZE - META_SIZE, dev)
-                    if reverse
+                    if hidden
                     else dmsetup_table(META_SIZE, DISK_SIZE, dev)
                 ),
                 functools.partial(detached_luks, key_file, "64", header_file),
@@ -548,7 +567,9 @@ def init_volumes(device: str, reverse: bool):
                 with open(f"{btrfs_data}/boot/cmdline-linux.txt", "w") as cmdline:
                     print("ro console=ttyS0", file=cmdline)
                 with open(f"{btrfs_data}/message.txt", "w") as message:
-                    for _ in range(10):
+                    if hidden:
+                        print("HELLO FROM HIDDEN SYSTEM", file=message)
+                    else:
                         print("HELLO FROM DECOY SYSTEM", file=message)
 
 
@@ -566,29 +587,48 @@ def setup_device(device: str):
 
 
 def main() -> int:
-    with temp_file(".cpio.gz") as initrd:
-        bootstrap_initrd(initrd)
-        with temp_file(".img") as disk_img:
-            dd(_if="/dev/zero", of=disk_img, bs=DISK_SIZE, count=1, status="progress")
-            with loopback_device(disk_img) as loop:
-                setup_device(loop)
-            subprocess.run(
-                [
-                    "qemu-system-x86_64",
-                    "-kernel",
-                    "/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage",
-                    "-initrd",
-                    initrd,
-                    "-nographic",
-                    "-append",
-                    "ro console=ttyS0",
-                    "-enable-kvm",
-                    "-m",
-                    "1G",
-                    "-hda",
-                    disk_img,
-                ]
-            )
+    with temp_file(".img") as disk_img:
+        dd(_if="/dev/zero", of=disk_img, bs=DISK_SIZE, count=1, status="progress")
+        with loopback_device(disk_img) as loop:
+            setup_device(loop)
+            with temp_file(".cpio.gz") as decoy_initrd:
+                bootstrap_decoy_initrd(decoy_initrd)
+                subprocess.run(
+                    [
+                        "qemu-system-x86_64",
+                        "-kernel",
+                        "/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage",
+                        "-initrd",
+                        decoy_initrd,
+                        "-nographic",
+                        "-append",
+                        "ro console=ttyS0",
+                        "-enable-kvm",
+                        "-m",
+                        "1G",
+                        "-hda",
+                        disk_img,
+                    ]
+                )
+            with temp_file(".cpio.gz") as hidden_initrd:
+                bootstrap_hidden_initrd(hidden_initrd)
+                subprocess.run(
+                    [
+                        "qemu-system-x86_64",
+                        "-kernel",
+                        "/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage",
+                        "-initrd",
+                        hidden_initrd,
+                        "-nographic",
+                        "-append",
+                        "ro console=ttyS0",
+                        "-enable-kvm",
+                        "-m",
+                        "1G",
+                        "-hda",
+                        disk_img,
+                    ]
+                )
     return 0
 
 
