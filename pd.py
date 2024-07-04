@@ -75,15 +75,16 @@ def add_binary(root, bin):
 
 
 def common_initrd(root):
-    os.makedirs(os.path.join(root, "proc"), exist_ok=True)
-    os.makedirs(os.path.join(root, "sys"), exist_ok=True)
     os.makedirs(os.path.join(root, "dev"), exist_ok=True)
-    os.makedirs(os.path.join(root, "run"), exist_ok=True)
-    os.makedirs(os.path.join(root, "tmp"), exist_ok=True)
-    os.makedirs(os.path.join(root, "var"), exist_ok=True)
     os.makedirs(os.path.join(root, "etc"), exist_ok=True)
-    os.makedirs(os.path.join(root, "usr", "lib"), exist_ok=True)
+    os.makedirs(os.path.join(root, "mnt"), exist_ok=True)
+    os.makedirs(os.path.join(root, "proc"), exist_ok=True)
+    os.makedirs(os.path.join(root, "run"), exist_ok=True)
+    os.makedirs(os.path.join(root, "sys"), exist_ok=True)
+    os.makedirs(os.path.join(root, "tmp"), exist_ok=True)
     os.makedirs(os.path.join(root, "usr", "bin"), exist_ok=True)
+    os.makedirs(os.path.join(root, "usr", "lib"), exist_ok=True)
+    os.makedirs(os.path.join(root, "var"), exist_ok=True)
     os.symlink("usr/lib", os.path.join(root, "lib"))
     os.symlink("bin", os.path.join(root, "usr", "sbin"))
     os.symlink("usr/bin", os.path.join(root, "bin"))
@@ -123,13 +124,14 @@ def common_initrd(root):
 
     subprocess.run(["ldconfig", "-r", root], check=True)
 
+    shutil.copy(os.path.join(SCRIPT_DIR, "init"), root)
+
 
 def bootstrap_initrd(out_file):
     with tempfile.TemporaryDirectory() as root:
         common_initrd(root)
 
         shutil.copy(os.path.join(SCRIPT_DIR, "early.sh"), root)
-        shutil.copy(os.path.join(SCRIPT_DIR, "init"), root)
         with open(os.path.join(root, "table.txt"), "w") as table:
             print(dmsetup_table(8 * 1024, META_END, "/dev/disk"), file=table)
 
@@ -145,10 +147,9 @@ def system_initrd(out_file):
     with tempfile.TemporaryDirectory() as root:
         common_initrd(root)
 
-        shutil.copy(os.path.join(SCRIPT_DIR, "early.sh"), root)
-        shutil.copy(os.path.join(SCRIPT_DIR, "init"), root)
-        with open(os.path.join(root, "table.txt"), "w") as table:
-            print(dmsetup_table(8 * 1024, META_END, "/dev/disk"), file=table)
+        shutil.copy(
+            os.path.join(SCRIPT_DIR, "system.sh"), os.path.join(root, "early.sh")
+        )
 
         subprocess.run(
             f"find . -print0 | cpio --null -o --format=newc | gzip -{INITRD_GZ_LEVEL} >{out_file}",
