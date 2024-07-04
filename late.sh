@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-echo '0 1835008 linear /dev/sda 262144' | dmsetup create dm-luks
+dmsetup create dm-luks /mnt/plain/table.txt
 dmsetup mknodes dm-luks
 cryptsetup open --key-file=/key.bin --keyfile-offset=64 --header=/mnt/plain/header.dat /dev/mapper/dm-luks luks
 VG=$(vgs --headings none | awk '{print $1;}' | head -n 1)

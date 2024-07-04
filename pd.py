@@ -474,6 +474,8 @@ def setup_device(device, initrd):
         ]
         with cascade(header_stack, device) as (_, _, _, ext4_meta):
             cmd("cp", os.path.join(SCRIPT_DIR, "late.sh"), ext4_meta)
+            with open(f"{ext4_meta}/table.txt", "w") as table:
+                print(dmsetup_table(META_END, DISK_SIZE, "/dev/disk"), file=table)
             header_file = f"{ext4_meta}/header.dat"
             data_stack = [
                 lambda dev: device_view(dmsetup_table(META_END, DISK_SIZE, dev)),
