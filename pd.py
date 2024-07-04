@@ -5,11 +5,13 @@ import contextlib
 import functools
 import math
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import uuid
 
+INITRD_GZ_LEVEL = "1"
 DISK_SIZE = 1024 * 1024 * 1024
 SWAP_SIZE_PE = 64 // 4
 PASSWORD = "test"
@@ -26,6 +28,111 @@ def cmd(*args, check=True, **kwargs):
 
 def cmd_output(*args, **kwargs):
     return cmd(*args, stdout=subprocess.PIPE, **kwargs).stdout.decode().strip()
+
+
+def make_initrd(out_file):
+    with tempfile.TemporaryDirectory() as ROOT:
+
+        def add_file(file):
+            dst = os.path.join(ROOT, file.lstrip("/"))
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy(file, dst)
+
+        def add_library(lib):
+            dst = os.path.join(ROOT, lib.lstrip("/"))
+            if not os.path.isfile(dst):
+                add_file(lib)
+                subprocess.run(["strip", "--strip-unneeded", dst], check=True)
+
+        def add_binary(bin):
+            add_file(bin)
+            dst = os.path.join(ROOT, bin.lstrip("/"))
+            subprocess.run(["strip", "--strip-all", dst], check=True)
+
+            links = subprocess.run(
+                ["find", "-L", os.path.dirname(bin), "-samefile", bin, "-xtype", "l"],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.splitlines()
+
+            for link in links:
+                link_path = os.path.join(ROOT, link.lstrip("/"))
+                os.makedirs(os.path.dirname(link_path), exist_ok=True)
+                os.symlink(os.path.basename(bin), link_path)
+
+            dependencies = subprocess.run(
+                ["ldd", bin], capture_output=True, text=True, check=False
+            ).stdout.splitlines()
+
+            for dep in dependencies:
+                dep_path = (
+                    dep.split()[2]
+                    if len(dep.split()) > 2 and dep.split()[2].startswith("/")
+                    else None
+                )
+                if dep_path:
+                    add_library(dep_path)
+
+        os.makedirs(os.path.join(ROOT, "proc"), exist_ok=True)
+        os.makedirs(os.path.join(ROOT, "sys"), exist_ok=True)
+        os.makedirs(os.path.join(ROOT, "dev"), exist_ok=True)
+        os.makedirs(os.path.join(ROOT, "run"), exist_ok=True)
+        os.makedirs(os.path.join(ROOT, "tmp"), exist_ok=True)
+        os.makedirs(os.path.join(ROOT, "var"), exist_ok=True)
+        os.makedirs(os.path.join(ROOT, "etc"), exist_ok=True)
+        os.makedirs(os.path.join(ROOT, "usr", "lib"), exist_ok=True)
+        os.makedirs(os.path.join(ROOT, "usr", "bin"), exist_ok=True)
+        os.symlink("usr/lib", os.path.join(ROOT, "lib"))
+        os.symlink("bin", os.path.join(ROOT, "usr", "sbin"))
+        os.symlink("usr/bin", os.path.join(ROOT, "bin"))
+        os.symlink("usr/bin", os.path.join(ROOT, "sbin"))
+        os.symlink("../run", os.path.join(ROOT, "var", "run"))
+        os.symlink("lib", os.path.join(ROOT, "usr", "lib64"))
+        os.symlink("usr/lib", os.path.join(ROOT, "lib64"))
+
+        bins_to_add = [
+            "/usr/bin/argon2",
+            "/usr/bin/cryptsetup",
+            "/usr/bin/dmsetup",
+            "/usr/bin/integritysetup",
+            "/usr/bin/kexec",
+            "/usr/bin/lvm",
+            "/usr/bin/pdata_tools",
+        ]
+
+        for bin in bins_to_add:
+            add_binary(bin)
+
+        add_library("/usr/lib/ossl-modules/legacy.so")
+        add_binary("/usr/bin/busybox")
+
+        applets = subprocess.run(
+            ["/usr/bin/busybox", "--list"], capture_output=True, text=True, check=True
+        ).stdout.splitlines()
+
+        for applet in applets:
+            if applet != "busybox":
+                os.symlink("busybox", os.path.join(ROOT, "usr", "bin", applet))
+
+        os.symlink("../proc/self/mounts", os.path.join(ROOT, "etc", "mtab"))
+        open(os.path.join(ROOT, "etc", "fstab"), "w").close()
+        open(os.path.join(ROOT, "etc", "ld.so.conf"), "w").close()
+
+        os.makedirs(os.path.join(ROOT, "etc", "lvm"), exist_ok=True)
+        open(os.path.join(ROOT, "etc", "lvm", "lvm.conf"), "w").close()
+
+        subprocess.run(["ldconfig", "-r", ROOT], check=True)
+
+        shutil.copy(os.path.join(SCRIPT_DIR, "early.sh"), ROOT)
+        shutil.copy(os.path.join(SCRIPT_DIR, "init"), ROOT)
+
+        subprocess.run(
+            f"find . -print0 | cpio --null -ov --format=newc 2>/dev/null | gzip -{INITRD_GZ_LEVEL} >{out_file}",
+            cwd=ROOT,
+            shell=True,
+            check=True,
+        )
 
 
 def dd(**kwargs):
@@ -323,7 +430,7 @@ def cascade(managers, prev, i=0, acc=None):
             yield res
 
 
-def setup_device(device):
+def setup_device(device, initrd):
     with temp_file() as key_file:
         dd(_if="/dev/urandom", of=key_file, bs=64, count=1)
         with open(key_file, mode="rb") as key:
@@ -379,7 +486,7 @@ def setup_device(device):
                 )
                 cmd(
                     "cp",
-                    os.path.join(SCRIPT_DIR, "archive.cpio.gz"),
+                    initrd,
                     f"{btrfs_data}/boot/initramfs-linux.img",
                 )
                 with open(f"{btrfs_data}/boot/cmdline-linux.txt", "w") as cmdline:
@@ -387,27 +494,29 @@ def setup_device(device):
 
 
 def main() -> int:
-    with temp_file(".img") as disk_img:
-        dd(_if="/dev/zero", of=disk_img, bs=DISK_SIZE, count=1, status="progress")
-        with loopback_device(disk_img) as loop:
-            setup_device(loop)
-        subprocess.run(
-            [
-                "qemu-system-x86_64",
-                "-kernel",
-                "/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage",
-                "-initrd",
-                os.path.join(SCRIPT_DIR, "archive.cpio.gz"),
-                "-nographic",
-                "-append",
-                "ro console=ttyS0",
-                "-enable-kvm",
-                "-m",
-                "1G",
-                "-hda",
-                disk_img,
-            ]
-        )
+    with temp_file(".cpio.gz") as initrd:
+        make_initrd(initrd)
+        with temp_file(".img") as disk_img:
+            dd(_if="/dev/zero", of=disk_img, bs=DISK_SIZE, count=1, status="progress")
+            with loopback_device(disk_img) as loop:
+                setup_device(loop, initrd)
+            subprocess.run(
+                [
+                    "qemu-system-x86_64",
+                    "-kernel",
+                    "/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage",
+                    "-initrd",
+                    initrd,
+                    "-nographic",
+                    "-append",
+                    "ro console=ttyS0",
+                    "-enable-kvm",
+                    "-m",
+                    "1G",
+                    "-hda",
+                    disk_img,
+                ]
+            )
     return 0
 
 
