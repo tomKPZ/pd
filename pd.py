@@ -180,21 +180,23 @@ def temp_file(suffix=""):
         os.remove(file)
 
 
-@contextlib.contextmanager
-def device_view(start, end, wrap_dev):
+def dmsetup_table(start: int, end: int, wrap_dev: str):
     start_sector, start_rem = divmod(start, DMSETUP_SECTOR_SIZE)
     end_sector, end_rem = divmod(end, DMSETUP_SECTOR_SIZE)
     assert start_rem == 0 and end_rem == 0
+    return f"0 {end_sector-start_sector} linear {wrap_dev} {start_sector}"
 
+
+@contextlib.contextmanager
+def device_view(table: str):
     device_name = f"view_{str(uuid.uuid4()).replace('-', '_')}"
     device_path = f"/dev/mapper/{device_name}"
 
-    dmsetup_input = f"0 {end_sector-start_sector} linear {wrap_dev} {start_sector}"
     cmd(
         "dmsetup",
         "create",
         os.path.basename(device_path),
-        input=dmsetup_input.encode(),
+        input=table.encode(),
     )
     try:
         yield device_path
@@ -463,7 +465,7 @@ def setup_device(device, initrd):
     with temp_file() as key_file:
         dd(of=key_file, input=key_bytes)
         header_stack = [
-            functools.partial(device_view, 8 * 1024, META_END),
+            lambda dev: device_view(dmsetup_table(8 * 1024, META_END, dev)),
             functools.partial(plain_dmcrypt, key_file),
             integrity,
             ext4_mount,
@@ -472,7 +474,7 @@ def setup_device(device, initrd):
             cmd("cp", os.path.join(SCRIPT_DIR, "late.sh"), ext4_meta)
             header_file = f"{ext4_meta}/header.dat"
             data_stack = [
-                functools.partial(device_view, META_END, DISK_SIZE),
+                lambda dev: device_view(dmsetup_table(META_END, DISK_SIZE, dev)),
                 functools.partial(detached_luks, key_file, "64", header_file),
                 lvm,
                 btrfs_mount,
