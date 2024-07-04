@@ -15,9 +15,10 @@ INITRD_GZ_LEVEL = "1"
 DISK_SIZE = 1024 * 1024 * 1024
 SWAP_SIZE_PE = 64 // 4
 PASSWORD = "test"
-META_END = 128 * 1024 * 1024
+META_SIZE = 128 * 1024 * 1024
 MOVE_PES = False
 DMSETUP_SECTOR_SIZE = 512
+REVERSE_CHUNK_SIZE = 8 * 1024 * 1024
 
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 
@@ -133,7 +134,7 @@ def bootstrap_initrd(out_file):
 
         shutil.copy(os.path.join(SCRIPT_DIR, "early.sh"), root)
         with open(os.path.join(root, "table.txt"), "w") as table:
-            print(dmsetup_table(8 * 1024, META_END, "/dev/disk"), file=table)
+            print(dmsetup_table(8 * 1024, META_SIZE, "/dev/disk"), file=table)
 
         subprocess.run(
             f"find . -print0 | cpio --null -o --format=newc | gzip -{INITRD_GZ_LEVEL} >{out_file}",
@@ -209,6 +210,26 @@ def dmsetup_table(start: int, end: int, wrap_dev: str):
     end_sector, end_rem = divmod(end, DMSETUP_SECTOR_SIZE)
     assert start_rem == 0 and end_rem == 0
     return f"0 {end_sector-start_sector} linear {wrap_dev} {start_sector}"
+
+
+def reversed_table(start: int, end: int, wrap_dev: str):
+    sectors_per_chunk = REVERSE_CHUNK_SIZE // DMSETUP_SECTOR_SIZE
+
+    start_sector, start_rem = divmod(start, DMSETUP_SECTOR_SIZE)
+    end_sector, end_rem = divmod(end, DMSETUP_SECTOR_SIZE)
+    assert start_rem == 0 and end_rem == 0
+
+    num_sectors = end_sector - start_sector
+    num_chunks = num_sectors // sectors_per_chunk
+
+    dmsetup_input = []
+    for i in reversed(range(num_chunks)):
+        start = i * sectors_per_chunk
+        reversed_start = num_sectors - (i + 1) * sectors_per_chunk
+        dmsetup_input.append(
+            f"{reversed_start} {sectors_per_chunk} linear {wrap_dev} {start_sector + start}"
+        )
+    return "\n".join(dmsetup_input) + "\n"
 
 
 @contextlib.contextmanager
@@ -456,16 +477,12 @@ def cascade(managers, prev, i=0, acc=None):
             yield res
 
 
-def setup_device(device):
-    with temp_file() as key_file:
-        dd(_if="/dev/urandom", of=key_file, bs=64, count=1)
-        with open(key_file, mode="rb") as key:
-            shred_key = base64.encodebytes(key.read()).decode()
-            print("Using shredding key", shred_key.replace("\n", ""))
-        with plain_dmcrypt(key_file, device) as plain:
-            dd(_if="/dev/zero", of=plain, bs="4M", status="progress", check=False)
-    dd(_if="/dev/zero", of=device, bs="4K", count=1)
-    salt4k = dd(_if=device, bs="4K", skip=1, count=1, stdout=subprocess.PIPE).stdout
+def init_volumes(device: str, reverse: bool):
+    meta_begin = DISK_SIZE - META_SIZE if reverse else 4096
+    salt_skip = meta_begin // 4096 if reverse else 1
+    salt4k = dd(
+        _if=device, bs="4K", skip=salt_skip, count=1, stdout=subprocess.PIPE
+    ).stdout
     salt512 = cmd_output("sha512sum", "--binary", input=salt4k).split()[0]
     argon_cmd = [
         "argon2",
@@ -489,7 +506,11 @@ def setup_device(device):
     with temp_file() as key_file:
         dd(of=key_file, input=key_bytes)
         header_stack = [
-            lambda dev: device_view(dmsetup_table(8 * 1024, META_END, dev)),
+            lambda dev: device_view(
+                dmsetup_table(
+                    meta_begin + 4096, DISK_SIZE if reverse else META_SIZE, dev
+                )
+            ),
             functools.partial(plain_dmcrypt, key_file),
             integrity,
             ext4_mount,
@@ -497,10 +518,21 @@ def setup_device(device):
         with cascade(header_stack, device) as (_, _, _, ext4_meta):
             cmd("cp", os.path.join(SCRIPT_DIR, "late.sh"), ext4_meta)
             with open(f"{ext4_meta}/table.txt", "w") as table:
-                print(dmsetup_table(META_END, DISK_SIZE, "/dev/disk"), file=table)
+                print(
+                    (
+                        reversed_table(0, DISK_SIZE - META_SIZE, "/dev/disk")
+                        if reverse
+                        else dmsetup_table(META_SIZE, DISK_SIZE, "/dev/disk")
+                    ),
+                    file=table,
+                )
             header_file = f"{ext4_meta}/header.dat"
             data_stack = [
-                lambda dev: device_view(dmsetup_table(META_END, DISK_SIZE, dev)),
+                lambda dev: device_view(
+                    reversed_table(0, DISK_SIZE - META_SIZE, dev)
+                    if reverse
+                    else dmsetup_table(META_SIZE, DISK_SIZE, dev)
+                ),
                 functools.partial(detached_luks, key_file, "64", header_file),
                 lvm,
                 btrfs_mount,
@@ -515,6 +547,22 @@ def setup_device(device):
                 system_initrd(f"{btrfs_data}/boot/initramfs-linux.img")
                 with open(f"{btrfs_data}/boot/cmdline-linux.txt", "w") as cmdline:
                     print("ro console=ttyS0", file=cmdline)
+                with open(f"{btrfs_data}/message.txt", "w") as message:
+                    for _ in range(10):
+                        print("HELLO FROM DECOY SYSTEM", file=message)
+
+
+def setup_device(device: str):
+    with temp_file() as key_file:
+        dd(_if="/dev/urandom", of=key_file, bs=64, count=1)
+        with open(key_file, mode="rb") as key:
+            shred_key = base64.encodebytes(key.read()).decode()
+            print("Using shredding key", shred_key.replace("\n", ""))
+        with plain_dmcrypt(key_file, device) as plain:
+            dd(_if="/dev/zero", of=plain, bs="4M", status="progress", check=False)
+    dd(_if="/dev/zero", of=device, bs="4K", count=1)
+    init_volumes(device, False)
+    init_volumes(device, True)
 
 
 def main() -> int:
