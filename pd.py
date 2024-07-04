@@ -130,7 +130,7 @@ def make_initrd(out_file):
             print(dmsetup_table(8 * 1024, META_END, "/dev/disk"), file=table)
 
         subprocess.run(
-            f"find . -print0 | cpio --null -ov --format=newc 2>/dev/null | gzip -{INITRD_GZ_LEVEL} >{out_file}",
+            f"find . -print0 | cpio --null -o --format=newc | gzip -{INITRD_GZ_LEVEL} >{out_file}",
             cwd=ROOT,
             shell=True,
             check=True,
