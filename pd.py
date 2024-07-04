@@ -126,6 +126,8 @@ def make_initrd(out_file):
 
         shutil.copy(os.path.join(SCRIPT_DIR, "early.sh"), ROOT)
         shutil.copy(os.path.join(SCRIPT_DIR, "init"), ROOT)
+        with open(os.path.join(ROOT, "table.txt"), "w") as table:
+            print(dmsetup_table(8 * 1024, META_END, "/dev/disk"), file=table)
 
         subprocess.run(
             f"find . -print0 | cpio --null -ov --format=newc 2>/dev/null | gzip -{INITRD_GZ_LEVEL} >{out_file}",
