@@ -14,16 +14,25 @@ import uuid
 KIB = 1024
 MIB = 1024 * KIB
 GIB = 1024 * MIB
-INITRD_GZ_LEVEL = "1"
+
+# Tunable
+DD_DEFAULT_BS = 4 * MIB
 DISK_SIZE = 1 * GIB
-SWAP_SIZE_PE = 64 // 4
+ZERO_HEADER = 4 * MIB
+CRYPT_SECTOR_SIZE = 4 * KIB
 PASSWORD = "test"
+SWAP_SIZE = 64 * MIB
+PE_SIZE = 4 * MIB
+THIN_CHUNK_SIZE = 64 * KIB
 META_SIZE = 64 * MIB
 MOVE_PES = False
-DMSETUP_SECTOR_SIZE = 512
 REVERSE_CHUNK_SIZE = 8 * MIB
-ZERO_HEADER = 4 * MIB
+INITRD_GZ_LEVEL = "1"
 
+# Constant
+assert SWAP_SIZE % PE_SIZE == 0
+SWAP_SIZE_PE = SWAP_SIZE // PE_SIZE
+DMSETUP_SECTOR_SIZE = 512
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 
 
@@ -273,7 +282,7 @@ def plain_dmcrypt(key_file, wrap_dev):
         "--cipher=aes-xts-plain64",
         "--key-size=512",
         f"--key-file={key_file}",
-        "--sector-size=4096",
+        f"--sector-size={CRYPT_SECTOR_SIZE}",
         wrap_dev,
         crypt_name,
     )
@@ -296,7 +305,7 @@ def detached_luks(key_file, key_file_offset, header_file, wrap_dev):
         "--hash=sha512",
         "--cipher=aes-xts-plain64",
         "--key-size=512",
-        "--sector-size=4096",
+        f"--sector-size={CRYPT_SECTOR_SIZE}",
         f"--key-file={key_file}",
         f"--keyfile-offset={key_file_offset}",
         f"--header={header_file}",
@@ -334,12 +343,12 @@ def integrity(wrap_dev):
         "--integrity=sha512",
         "--batch-mode",
         "--integrity-no-journal",
-        "--sector-size=4096",
+        f"--sector-size={CRYPT_SECTOR_SIZE}",
         wrap_dev,
     )
     cmd("integritysetup", "open", wrap_dev, integrity_name)
     try:
-        dd(_if="/dev/zero", of=integrity_dev, bs="4M", check=False)
+        dd(_if="/dev/zero", of=integrity_dev, bs=DD_DEFAULT_BS, check=False)
         yield integrity_dev
     finally:
         cmd("integritysetup", "close", integrity_name)
@@ -355,11 +364,11 @@ def lvm(wrap_dev):
     thinpool_dev = f"/dev/{vg_name}/{thinpool_name}"
     lv_dev = f"/dev/{vg_name}/{lv_name}"
 
-    dd(_if="/dev/zero", of=wrap_dev, bs="4M", count=1)
+    dd(_if="/dev/zero", of=wrap_dev, bs=PE_SIZE, count=1)
     cmd("pvcreate", wrap_dev)
     cmd(
         "vgcreate",
-        "--physicalextentsize=4m",
+        f"--physicalextentsize={PE_SIZE}b",
         vg_name,
         wrap_dev,
     )
@@ -367,29 +376,28 @@ def lvm(wrap_dev):
         cmd(
             "lvcreate",
             "--type=linear",
-            f"--size={4 * SWAP_SIZE_PE}m",
+            f"--size={SWAP_SIZE}b",
             f"--name={swap_name}",
             vg_name,
         )
-        dd(_if="/dev/zero", of=swap_dev, bs="4M", check=False)
+        dd(_if="/dev/zero", of=swap_dev, bs=DD_DEFAULT_BS, check=False)
         cmd("mkswap", swap_dev)
         thin_size_str = cmd_output(
             "thin_metadata_size",
-            "--block-size=64k",
+            f"--block-size={THIN_CHUNK_SIZE}b",
             f"--pool-size={DISK_SIZE}b",
             "--max-thins=1024",
-            "-u=m",
+            "-u=b",
             "-n",
         )
-        thin_meta_pe = (math.ceil(float(thin_size_str)) + 3) // 4
-        thin_meta_m = 4 * thin_meta_pe
+        thin_meta_pe = (math.ceil(float(thin_size_str)) + (PE_SIZE - 1)) // PE_SIZE
         cmd(
             "lvcreate",
             "--type=thin-pool",
             f"--thinpool={thinpool_name}",
-            "--chunksize=64k",
-            f"--poolmetadatasize={thin_meta_m}m",
-            "--size=4m",
+            f"--chunksize={THIN_CHUNK_SIZE}b",
+            f"--poolmetadatasize={thin_meta_pe * PE_SIZE}b",
+            f"--size={PE_SIZE}b",
             vg_name,
         )
 
@@ -568,7 +576,13 @@ def setup_device(device: str, salt: str):
             shred_key = base64.encodebytes(key.read()).decode()
             print("Using shredding key", shred_key.replace("\n", ""))
         with plain_dmcrypt(key_file, device) as plain:
-            dd(_if="/dev/zero", of=plain, bs="4M", status="progress", check=False)
+            dd(
+                _if="/dev/zero",
+                of=plain,
+                bs=DD_DEFAULT_BS,
+                status="progress",
+                check=False,
+            )
     dd(_if="/dev/zero", of=device, bs="4K", count=1)
     init_volumes(device, salt, False)
     init_volumes(device, salt, True)
