@@ -11,14 +11,18 @@ import sys
 import tempfile
 import uuid
 
+KIB = 1024
+MIB = 1024 * KIB
+GIB = 1024 * MIB
 INITRD_GZ_LEVEL = "1"
-DISK_SIZE = 1024 * 1024 * 1024
+DISK_SIZE = 1 * GIB
 SWAP_SIZE_PE = 64 // 4
 PASSWORD = "test"
-META_SIZE = 128 * 1024 * 1024
+META_SIZE = 64 * MIB
 MOVE_PES = False
 DMSETUP_SECTOR_SIZE = 512
-REVERSE_CHUNK_SIZE = 8 * 1024 * 1024
+REVERSE_CHUNK_SIZE = 8 * MIB
+ZERO_HEADER = 4 * MIB
 
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 
@@ -140,7 +144,7 @@ def bootstrap_initrd(out_file, salt: str, hidden):
                 (
                     dmsetup_table(DISK_SIZE - META_SIZE, DISK_SIZE, "/dev/disk")
                     if hidden
-                    else dmsetup_table(4 * 1024, META_SIZE, "/dev/disk")
+                    else dmsetup_table(ZERO_HEADER, META_SIZE, "/dev/disk")
                 ),
                 file=table,
             )
@@ -488,7 +492,6 @@ def cascade(managers, prev, i=0, acc=None):
 
 
 def init_volumes(device: str, salt: str, hidden: bool):
-    meta_begin = DISK_SIZE - META_SIZE if hidden else 4096
     argon_cmd = [
         "argon2",
         salt,
@@ -510,6 +513,7 @@ def init_volumes(device: str, salt: str, hidden: bool):
     assert len(key_bytes) == 128
     with temp_file() as key_file:
         dd(of=key_file, input=key_bytes)
+        meta_begin = DISK_SIZE - META_SIZE if hidden else ZERO_HEADER
         header_stack = [
             lambda dev: device_view(
                 dmsetup_table(meta_begin, DISK_SIZE if hidden else META_SIZE, dev)
