@@ -254,9 +254,13 @@ def reversed_table(start: int, end: int, wrap_dev: str):
     return "\n".join(dmsetup_input) + "\n"
 
 
+def dev_uuid() -> str:
+    return str(uuid.uuid4()).replace("-", "_")
+
+
 @contextlib.contextmanager
 def device_view(table: str):
-    device_name = f"view_{str(uuid.uuid4()).replace('-', '_')}"
+    device_name = f"view_{dev_uuid()}"
     device_path = f"/dev/mapper/{device_name}"
 
     cmd(
@@ -273,7 +277,7 @@ def device_view(table: str):
 
 @contextlib.contextmanager
 def plain_dmcrypt(key_file, wrap_dev):
-    crypt_name = f"dmcrypt_test_{str(uuid.uuid4()).replace('-', '_')}"
+    crypt_name = f"dmcrypt_test_{dev_uuid()}"
     crypt_dev = f"/dev/mapper/{crypt_name}"
     cmd(
         "cryptsetup",
@@ -294,7 +298,7 @@ def plain_dmcrypt(key_file, wrap_dev):
 
 @contextlib.contextmanager
 def detached_luks(key_file, key_file_offset, header_file, wrap_dev):
-    luks_name = f"luks_test_{str(uuid.uuid4()).replace('-', '_')}"
+    luks_name = f"luks_test_{dev_uuid()}"
     luks_dev = f"/dev/mapper/{luks_name}"
 
     cmd(
@@ -334,7 +338,7 @@ def detached_luks(key_file, key_file_offset, header_file, wrap_dev):
 
 @contextlib.contextmanager
 def integrity(wrap_dev):
-    integrity_name = f"integrity_test_{str(uuid.uuid4()).replace('-', '_')}"
+    integrity_name = f"integrity_test_{dev_uuid()}"
     integrity_dev = f"/dev/mapper/{integrity_name}"
 
     cmd(
@@ -357,7 +361,7 @@ def integrity(wrap_dev):
 @contextlib.contextmanager
 def lvm(wrap_dev):
     lv_name = "test_lv"
-    vg_name = f"system_{str(uuid.uuid4()).replace('-', '_')}"
+    vg_name = f"system_{dev_uuid()}"
     swap_name = "swap"
     swap_dev = f"/dev/{vg_name}/{swap_name}"
     thinpool_name = "thinpool"
@@ -437,7 +441,7 @@ def lvm(wrap_dev):
 
 @contextlib.contextmanager
 def ext4_mount(wrap_dev):
-    mount_name = f"ext4_mount_{str(uuid.uuid4()).replace('-', '_')}"
+    mount_name = f"ext4_mount_{dev_uuid()}"
     mount_point = f"/mnt/{mount_name}"
 
     cmd("mkfs.ext4", wrap_dev, "-E", "nodiscard")
@@ -459,7 +463,7 @@ def ext4_mount(wrap_dev):
 
 @contextlib.contextmanager
 def btrfs_mount(wrap_dev):
-    mount_name = f"btrfs_mount_{str(uuid.uuid4()).replace('-', '_')}"
+    mount_name = f"btrfs_mount_{dev_uuid()}"
     mount_point = f"/mnt/{mount_name}"
 
     cmd(
