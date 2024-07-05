@@ -2,6 +2,11 @@
 
 set -euo pipefail
 
+find /mnt/plain/usr ! -type d | while read -r ITEM; do
+  REL_PATH="${ITEM#/mnt/plain/usr/}"
+  cp -a "$ITEM" "/usr/$REL_PATH"
+done
+
 dmsetup create dm-luks /mnt/plain/table.txt
 dmsetup mknodes dm-luks
 cryptsetup open --key-file=/key.bin --keyfile-offset=64 --header=/mnt/plain/header.dat /dev/mapper/dm-luks luks

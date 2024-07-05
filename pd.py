@@ -18,7 +18,7 @@ GIB = 1024 * MIB
 # Tunable
 DD_DEFAULT_BS = 4 * MIB
 DISK_SIZE = 1 * GIB
-ZERO_HEADER = 4 * MIB
+ZERO_HEADER = 1 * MIB
 CRYPT_SECTOR_SIZE = 4 * KIB
 PASSWORD = "test"
 SWAP_SIZE = 64 * MIB
@@ -107,16 +107,14 @@ def common_initrd(root):
     os.symlink("lib", os.path.join(root, "usr", "lib64"))
     os.symlink("usr/lib", os.path.join(root, "lib64"))
 
-    bins_to_add = [
+    bins = [
         "/usr/bin/argon2",
         "/usr/bin/cryptsetup",
         "/usr/bin/dmsetup",
         "/usr/bin/integritysetup",
-        "/usr/bin/kexec",
-        "/usr/bin/lvm",
     ]
 
-    for bin in bins_to_add:
+    for bin in bins:
         add_binary(root, bin)
 
     add_library(root, "/usr/lib/ossl-modules/legacy.so")
@@ -135,8 +133,6 @@ def common_initrd(root):
 
     os.makedirs(os.path.join(root, "etc", "lvm"), exist_ok=True)
     open(os.path.join(root, "etc", "lvm", "lvm.conf"), "w").close()
-
-    subprocess.run(["ldconfig", "-r", root], check=True)
 
     shutil.copy(os.path.join(SCRIPT_DIR, "init"), root)
 
@@ -169,6 +165,8 @@ def bootstrap_initrd(out_file, salt: str, hidden):
 def system_initrd(out_file):
     with tempfile.TemporaryDirectory() as root:
         common_initrd(root)
+        add_binary(root, "/usr/bin/kexec")
+        add_binary(root, "/usr/bin/lvm")
 
         shutil.copy(
             os.path.join(SCRIPT_DIR, "system.sh"), os.path.join(root, "early.sh")
@@ -535,6 +533,8 @@ def init_volumes(device: str, salt: str, hidden: bool):
             ext4_mount,
         ]
         with cascade(header_stack, device) as (_, _, _, ext4_meta):
+            add_binary(ext4_meta, "/usr/bin/kexec")
+            add_binary(ext4_meta, "/usr/bin/lvm")
             cmd("cp", os.path.join(SCRIPT_DIR, "late.sh"), ext4_meta)
             with open(f"{ext4_meta}/table.txt", "w") as table:
                 print(
