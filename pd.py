@@ -287,6 +287,7 @@ def detached_luks(key_file, key_file_offset, header_file, wrap_dev):
     cmd(
         "cryptsetup",
         "luksFormat",
+        "--use-random",
         "--batch-mode",
         "--hash=sha512",
         "--cipher=aes-xts-plain64",
@@ -569,6 +570,28 @@ def setup_device(device: str, salt: str):
     init_volumes(device, salt, True)
 
 
+def run_qemu(disk_img: str, salt: str, hidden: bool):
+    with temp_file(".cpio.gz") as initrd:
+        bootstrap_initrd(initrd, salt, hidden)
+        subprocess.run(
+            [
+                "qemu-system-x86_64",
+                "-kernel",
+                "/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage",
+                "-initrd",
+                initrd,
+                "-nographic",
+                "-append",
+                "ro console=ttyS0",
+                "-enable-kvm",
+                "-m",
+                "1G",
+                "-hda",
+                disk_img,
+            ]
+        )
+
+
 def main() -> int:
     salt4k = dd(_if="/dev/random", bs="4K", count=1, stdout=subprocess.PIPE).stdout
     salt = cmd_output("sha512sum", "--binary", input=salt4k).split()[0]
@@ -577,44 +600,8 @@ def main() -> int:
         dd(_if="/dev/zero", of=disk_img, bs=DISK_SIZE, count=1, status="progress")
         with loopback_device(disk_img) as loop:
             setup_device(loop, salt)
-            with temp_file(".cpio.gz") as decoy_initrd:
-                bootstrap_initrd(decoy_initrd, salt, False)
-                subprocess.run(
-                    [
-                        "qemu-system-x86_64",
-                        "-kernel",
-                        "/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage",
-                        "-initrd",
-                        decoy_initrd,
-                        "-nographic",
-                        "-append",
-                        "ro console=ttyS0",
-                        "-enable-kvm",
-                        "-m",
-                        "1G",
-                        "-hda",
-                        disk_img,
-                    ]
-                )
-            with temp_file(".cpio.gz") as hidden_initrd:
-                bootstrap_initrd(hidden_initrd, salt, True)
-                subprocess.run(
-                    [
-                        "qemu-system-x86_64",
-                        "-kernel",
-                        "/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage",
-                        "-initrd",
-                        hidden_initrd,
-                        "-nographic",
-                        "-append",
-                        "ro console=ttyS0",
-                        "-enable-kvm",
-                        "-m",
-                        "1G",
-                        "-hda",
-                        disk_img,
-                    ]
-                )
+            run_qemu(disk_img, salt, False)
+            run_qemu(disk_img, salt, True)
     return 0
 
 
