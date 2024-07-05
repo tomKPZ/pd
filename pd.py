@@ -117,8 +117,6 @@ def common_initrd(root):
     for bin in bins:
         add_binary(root, bin)
 
-    add_library(root, "/usr/lib/ossl-modules/legacy.so")
-
     add_binary(root, "/usr/bin/busybox")
     applets = subprocess.run(
         ["/usr/bin/busybox", "--list"], capture_output=True, text=True, check=True
