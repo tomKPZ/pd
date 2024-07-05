@@ -128,30 +128,20 @@ def common_initrd(root):
     shutil.copy(os.path.join(SCRIPT_DIR, "init"), root)
 
 
-def bootstrap_decoy_initrd(out_file):
+def bootstrap_initrd(out_file, salt: str, hidden):
     with tempfile.TemporaryDirectory() as root:
         common_initrd(root)
 
-        shutil.copy(os.path.join(SCRIPT_DIR, "early.sh"), root)
-        with open(os.path.join(root, "table.txt"), "w") as table:
-            print(dmsetup_table(8 * 1024, META_SIZE, "/dev/disk"), file=table)
-
-        subprocess.run(
-            f"find . -print0 | cpio --null -o --format=newc | gzip -{INITRD_GZ_LEVEL} >{out_file}",
-            cwd=root,
-            shell=True,
-            check=True,
-        )
-
-
-def bootstrap_hidden_initrd(out_file):
-    with tempfile.TemporaryDirectory() as root:
-        common_initrd(root)
-
+        with open(os.path.join(root, "salt.txt"), "w") as salt_file:
+            salt_file.write(salt)
         shutil.copy(os.path.join(SCRIPT_DIR, "early.sh"), root)
         with open(os.path.join(root, "table.txt"), "w") as table:
             print(
-                dmsetup_table(DISK_SIZE - META_SIZE + 4096, DISK_SIZE, "/dev/disk"),
+                (
+                    dmsetup_table(DISK_SIZE - META_SIZE, DISK_SIZE, "/dev/disk")
+                    if hidden
+                    else dmsetup_table(4 * 1024, META_SIZE, "/dev/disk")
+                ),
                 file=table,
             )
 
@@ -496,16 +486,11 @@ def cascade(managers, prev, i=0, acc=None):
             yield res
 
 
-def init_volumes(device: str, hidden: bool):
+def init_volumes(device: str, salt: str, hidden: bool):
     meta_begin = DISK_SIZE - META_SIZE if hidden else 4096
-    salt_skip = meta_begin // 4096 if hidden else 1
-    salt4k = dd(
-        _if=device, bs="4K", skip=salt_skip, count=1, stdout=subprocess.PIPE
-    ).stdout
-    salt512 = cmd_output("sha512sum", "--binary", input=salt4k).split()[0]
     argon_cmd = [
         "argon2",
-        salt512,
+        salt,
         "-id",
         "-t=3",
         "-m=12",
@@ -526,9 +511,7 @@ def init_volumes(device: str, hidden: bool):
         dd(of=key_file, input=key_bytes)
         header_stack = [
             lambda dev: device_view(
-                dmsetup_table(
-                    meta_begin + 4096, DISK_SIZE if hidden else META_SIZE, dev
-                )
+                dmsetup_table(meta_begin, DISK_SIZE if hidden else META_SIZE, dev)
             ),
             functools.partial(plain_dmcrypt, key_file),
             integrity,
@@ -573,26 +556,29 @@ def init_volumes(device: str, hidden: bool):
                         print("HELLO FROM DECOY SYSTEM", file=message)
 
 
-def setup_device(device: str):
+def setup_device(device: str, salt: str):
     with temp_file() as key_file:
-        dd(_if="/dev/urandom", of=key_file, bs=64, count=1)
+        dd(_if="/dev/random", of=key_file, bs=64, count=1)
         with open(key_file, mode="rb") as key:
             shred_key = base64.encodebytes(key.read()).decode()
             print("Using shredding key", shred_key.replace("\n", ""))
         with plain_dmcrypt(key_file, device) as plain:
             dd(_if="/dev/zero", of=plain, bs="4M", status="progress", check=False)
     dd(_if="/dev/zero", of=device, bs="4K", count=1)
-    init_volumes(device, False)
-    init_volumes(device, True)
+    init_volumes(device, salt, False)
+    init_volumes(device, salt, True)
 
 
 def main() -> int:
+    salt4k = dd(_if="/dev/random", bs="4K", count=1, stdout=subprocess.PIPE).stdout
+    salt = cmd_output("sha512sum", "--binary", input=salt4k).split()[0]
+
     with temp_file(".img") as disk_img:
         dd(_if="/dev/zero", of=disk_img, bs=DISK_SIZE, count=1, status="progress")
         with loopback_device(disk_img) as loop:
-            setup_device(loop)
+            setup_device(loop, salt)
             with temp_file(".cpio.gz") as decoy_initrd:
-                bootstrap_decoy_initrd(decoy_initrd)
+                bootstrap_initrd(decoy_initrd, salt, False)
                 subprocess.run(
                     [
                         "qemu-system-x86_64",
@@ -611,7 +597,7 @@ def main() -> int:
                     ]
                 )
             with temp_file(".cpio.gz") as hidden_initrd:
-                bootstrap_hidden_initrd(hidden_initrd)
+                bootstrap_initrd(hidden_initrd, salt, True)
                 subprocess.run(
                     [
                         "qemu-system-x86_64",
