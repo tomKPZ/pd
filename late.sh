@@ -5,7 +5,7 @@ set -euo pipefail
 find /mnt/plain/root ! -type d | while read -r ITEM; do
   REL_PATH="${ITEM#/mnt/plain/root/}"
   mkdir -p "$(dirname "$REL_PATH")"
-  cp -a "$ITEM" "/$REL_PATH"
+  ln -sf "$ITEM" "/$REL_PATH"
 done
 
 dmsetup create dm-luks /mnt/plain/table.txt
