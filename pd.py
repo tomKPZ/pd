@@ -27,7 +27,7 @@ THIN_CHUNK_SIZE = 64 * KIB
 META_SIZE = 64 * MIB
 MOVE_PES = False
 REVERSE_CHUNK_SIZE = 8 * MIB
-INITRD_GZ_LEVEL = "1"
+INITRD_XZ_LEVEL = "1"
 
 # Constant
 assert SWAP_SIZE % PE_SIZE == 0
@@ -159,7 +159,7 @@ def bootstrap_initrd(out_file, salt: str, hidden):
             )
 
         subprocess.run(
-            f"find . -print0 | cpio --null -o --format=newc | gzip -{INITRD_GZ_LEVEL} >{out_file}",
+            f"find . -print0 | cpio --null -o --format=newc | xz --check=crc32 -{INITRD_XZ_LEVEL} >{out_file}",
             cwd=root,
             shell=True,
             check=True,
@@ -175,7 +175,7 @@ def system_initrd(out_file):
         )
 
         subprocess.run(
-            f"find . -print0 | cpio --null -o --format=newc | gzip -{INITRD_GZ_LEVEL} >{out_file}",
+            f"find . -print0 | cpio --null -o --format=newc | xz --check=crc32 -{INITRD_XZ_LEVEL} >{out_file}",
             cwd=root,
             shell=True,
             check=True,
@@ -593,7 +593,7 @@ def setup_device(device: str, salt: str):
 
 
 def run_qemu(disk_img: str, salt: str, hidden: bool):
-    with temp_file(".cpio.gz") as initrd:
+    with temp_file(".cpio.xz") as initrd:
         bootstrap_initrd(initrd, salt, hidden)
         subprocess.run(
             [
