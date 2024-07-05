@@ -2,9 +2,10 @@
 
 set -euo pipefail
 
-find /mnt/plain/usr ! -type d | while read -r ITEM; do
-  REL_PATH="${ITEM#/mnt/plain/usr/}"
-  cp -a "$ITEM" "/usr/$REL_PATH"
+find /mnt/plain/root ! -type d | while read -r ITEM; do
+  REL_PATH="${ITEM#/mnt/plain/root/}"
+  mkdir -p "$(dirname "$REL_PATH")"
+  cp -a "$ITEM" "/$REL_PATH"
 done
 
 dmsetup create dm-luks /mnt/plain/table.txt

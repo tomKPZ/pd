@@ -129,9 +129,6 @@ def common_initrd(root):
     open(os.path.join(root, "etc", "fstab"), "w").close()
     open(os.path.join(root, "etc", "ld.so.conf"), "w").close()
 
-    os.makedirs(os.path.join(root, "etc", "lvm"), exist_ok=True)
-    open(os.path.join(root, "etc", "lvm", "lvm.conf"), "w").close()
-
     shutil.copy(os.path.join(SCRIPT_DIR, "init"), root)
 
 
@@ -531,8 +528,11 @@ def init_volumes(device: str, salt: str, hidden: bool):
             ext4_mount,
         ]
         with cascade(header_stack, device) as (_, _, _, ext4_meta):
-            add_binary(ext4_meta, "/usr/bin/kexec")
-            add_binary(ext4_meta, "/usr/bin/lvm")
+            root = os.path.join(ext4_meta, "root")
+            os.makedirs(os.path.join(root, "etc", "lvm"), exist_ok=True)
+            open(os.path.join(root, "etc", "lvm", "lvm.conf"), "w").close()
+            add_binary(root, "/usr/bin/kexec")
+            add_binary(root, "/usr/bin/lvm")
             cmd("cp", os.path.join(SCRIPT_DIR, "late.sh"), ext4_meta)
             with open(f"{ext4_meta}/table.txt", "w") as table:
                 print(
