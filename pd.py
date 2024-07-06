@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import base64
 import contextlib
 import functools
 import math
@@ -29,6 +28,7 @@ MOVE_PES = False
 REVERSE_CHUNK_SIZE = 8 * MIB
 INITRD_XZ_LEVEL = "1"
 ARGON2_SECURE = False
+HIDDEN_SALT_SUFFIX = "a"
 if ARGON2_SECURE:
     ARGON2_ITERATIONS = 14
     ARGON2_M_KB_LOG2 = 18
@@ -164,8 +164,13 @@ def bootstrap_initrd(out_file, salt: str, hidden):
         table_file = os.path.join(root, "table.txt")
         with open(table_file, "w") as table:
             print(dmsetup_table(ZERO_HEADER, META_SIZE, "/dev/disk"), file=table)
+
         if hidden:
-            cmd("sed", "-i", f"s/{ZERO_HEADER}/{DISK_SIZE - META_SIZE}/", table_file)
+            start_sector = ZERO_HEADER // DMSETUP_SECTOR_SIZE
+            end_sector = (DISK_SIZE - META_SIZE) // DMSETUP_SECTOR_SIZE
+            cmd("sed", "-i", f"s/{start_sector}/{end_sector}/", table_file)
+            with open(os.path.join(root, "salt.txt"), "a") as salt_file:
+                print(HIDDEN_SALT_SUFFIX, file=salt_file, end="")
 
         subprocess.run(
             f"find . -print0 | cpio --null -o --format=newc | xz --check=crc32 -{INITRD_XZ_LEVEL} >{out_file}",
@@ -515,7 +520,8 @@ def cascade(managers, prev, i=0, acc=None):
 
 
 def init_volumes(device: str, salt: str, hidden: bool):
-    argon_cmd = ["argon2", salt] + ARGON2_ARGS
+    salt_suffix = HIDDEN_SALT_SUFFIX if hidden else ""
+    argon_cmd = ["argon2", salt + salt_suffix] + ARGON2_ARGS
     key_hex = (
         cmd(*argon_cmd, input=PASSWORD.encode(), stdout=subprocess.PIPE)
         .stdout.decode()
@@ -569,7 +575,7 @@ def init_volumes(device: str, salt: str, hidden: bool):
                 )
                 system_initrd(f"{btrfs_data}/boot/initramfs-linux.img")
                 with open(f"{btrfs_data}/boot/cmdline-linux.txt", "w") as cmdline:
-                    print("ro console=ttyS0", file=cmdline)
+                    print("console=ttyS0", file=cmdline)
                 with open(f"{btrfs_data}/message.txt", "w") as message:
                     if hidden:
                         print("HELLO FROM HIDDEN SYSTEM", file=message)
@@ -581,7 +587,7 @@ def setup_device(device: str, salt: str):
     with temp_file() as key_file:
         dd(_if="/dev/random", of=key_file, bs=64, count=1)
         with open(key_file, mode="rb") as key:
-            shred_key = base64.encodebytes(key.read()).decode()
+            shred_key = key.read().hex()
             print("Using shredding key", shred_key.replace("\n", ""))
         with plain_dmcrypt(key_file, device) as plain:
             dd(
@@ -608,7 +614,7 @@ def run_qemu(disk_img: str, salt: str, hidden: bool):
                 initrd,
                 "-nographic",
                 "-append",
-                "ro console=ttyS0",
+                "console=ttyS0",
                 "-enable-kvm",
                 "-m",
                 "1G",
