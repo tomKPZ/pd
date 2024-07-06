@@ -28,6 +28,15 @@ META_SIZE = 64 * MIB
 MOVE_PES = False
 REVERSE_CHUNK_SIZE = 8 * MIB
 INITRD_XZ_LEVEL = "1"
+ARGON2_SECURE = False
+if ARGON2_SECURE:
+    ARGON2_ITERATIONS = 14
+    ARGON2_M_KB_LOG2 = 18
+    ARGON2_THREADS = 16
+else:
+    ARGON2_ITERATIONS = 2
+    ARGON2_M_KB_LOG2 = 15
+    ARGON2_THREADS = 4
 
 # Constant
 assert SWAP_SIZE % PE_SIZE == 0
@@ -501,9 +510,9 @@ def init_volumes(device: str, salt: str, hidden: bool):
         "argon2",
         salt,
         "-id",
-        "-t=3",
-        "-m=12",
-        "-p=1",
+        f"-t={ARGON2_ITERATIONS}",
+        f"-m={ARGON2_M_KB_LOG2}",
+        f"-p={ARGON2_THREADS}",
         "-l=128",
         "-v=13",
         "-r",
