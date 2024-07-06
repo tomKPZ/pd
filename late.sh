@@ -4,8 +4,10 @@ set -euo pipefail
 
 find /mnt/plain/root ! -type d | while read -r ITEM; do
   REL_PATH="${ITEM#/mnt/plain/root/}"
-  mkdir -p "$(dirname "$REL_PATH")"
-  ln -sf "$ITEM" "/$REL_PATH"
+  if [ ! -e "$REL_PATH" ]; then
+    mkdir -p "$(dirname "$REL_PATH")"
+    cp -P "$ITEM" "/$REL_PATH"
+  fi
 done
 
 dmsetup create --readonly dm-luks /mnt/plain/table.txt
@@ -26,8 +28,16 @@ dd if=/dev/zero bs=1 count=$padding >>/initramfs-linux.img
 cp /mnt/plain/table.txt /tmp
 cp /mnt/plain/header.dat /tmp
 cp /key.bin /tmp
-(cd /tmp && find . -print0 | cpio --null -ov --format=newc >>/initramfs-linux.img)
+(cd /tmp && find . -print0 | cpio --null -o --format=newc >>/initramfs-linux.img)
 
 kexec -l /mnt/luks/boot/vmlinuz-linux --initrd=/initramfs-linux.img --command-line="$(cat /mnt/luks/boot/cmdline-linux.txt)"
 shred -u /key.bin /tmp/* /initramfs-linux.img
+umount /mnt/luks
+vgchange -an $VG
+cryptsetup close luks
+dmsetup remove dm-luks
+umount /mnt/plain
+integritysetup close integrity
+cryptsetup close plain
+dmsetup remove dm-plain
 kexec -e

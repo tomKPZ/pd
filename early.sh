@@ -10,4 +10,5 @@ cryptsetup open --type=plain --cipher=aes-xts-plain64 --key-size=512 --key-file=
 integritysetup open /dev/mapper/plain integrity
 mkdir /mnt/plain
 mount /dev/mapper/integrity /mnt/plain -o,defaults,nodiscard,ro
-exec /mnt/plain/late.sh
+cp /mnt/plain/late.sh /
+exec /late.sh
