@@ -8,7 +8,7 @@ find /mnt/plain/root ! -type d | while read -r ITEM; do
   ln -sf "$ITEM" "/$REL_PATH"
 done
 
-dmsetup create dm-luks /mnt/plain/table.txt
+dmsetup create --readonly dm-luks /mnt/plain/table.txt
 dmsetup mknodes dm-luks
 cryptsetup open --key-file=/key.bin --keyfile-offset=64 --header=/mnt/plain/header.dat /dev/mapper/dm-luks luks
 VG=$(vgs --headings none | awk '{print $1;}' | head -n 1)
