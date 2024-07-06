@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-ln -s /dev/sda /dev/disk
+ln -s /dev/nvme0n1 /dev/disk
 dmsetup create dm-luks /table.txt
 dmsetup mknodes dm-luks
 cryptsetup open --key-file=/key.bin --keyfile-offset=64 --header=/header.dat /dev/mapper/dm-luks luks

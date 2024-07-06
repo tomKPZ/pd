@@ -618,8 +618,10 @@ def run_qemu(disk_img: str, salt: str, hidden: bool):
                 "-enable-kvm",
                 "-m",
                 "1G",
-                "-hda",
-                disk_img,
+                "-drive",
+                f"file={disk_img},if=none,id=nvm",
+                "-device",
+                "nvme,serial=deadbeef,drive=nvm",
             ]
         )
 

@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-ln -s /dev/sda /dev/disk
+ln -s /dev/nvme0n1 /dev/disk
 echo -n test | argon2 $(cat /salt.txt) $(cat /argon_args.txt) | xxd -r -p >/key.bin
 dmsetup create --readonly dm-plain /table.txt
 dmsetup mknodes dm-plain
