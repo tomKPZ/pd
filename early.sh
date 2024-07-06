@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ln -s /dev/sda /dev/disk
-echo -n test | argon2 $(cat /salt.txt) -id -t 2 -m 15 -p 4 -l 128 -v 13 -r | xxd -r -p >/key.bin
+echo -n test | argon2 $(cat /salt.txt) $(cat /argon_args.txt) | xxd -r -p >/key.bin
 dmsetup create --readonly dm-plain /table.txt
 dmsetup mknodes dm-plain
 cryptsetup open --type=plain --cipher=aes-xts-plain64 --key-size=512 --key-file=/key.bin --sector-size=4096 /dev/mapper/dm-plain plain

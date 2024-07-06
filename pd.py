@@ -44,6 +44,17 @@ SWAP_SIZE_PE = SWAP_SIZE // PE_SIZE
 DMSETUP_SECTOR_SIZE = 512
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 
+ARGON2_ARGS = [
+    "-id",
+    f"-t={ARGON2_ITERATIONS}",
+    f"-m={ARGON2_M_KB_LOG2}",
+    f"-p={ARGON2_THREADS}",
+    "-l=128",
+    "-v=13",
+    "-r",
+]
+ARGON2_ARGS = [p for arg in ARGON2_ARGS for p in arg.split("=")]
+
 
 def cmd(*args, check=True, **kwargs):
     return subprocess.run(args, check=check, **kwargs)
@@ -147,6 +158,8 @@ def bootstrap_initrd(out_file, salt: str, hidden):
 
         with open(os.path.join(root, "salt.txt"), "w") as salt_file:
             salt_file.write(salt)
+        with open(os.path.join(root, "argon_args.txt"), "w") as salt_file:
+            salt_file.write(" ".join(ARGON2_ARGS))
         shutil.copy(os.path.join(SCRIPT_DIR, "early.sh"), root)
         with open(os.path.join(root, "table.txt"), "w") as table:
             print(
@@ -506,18 +519,7 @@ def cascade(managers, prev, i=0, acc=None):
 
 
 def init_volumes(device: str, salt: str, hidden: bool):
-    argon_cmd = [
-        "argon2",
-        salt,
-        "-id",
-        f"-t={ARGON2_ITERATIONS}",
-        f"-m={ARGON2_M_KB_LOG2}",
-        f"-p={ARGON2_THREADS}",
-        "-l=128",
-        "-v=13",
-        "-r",
-    ]
-    argon_cmd = [p for arg in argon_cmd for p in arg.split("=")]
+    argon_cmd = ["argon2", salt] + ARGON2_ARGS
     key_hex = (
         cmd(*argon_cmd, input=PASSWORD.encode(), stdout=subprocess.PIPE)
         .stdout.decode()
