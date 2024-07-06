@@ -22,11 +22,12 @@ cp /mnt/luks/boot/initramfs-linux.img /
 size=$(stat -c%s /initramfs-linux.img)
 padding=$(((4 - (size % 4)) % 4))
 dd if=/dev/zero bs=1 count=$padding >>/initramfs-linux.img
-cd /tmp
-cp /mnt/plain/table.txt .
-cp /mnt/plain/header.dat .
-cp /key.bin .
-find . -print0 | cpio --null -ov --format=newc >>/initramfs-linux.img
-cd /
+
+cp /mnt/plain/table.txt /tmp
+cp /mnt/plain/header.dat /tmp
+cp /key.bin /tmp
+(cd /tmp && find . -print0 | cpio --null -ov --format=newc >>/initramfs-linux.img)
+
 kexec -l /mnt/luks/boot/vmlinuz-linux --initrd=/initramfs-linux.img --command-line="$(cat /mnt/luks/boot/cmdline-linux.txt)"
+shred -u /key.bin /tmp/* /initramfs-linux.img
 kexec -e
