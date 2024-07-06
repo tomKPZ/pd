@@ -161,10 +161,11 @@ def bootstrap_initrd(out_file, salt: str, hidden):
         with open(os.path.join(root, "argon_args.txt"), "w") as salt_file:
             salt_file.write(" ".join(ARGON2_ARGS))
         shutil.copy(os.path.join(SCRIPT_DIR, "early.sh"), root)
-        with open(os.path.join(root, "table.txt"), "w") as table:
-            meta_begin = DISK_SIZE - META_SIZE if hidden else ZERO_HEADER
-            meta_end = DISK_SIZE - ZERO_HEADER if hidden else META_SIZE
-            print(dmsetup_table(meta_begin, meta_end, "/dev/disk"), file=table)
+        table_file = os.path.join(root, "table.txt")
+        with open(table_file, "w") as table:
+            print(dmsetup_table(ZERO_HEADER, META_SIZE, "/dev/disk"), file=table)
+        if hidden:
+            cmd("sed", "-i", f"s/{ZERO_HEADER}/{DISK_SIZE - META_SIZE}/", table_file)
 
         subprocess.run(
             f"find . -print0 | cpio --null -o --format=newc | xz --check=crc32 -{INITRD_XZ_LEVEL} >{out_file}",
