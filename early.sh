@@ -5,8 +5,8 @@ set -euo pipefail
 echo -n test | argon2 $(cat /salt.txt) $(cat /argon_args.txt) | xxd -r -p >/key.bin
 mkdir -p /mnt/plain
 
-for dev in $(cat /proc/partitions | tail -n +3 | awk '{print "/dev/"$4;}'); do
-	ln -s "$dev" /dev/disk
+for dev in $(cat /proc/partitions | tail -n +3 | tr -s ' ' '\t' | cut -f 5); do
+	ln -s "/dev/$dev" /dev/boot_disk
 	if dmsetup create --readonly dm-plain /table.txt; then
 		dmsetup mknodes dm-plain
 		if cryptsetup open --type=plain --cipher=aes-xts-plain64 --key-size=512 --key-file=/key.bin --sector-size=4096 /dev/mapper/dm-plain plain; then
@@ -21,7 +21,7 @@ for dev in $(cat /proc/partitions | tail -n +3 | awk '{print "/dev/"$4;}'); do
 		fi
 		dmsetup remove dm-plain
 	fi
-	rm /dev/disk
+	rm /dev/boot_disk
 done
 
 shred -u /key.bin

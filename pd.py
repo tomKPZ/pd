@@ -163,7 +163,7 @@ def bootstrap_initrd(out_file, salt: str, hidden):
         shutil.copy(os.path.join(SCRIPT_DIR, "early.sh"), root)
         table_file = os.path.join(root, "table.txt")
         with open(table_file, "w") as table:
-            print(dmsetup_table(ZERO_HEADER, META_SIZE, "/dev/disk"), file=table)
+            print(dmsetup_table(ZERO_HEADER, META_SIZE, "/dev/boot_disk"), file=table)
 
         if hidden:
             start_sector = ZERO_HEADER // DMSETUP_SECTOR_SIZE
@@ -549,9 +549,9 @@ def init_volumes(device: str, salt: str, hidden: bool):
             with open(f"{ext4_meta}/table.txt", "w") as table:
                 print(
                     (
-                        reversed_table(0, DISK_SIZE - META_SIZE, "/dev/disk")
+                        reversed_table(0, DISK_SIZE - META_SIZE, "/dev/boot_disk")
                         if hidden
-                        else dmsetup_table(META_SIZE, DISK_SIZE, "/dev/disk")
+                        else dmsetup_table(META_SIZE, DISK_SIZE, "/dev/boot_disk")
                     ),
                     file=table,
                 )
