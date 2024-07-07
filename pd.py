@@ -340,26 +340,30 @@ def detached_luks(key_file, key_file_offset, header_file, wrap_dev):
     luks_name = f"luks_test_{dev_uuid()}"
     luks_dev = f"/dev/mapper/{luks_name}"
 
-    cmd(
-        "cryptsetup",
-        "luksFormat",
-        "--batch-mode",
-        "--use-random",
-        "--hash=sha512",
-        "--cipher=aes-xts-plain64",
-        f"--key-size={CRYPT_KEY_SIZE}",
-        f"--sector-size={CRYPT_SECTOR_SIZE}",
-        f"--key-file={key_file}",
-        f"--keyfile-offset={key_file_offset}",
-        f"--header={header_file}",
-        # The password has already passed through a KDF, but LUKS doesn't
-        # support raw key files, so set the PBKDF parameters to the minimum.
-        "--pbkdf=argon2id",
-        "--pbkdf-force-iterations=4",
-        "--pbkdf-memory=32",
-        "--pbkdf-parallel=1",
-        wrap_dev,
-    )
+    with temp_file() as volume_key:
+        with open(volume_key, "wb") as f:
+            f.write(rand512())
+        cmd(
+            "cryptsetup",
+            "luksFormat",
+            "--batch-mode",
+            "--use-random",
+            "--hash=sha512",
+            "--cipher=aes-xts-plain64",
+            f"--key-size={CRYPT_KEY_SIZE}",
+            f"--sector-size={CRYPT_SECTOR_SIZE}",
+            f"--key-file={key_file}",
+            f"--keyfile-offset={key_file_offset}",
+            f"--header={header_file}",
+            f"--volume-key-file={volume_key}",
+            # The password has already passed through a KDF, but LUKS doesn't
+            # support raw key files, so set the PBKDF parameters to the minimum.
+            "--pbkdf=argon2id",
+            "--pbkdf-force-iterations=4",
+            "--pbkdf-memory=32",
+            "--pbkdf-parallel=1",
+            wrap_dev,
+        )
     cmd(
         "cryptsetup",
         "open",
