@@ -1,15 +1,5 @@
-# EditorConfig is awesome: https://EditorConfig.org
-
-# top-most EditorConfig file
 root = true
 
-# Apply these settings to all files
 [*]
 indent_style = space
 indent_size = 4
-
-# Shell scripts
-[*.sh]
-indent_style = space
-indent_size = 4
-

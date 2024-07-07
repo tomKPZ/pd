@@ -2,9 +2,11 @@
 
 set -euo pipefail
 
-echo -n test | argon2 $(cat /salt.txt) $(cat /argon_args.txt) | xxd -r -p >/key.bin
-mkdir -p /mnt/plain
+{read_password}
+echo -n "$password" | argon2 $(cat /salt.txt) $(cat /argon_args.txt) | xxd -r -p >/key.bin
+unset password
 
+mkdir -p /mnt/plain
 for dev in $(cat /proc/partitions | tail -n +3 | tr -s ' ' '\t' | cut -f 5); do
     ln -s "/dev/$dev" /dev/boot_disk
     if dmsetup create --readonly dm-plain /table.txt; then

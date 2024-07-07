@@ -2,6 +2,7 @@
 
 import contextlib
 import functools
+import getpass
 import math
 import os
 import shutil
@@ -19,7 +20,6 @@ DD_DEFAULT_BS = 4 * MIB
 DISK_SIZE = 1 * GIB
 ZERO_HEADER = 1 * MIB
 CRYPT_SECTOR_SIZE = 4 * KIB
-PASSWORD = "test"
 SWAP_SIZE = 64 * MIB
 PE_SIZE = 4 * MIB
 THIN_CHUNK_SIZE = 64 * KIB
@@ -27,8 +27,8 @@ META_SIZE = 64 * MIB
 MOVE_PES = False
 REVERSE_CHUNK_SIZE = 8 * MIB
 INITRD_XZ_LEVEL = "1"
-ARGON2_SECURE = False
 HIDDEN_SALT_SUFFIX = "a"
+ARGON2_SECURE = False
 if ARGON2_SECURE:
     ARGON2_ITERATIONS = 14
     ARGON2_M_KB_LOG2 = 18
@@ -37,6 +37,8 @@ else:
     ARGON2_ITERATIONS = 2
     ARGON2_M_KB_LOG2 = 15
     ARGON2_THREADS = 4
+USE_TEST_PASSWORD = True
+TEST_PASSWORD = "testpassword"
 
 # Constant
 assert SWAP_SIZE % PE_SIZE == 0
@@ -160,7 +162,17 @@ def bootstrap_initrd(out_file, salt: str, hidden):
             salt_file.write(salt)
         with open(os.path.join(root, "argon_args.txt"), "w") as salt_file:
             salt_file.write(" ".join(ARGON2_ARGS))
-        shutil.copy(os.path.join(SCRIPT_DIR, "early.sh"), root)
+
+        with open(os.path.join(SCRIPT_DIR, "early.sh")) as src:
+            with open(os.path.join(root, "early.sh"), "w") as dst:
+                pw = (
+                    f"password={TEST_PASSWORD}"
+                    if USE_TEST_PASSWORD
+                    else "read -sp 'Password: ' password\necho"
+                )
+                dst.write(src.read().format(read_password=pw))
+            os.chmod(os.path.join(root, "early.sh"), 0o755)
+
         table_file = os.path.join(root, "table.txt")
         with open(table_file, "w") as table:
             print(dmsetup_table(ZERO_HEADER, META_SIZE, "/dev/boot_disk"), file=table)
@@ -519,14 +531,23 @@ def cascade(managers, prev, i=0, acc=None):
             yield res
 
 
+def read_password(pw_type):
+    if USE_TEST_PASSWORD:
+        return TEST_PASSWORD
+    while True:
+        password1 = getpass.getpass(f"{pw_type} password: ")
+        password2 = getpass.getpass(f"Confirm {pw_type} password: ")
+        if password1 == password2:
+            return password1
+        else:
+            print("Passwords do not match. Please try again.")
+
+
 def init_volumes(device: str, salt: str, hidden: bool):
     salt_suffix = HIDDEN_SALT_SUFFIX if hidden else ""
     argon_cmd = ["argon2", salt + salt_suffix] + ARGON2_ARGS
-    key_hex = (
-        cmd(*argon_cmd, input=PASSWORD.encode(), stdout=subprocess.PIPE)
-        .stdout.decode()
-        .strip()
-    )
+    password = read_password("Hidden" if hidden else "Decoy")
+    key_hex = cmd_output(*argon_cmd, input=password.encode())
     key_bytes = bytes.fromhex(key_hex)
     assert len(key_bytes) == 128
     with temp_file() as key_file:
