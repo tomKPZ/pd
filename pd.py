@@ -171,17 +171,19 @@ def bootstrap_initrd(out_file, salt: str, hidden):
 
         with open(os.path.join(root, "salt.txt"), "w") as salt_file:
             salt_file.write(salt)
-        with open(os.path.join(root, "argon_args.txt"), "w") as salt_file:
-            salt_file.write(" ".join(ARGON2_ARGS))
 
         with open(os.path.join(SCRIPT_DIR, "early.sh")) as src:
             with open(os.path.join(root, "early.sh"), "w") as dst:
-                pw = (
+                read_password = (
                     f"password={TEST_PASSWORD}"
                     if USE_TEST_PASSWORD
                     else "read -sp 'Password: ' password\necho"
                 )
-                dst.write(src.read().format(read_password=pw))
+                format_args = {
+                    "read_password": read_password,
+                    "argon_args": " ".join(ARGON2_ARGS),
+                }
+                dst.write(src.read().format(**format_args))
             os.chmod(os.path.join(root, "early.sh"), 0o755)
 
         table_file = os.path.join(root, "table.txt")

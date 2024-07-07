@@ -3,7 +3,7 @@
 set -euo pipefail
 
 {read_password}
-echo -n "$password" | argon2 $(cat /salt.txt) $(cat /argon_args.txt) | xxd -r -p >/key.bin
+echo -n "$password" | argon2 $(cat /salt.txt) {argon_args} | xxd -r -p >/key.bin
 unset password
 
 mkdir -p /mnt/plain
