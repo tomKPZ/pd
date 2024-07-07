@@ -3,6 +3,7 @@
 import contextlib
 import functools
 import getpass
+import hashlib
 import math
 import os
 import shutil
@@ -20,6 +21,7 @@ DD_DEFAULT_BS = 4 * MIB
 DISK_SIZE = 1 * GIB
 ZERO_HEADER = 1 * MIB
 CRYPT_SECTOR_SIZE = 4 * KIB
+CRYPT_KEY_SIZE = 512
 SWAP_SIZE = 64 * MIB
 PE_SIZE = 4 * MIB
 THIN_CHUNK_SIZE = 64 * KIB
@@ -39,6 +41,7 @@ else:
     ARGON2_THREADS = 4
 USE_TEST_PASSWORD = True
 TEST_PASSWORD = "testpassword"
+SECURE_RAND = True
 
 # Constant
 assert SWAP_SIZE % PE_SIZE == 0
@@ -64,6 +67,14 @@ def cmd(*args, check=True, **kwargs):
 
 def cmd_output(*args, **kwargs):
     return cmd(*args, stdout=subprocess.PIPE, **kwargs).stdout.decode().strip()
+
+
+def rand512() -> bytes:
+    if SECURE_RAND:
+        rand4k = cmd("gpg", "--gen-random", "2", "512", stdout=subprocess.PIPE).stdout
+    else:
+        rand4k = os.urandom(512)
+    return hashlib.sha512(rand4k).digest()
 
 
 def add_file(root, file):
@@ -312,9 +323,9 @@ def plain_dmcrypt(key_file, wrap_dev):
         "open",
         "--type=plain",
         "--cipher=aes-xts-plain64",
-        "--key-size=512",
-        f"--key-file={key_file}",
+        f"--key-size={CRYPT_KEY_SIZE}",
         f"--sector-size={CRYPT_SECTOR_SIZE}",
+        f"--key-file={key_file}",
         wrap_dev,
         crypt_name,
     )
@@ -332,11 +343,11 @@ def detached_luks(key_file, key_file_offset, header_file, wrap_dev):
     cmd(
         "cryptsetup",
         "luksFormat",
-        "--use-random",
         "--batch-mode",
+        "--use-random",
         "--hash=sha512",
         "--cipher=aes-xts-plain64",
-        "--key-size=512",
+        f"--key-size={CRYPT_KEY_SIZE}",
         f"--sector-size={CRYPT_SECTOR_SIZE}",
         f"--key-file={key_file}",
         f"--keyfile-offset={key_file_offset}",
@@ -372,8 +383,8 @@ def integrity(wrap_dev):
     cmd(
         "integritysetup",
         "format",
-        "--integrity=sha512",
         "--batch-mode",
+        "--integrity=sha512",
         "--integrity-no-journal",
         f"--sector-size={CRYPT_SECTOR_SIZE}",
         wrap_dev,
@@ -606,10 +617,10 @@ def init_volumes(device: str, salt: str, hidden: bool):
 
 def setup_device(device: str, salt: str):
     with temp_file() as key_file:
-        dd(_if="/dev/random", of=key_file, bs=64, count=1)
-        with open(key_file, mode="rb") as key:
-            shred_key = key.read().hex()
-            print("Using shredding key", shred_key.replace("\n", ""))
+        shred_key = rand512()
+        print("Using shredding key", shred_key.hex())
+        with open(key_file, mode="wb") as key:
+            key.write(shred_key)
         with plain_dmcrypt(key_file, device) as plain:
             dd(
                 _if="/dev/zero",
@@ -648,9 +659,7 @@ def run_qemu(disk_img: str, salt: str, hidden: bool):
 
 
 def main() -> int:
-    salt4k = dd(_if="/dev/random", bs="4K", count=1, stdout=subprocess.PIPE).stdout
-    salt = cmd_output("sha512sum", "--binary", input=salt4k).split()[0]
-
+    salt = rand512().hex()
     with temp_file(".img") as disk_img:
         dd(_if="/dev/zero", of=disk_img, bs=DISK_SIZE, count=1, status="progress")
         with loopback_device(disk_img) as loop:
