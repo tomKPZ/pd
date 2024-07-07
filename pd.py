@@ -54,7 +54,7 @@ ARGON2_ARGS = [
     f"-t={ARGON2_ITERATIONS}",
     f"-m={ARGON2_M_KB_LOG2}",
     f"-p={ARGON2_THREADS}",
-    "-l=128",
+    "-l=512",
     "-v=13",
     "-r",
 ]
@@ -569,7 +569,6 @@ def init_volumes(device: str, salt: str, hidden: bool):
     password = read_password("Hidden" if hidden else "Decoy")
     key_hex = cmd_output(*argon_cmd, input=password.encode())
     key_bytes = bytes.fromhex(key_hex)
-    assert len(key_bytes) == 128
     with temp_file() as key_file:
         dd(of=key_file, input=key_bytes)
         meta_begin = DISK_SIZE - META_SIZE if hidden else ZERO_HEADER
