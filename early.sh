@@ -11,7 +11,7 @@ for dev in $(cat /proc/partitions | tail -n +3 | tr -s ' ' '\t' | cut -f 5); do
     ln -s "/dev/$dev" /dev/boot_disk
     if dmsetup create --readonly dm-plain /table.txt; then
         dmsetup mknodes dm-plain
-        if cryptsetup open --type=plain --cipher=aes-xts-plain64 --key-size=512 --key-file=/key.bin --sector-size=4096 /dev/mapper/dm-plain plain; then
+        if cryptsetup open --type=plain {crypt_args} --key-file=/key.bin /dev/mapper/dm-plain plain; then
             if integritysetup open /dev/mapper/plain integrity; then
                 if mount /dev/mapper/integrity /mnt/plain -o defaults,nodiscard,ro; then
                     cp /mnt/plain/late.sh /

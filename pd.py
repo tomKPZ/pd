@@ -60,6 +60,12 @@ ARGON2_ARGS = [
 ]
 ARGON2_ARGS = [p for arg in ARGON2_ARGS for p in arg.split("=")]
 
+CRYPT_ARGS = [
+    "--cipher=aes-xts-plain64",
+    f"--key-size={CRYPT_KEY_SIZE}",
+    f"--sector-size={CRYPT_SECTOR_SIZE}",
+]
+
 
 def cmd(*args, check=True, **kwargs):
     return subprocess.run(args, check=check, **kwargs)
@@ -180,8 +186,9 @@ def bootstrap_initrd(out_file, salt: str, hidden):
                     else "read -sp 'Password: ' password\necho"
                 )
                 format_args = {
-                    "read_password": read_password,
                     "argon_args": " ".join(ARGON2_ARGS),
+                    "crypt_args": " ".join(CRYPT_ARGS),
+                    "read_password": read_password,
                 }
                 dst.write(src.read().format(**format_args))
             os.chmod(os.path.join(root, "early.sh"), 0o755)
@@ -324,9 +331,7 @@ def plain_dmcrypt(key_file, wrap_dev):
         "cryptsetup",
         "open",
         "--type=plain",
-        "--cipher=aes-xts-plain64",
-        f"--key-size={CRYPT_KEY_SIZE}",
-        f"--sector-size={CRYPT_SECTOR_SIZE}",
+        *CRYPT_ARGS,
         f"--key-file={key_file}",
         wrap_dev,
         crypt_name,
@@ -351,9 +356,7 @@ def detached_luks(key_file, key_file_offset, header_file, wrap_dev):
             "--batch-mode",
             "--use-random",
             "--hash=sha512",
-            "--cipher=aes-xts-plain64",
-            f"--key-size={CRYPT_KEY_SIZE}",
-            f"--sector-size={CRYPT_SECTOR_SIZE}",
+            *CRYPT_ARGS,
             f"--key-file={key_file}",
             f"--keyfile-offset={key_file_offset}",
             f"--header={header_file}",
