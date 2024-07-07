@@ -3,11 +3,11 @@
 set -euo pipefail
 
 find /mnt/plain/root ! -type d | while read -r ITEM; do
-	REL_PATH="${ITEM#/mnt/plain/root/}"
-	if [ ! -e "$REL_PATH" ]; then
-		mkdir -p "$(dirname "$REL_PATH")"
-		cp -P "$ITEM" "/$REL_PATH"
-	fi
+    REL_PATH="${ITEM#/mnt/plain/root/}"
+    if [ ! -e "$REL_PATH" ]; then
+        mkdir -p "$(dirname "$REL_PATH")"
+        cp -P "$ITEM" "/$REL_PATH"
+    fi
 done
 
 dmsetup create --readonly dm-luks /mnt/plain/table.txt
