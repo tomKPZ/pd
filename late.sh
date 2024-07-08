@@ -28,6 +28,7 @@ dd if=/dev/zero bs=1 count=$padding status=none >>/initramfs-linux.img
 cp /mnt/plain/table.txt /tmp
 cp /mnt/plain/header.dat /tmp
 cp /key.bin /tmp
+cp -P /boot_disk /tmp
 (cd /tmp && find . -print0 | cpio --null -o --format=newc >>/initramfs-linux.img)
 
 kexec -l /mnt/luks/boot/vmlinuz-linux --initrd=/initramfs-linux.img --command-line="$(cat /mnt/luks/boot/cmdline-linux.txt)"

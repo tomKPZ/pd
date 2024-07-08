@@ -207,7 +207,7 @@ def bootstrap_initrd(out_file: str, salt: str, hidden: bool, mods: list[str] = [
 
         table_file = os.path.join(root, "table.txt")
         with open(table_file, "w") as table:
-            print(dmsetup_table(ZERO_HEADER, META_SIZE, "/dev/boot_disk"), file=table)
+            print(dmsetup_table(ZERO_HEADER, META_SIZE, "/boot_disk"), file=table)
 
         for mod in mods:
             subprocess.check_call(mod, shell=True, cwd=root)
@@ -598,9 +598,9 @@ def init_volumes(device: str, salt: str, hidden: bool):
             with open(f"{ext4_meta}/table.txt", "w") as table:
                 print(
                     (
-                        reversed_table(0, dev_size - META_SIZE, "/dev/boot_disk")
+                        reversed_table(0, dev_size - META_SIZE, "/boot_disk")
                         if hidden
-                        else dmsetup_table(META_SIZE, dev_size, "/dev/boot_disk")
+                        else dmsetup_table(META_SIZE, dev_size, "/boot_disk")
                     ),
                     file=table,
                 )
@@ -620,7 +620,7 @@ def init_volumes(device: str, salt: str, hidden: bool):
                 cmd("cp", KERNEL_PATH, f"{btrfs_data}/boot/vmlinuz-linux")
                 system_initrd(f"{btrfs_data}/boot/initramfs-linux.img")
                 with open(f"{btrfs_data}/boot/cmdline-linux.txt", "w") as cmdline:
-                    print("console=ttyS0", file=cmdline)
+                    print("quiet" if INSTALL else "console=ttyS0", file=cmdline)
                 with open(f"{btrfs_data}/message.txt", "w") as message:
                     if hidden:
                         print("HELLO FROM HIDDEN SYSTEM", file=message)
@@ -687,7 +687,7 @@ def build_uki(salt: str):
             "--initrd",
             initrd,
             "--cmdline",
-            "ro",
+            "quiet ro",
             "--output",
             UKI_INSTALL_PATH,
         )

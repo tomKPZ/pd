@@ -8,7 +8,7 @@ unset password
 
 mkdir -p /mnt/plain
 for dev in $(cat /proc/partitions | tail -n +3 | tr -s ' ' '\t' | cut -f 5); do
-    ln -s "/dev/$dev" /dev/boot_disk
+    ln -s "/dev/$dev" /boot_disk
     if dmsetup create --readonly dm-plain /table.txt; then
         dmsetup mknodes dm-plain
         if cryptsetup open --type=plain {crypt_args} --key-file=/key.bin /dev/mapper/dm-plain plain; then
@@ -23,7 +23,7 @@ for dev in $(cat /proc/partitions | tail -n +3 | tr -s ' ' '\t' | cut -f 5); do
         fi
         dmsetup remove dm-plain
     fi
-    rm /dev/boot_disk
+    rm /boot_disk
 done
 
 shred -u /key.bin
