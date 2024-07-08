@@ -38,11 +38,11 @@ else:
     ARGON2_ITERATIONS = 2
     ARGON2_M_KB_LOG2 = 15
     ARGON2_THREADS = 4
-USE_TEST_PASSWORD = True
+USE_TEST_PASSWORD = False
 TEST_PASSWORD = "testpassword"
 SECURE_RAND = True
 KERNEL_PATH = "/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage"
-INSTALL = False
+INSTALL = True
 if INSTALL:
     INSTALL_DEVICE = "/dev/nvme0n1p10"
     INSTALL_UKI = True
@@ -89,6 +89,10 @@ def rand512() -> bytes:
     else:
         rand4k = os.urandom(512)
     return hashlib.sha512(rand4k).digest()
+
+
+def device_size(device: str) -> int:
+    return int(cmd_output("blockdev", "--getsize64", device))
 
 
 def add_file(root, file):
@@ -179,7 +183,7 @@ def common_initrd(root):
     shutil.copy(os.path.join(SCRIPT_DIR, "init"), root)
 
 
-def bootstrap_initrd(out_file: str, salt: str, hidden: bool, disk_size: int | None):
+def bootstrap_initrd(out_file: str, salt: str, hidden: bool, mods: list[str] = []):
     with tempfile.TemporaryDirectory() as root:
         common_initrd(root)
 
@@ -205,13 +209,8 @@ def bootstrap_initrd(out_file: str, salt: str, hidden: bool, disk_size: int | No
         with open(table_file, "w") as table:
             print(dmsetup_table(ZERO_HEADER, META_SIZE, "/dev/boot_disk"), file=table)
 
-        if hidden:
-            assert disk_size
-            start_sector = ZERO_HEADER // DM_SECTOR_SIZE
-            end_sector = (disk_size - META_SIZE) // DM_SECTOR_SIZE
-            cmd("sed", "-i", f"s/{start_sector}/{end_sector}/", table_file)
-            with open(os.path.join(root, "salt.txt"), "a") as salt_file:
-                print(HIDDEN_SALT_SUFFIX, file=salt_file, end="")
+        for mod in mods:
+            subprocess.check_call(mod, shell=True, cwd=root)
 
         subprocess.run(
             f"find . -print0 | cpio --null -o --format=newc | xz --check=crc32 -{INITRD_XZ_LEVEL} >{out_file}",
@@ -424,7 +423,6 @@ def lvm(wrap_dev):
     thinpool_name = "thinpool"
     thinpool_dev = f"/dev/{vg_name}/{thinpool_name}"
     lv_dev = f"/dev/{vg_name}/{lv_name}"
-    dev_size = int(cmd_output("blockdev", "--getsize64", wrap_dev))
 
     dd(_if="/dev/zero", of=wrap_dev, bs=PE_SIZE, count=1)
     cmd("pvcreate", wrap_dev)
@@ -447,7 +445,7 @@ def lvm(wrap_dev):
         thin_size_str = cmd_output(
             "thin_metadata_size",
             f"--block-size={THIN_CHUNK_SIZE}b",
-            f"--pool-size={dev_size}b",
+            f"--pool-size={device_size(wrap_dev)}b",
             "--max-thins=1000",
             "-u=b",
             "-n",
@@ -579,7 +577,7 @@ def init_volumes(device: str, salt: str, hidden: bool):
     password = read_password("Hidden" if hidden else "Decoy")
     key_hex = cmd_output(*argon_cmd, input=password.encode())
     key_bytes = bytes.fromhex(key_hex)
-    dev_size = int(cmd_output("blockdev", "--getsize64", device))
+    dev_size = device_size(device)
     with temp_file() as key_file:
         dd(of=key_file, input=key_bytes)
         meta_begin = dev_size - META_SIZE if hidden else ZERO_HEADER
@@ -669,9 +667,18 @@ def run_qemu(disk_img: str, initrd: str):
     )
 
 
+def hidden_mods(disk_size: int) -> list[str]:
+    start_sector = ZERO_HEADER // DM_SECTOR_SIZE
+    end_sector = (disk_size - META_SIZE) // DM_SECTOR_SIZE
+    return [
+        f"sed -i s/{start_sector}/{end_sector}/ table.txt",
+        "echo a >> salt.txt",
+    ]
+
+
 def build_uki(salt: str):
     with temp_file(".cpio.xz") as initrd:
-        bootstrap_initrd(initrd, salt, False, None)
+        bootstrap_initrd(initrd, salt, False)
         cmd(
             "ukify",
             "build",
@@ -692,6 +699,9 @@ def main() -> int:
         setup_device(INSTALL_DEVICE, salt)
         if INSTALL_UKI:
             build_uki(salt)
+        print("Hidden mods:")
+        for mod in hidden_mods(device_size(INSTALL_DEVICE)):
+            print(mod)
     else:
         with temp_file(".img") as disk_img:
             dd(
@@ -705,10 +715,11 @@ def main() -> int:
                 setup_device(loop, salt)
                 if RUN_QEMU:
                     with temp_file(".cpio.xz") as decoy_initrd:
-                        bootstrap_initrd(decoy_initrd, salt, False, None)
+                        bootstrap_initrd(decoy_initrd, salt, False)
                         run_qemu(disk_img, decoy_initrd)
                     with temp_file(".cpio.xz") as hidden_initrd:
-                        bootstrap_initrd(hidden_initrd, salt, True, TEST_DISK_SIZE)
+                        mods = hidden_mods(TEST_DISK_SIZE)
+                        bootstrap_initrd(hidden_initrd, salt, True, mods)
                         run_qemu(disk_img, hidden_initrd)
     return 0
 
