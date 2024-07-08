@@ -294,11 +294,11 @@ def reversed_table(start: int, end: int, wrap_dev: str):
     num_chunks = num_sectors // sectors_per_chunk
 
     dmsetup_input = []
-    for i in reversed(range(num_chunks)):
+    for i in range(num_chunks):
         start = i * sectors_per_chunk
         reversed_start = num_sectors - (i + 1) * sectors_per_chunk
         dmsetup_input.append(
-            f"{reversed_start} {sectors_per_chunk} linear {wrap_dev} {start_sector + start}"
+            f"{start_sector + start} {sectors_per_chunk} linear {wrap_dev} {reversed_start}"
         )
     return "\n".join(dmsetup_input) + "\n"
 
@@ -671,12 +671,12 @@ def main() -> int:
         dd(_if="/dev/zero", of=disk_img, bs=DISK_SIZE, count=1, status="progress")
         with loopback_device(disk_img) as loop:
             setup_device(loop, salt)
-            with temp_file(".cpio.xz") as initrd:
-                bootstrap_initrd(initrd, salt, False, DISK_SIZE)
-                run_qemu(disk_img, initrd)
-            with temp_file(".cpio.xz") as initrd:
-                bootstrap_initrd(initrd, salt, True, DISK_SIZE)
-                run_qemu(disk_img, initrd)
+            with temp_file(".cpio.xz") as decoy_initrd:
+                bootstrap_initrd(decoy_initrd, salt, False, DISK_SIZE)
+                run_qemu(disk_img, decoy_initrd)
+            with temp_file(".cpio.xz") as hidden_initrd:
+                bootstrap_initrd(hidden_initrd, salt, True, DISK_SIZE)
+                run_qemu(disk_img, hidden_initrd)
     return 0
 
 
