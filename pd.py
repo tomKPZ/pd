@@ -46,7 +46,7 @@ SECURE_RAND = True
 # Constant
 assert SWAP_SIZE % PE_SIZE == 0
 SWAP_SIZE_PE = SWAP_SIZE // PE_SIZE
-DMSETUP_SECTOR_SIZE = 512
+DM_SECTOR_SIZE = 512
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 
 ARGON2_ARGS = [
@@ -171,7 +171,7 @@ def common_initrd(root):
     shutil.copy(os.path.join(SCRIPT_DIR, "init"), root)
 
 
-def bootstrap_initrd(out_file, salt: str, hidden):
+def bootstrap_initrd(out_file: str, salt: str, hidden: bool, disk_size: int | None):
     with tempfile.TemporaryDirectory() as root:
         common_initrd(root)
 
@@ -198,8 +198,9 @@ def bootstrap_initrd(out_file, salt: str, hidden):
             print(dmsetup_table(ZERO_HEADER, META_SIZE, "/dev/boot_disk"), file=table)
 
         if hidden:
-            start_sector = ZERO_HEADER // DMSETUP_SECTOR_SIZE
-            end_sector = (DISK_SIZE - META_SIZE) // DMSETUP_SECTOR_SIZE
+            assert disk_size
+            start_sector = ZERO_HEADER // DM_SECTOR_SIZE
+            end_sector = (disk_size - META_SIZE) // DM_SECTOR_SIZE
             cmd("sed", "-i", f"s/{start_sector}/{end_sector}/", table_file)
             with open(os.path.join(root, "salt.txt"), "a") as salt_file:
                 print(HIDDEN_SALT_SUFFIX, file=salt_file, end="")
@@ -276,17 +277,17 @@ def temp_file(suffix=""):
 
 
 def dmsetup_table(start: int, end: int, wrap_dev: str):
-    start_sector, start_rem = divmod(start, DMSETUP_SECTOR_SIZE)
-    end_sector, end_rem = divmod(end, DMSETUP_SECTOR_SIZE)
+    start_sector, start_rem = divmod(start, DM_SECTOR_SIZE)
+    end_sector, end_rem = divmod(end, DM_SECTOR_SIZE)
     assert start_rem == 0 and end_rem == 0
     return f"0 {end_sector-start_sector} linear {wrap_dev} {start_sector}"
 
 
 def reversed_table(start: int, end: int, wrap_dev: str):
-    sectors_per_chunk = REVERSE_CHUNK_SIZE // DMSETUP_SECTOR_SIZE
+    sectors_per_chunk = REVERSE_CHUNK_SIZE // DM_SECTOR_SIZE
 
-    start_sector, start_rem = divmod(start, DMSETUP_SECTOR_SIZE)
-    end_sector, end_rem = divmod(end, DMSETUP_SECTOR_SIZE)
+    start_sector, start_rem = divmod(start, DM_SECTOR_SIZE)
+    end_sector, end_rem = divmod(end, DM_SECTOR_SIZE)
     assert start_rem == 0 and end_rem == 0
 
     num_sectors = end_sector - start_sector
@@ -415,6 +416,7 @@ def lvm(wrap_dev):
     thinpool_name = "thinpool"
     thinpool_dev = f"/dev/{vg_name}/{thinpool_name}"
     lv_dev = f"/dev/{vg_name}/{lv_name}"
+    dev_size = int(cmd_output("blockdev", "--getsize64", wrap_dev))
 
     dd(_if="/dev/zero", of=wrap_dev, bs=PE_SIZE, count=1)
     cmd("pvcreate", wrap_dev)
@@ -437,8 +439,8 @@ def lvm(wrap_dev):
         thin_size_str = cmd_output(
             "thin_metadata_size",
             f"--block-size={THIN_CHUNK_SIZE}b",
-            f"--pool-size={DISK_SIZE}b",
-            "--max-thins=1024",
+            f"--pool-size={dev_size}b",
+            "--max-thins=1000",
             "-u=b",
             "-n",
         )
@@ -569,10 +571,11 @@ def init_volumes(device: str, salt: str, hidden: bool):
     password = read_password("Hidden" if hidden else "Decoy")
     key_hex = cmd_output(*argon_cmd, input=password.encode())
     key_bytes = bytes.fromhex(key_hex)
+    dev_size = int(cmd_output("blockdev", "--getsize64", device))
     with temp_file() as key_file:
         dd(of=key_file, input=key_bytes)
-        meta_begin = DISK_SIZE - META_SIZE if hidden else ZERO_HEADER
-        meta_end = DISK_SIZE - ZERO_HEADER if hidden else META_SIZE
+        meta_begin = dev_size - META_SIZE if hidden else ZERO_HEADER
+        meta_end = dev_size - ZERO_HEADER if hidden else META_SIZE
         header_stack = [
             lambda dev: device_view(dmsetup_table(meta_begin, meta_end, dev)),
             functools.partial(plain_dmcrypt, key_file),
@@ -589,18 +592,18 @@ def init_volumes(device: str, salt: str, hidden: bool):
             with open(f"{ext4_meta}/table.txt", "w") as table:
                 print(
                     (
-                        reversed_table(0, DISK_SIZE - META_SIZE, "/dev/boot_disk")
+                        reversed_table(0, dev_size - META_SIZE, "/dev/boot_disk")
                         if hidden
-                        else dmsetup_table(META_SIZE, DISK_SIZE, "/dev/boot_disk")
+                        else dmsetup_table(META_SIZE, dev_size, "/dev/boot_disk")
                     ),
                     file=table,
                 )
             header_file = f"{ext4_meta}/header.dat"
             data_stack = [
                 lambda dev: device_view(
-                    reversed_table(0, DISK_SIZE - META_SIZE, dev)
+                    reversed_table(0, dev_size - META_SIZE, dev)
                     if hidden
-                    else dmsetup_table(META_SIZE, DISK_SIZE, dev)
+                    else dmsetup_table(META_SIZE, dev_size, dev)
                 ),
                 functools.partial(detached_luks, key_file, "64", header_file),
                 lvm,
@@ -642,28 +645,24 @@ def setup_device(device: str, salt: str):
     init_volumes(device, salt, True)
 
 
-def run_qemu(disk_img: str, salt: str, hidden: bool):
-    with temp_file(".cpio.xz") as initrd:
-        bootstrap_initrd(initrd, salt, hidden)
-        subprocess.run(
-            [
-                "qemu-system-x86_64",
-                "-kernel",
-                "/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage",
-                "-initrd",
-                initrd,
-                "-nographic",
-                "-append",
-                "console=ttyS0",
-                "-enable-kvm",
-                "-m",
-                "1G",
-                "-drive",
-                f"file={disk_img},if=none,id=nvm",
-                "-device",
-                "nvme,serial=deadbeef,drive=nvm",
-            ]
-        )
+def run_qemu(disk_img: str, initrd: str):
+    cmd(
+        "qemu-system-x86_64",
+        "-kernel",
+        "/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage",
+        "-initrd",
+        initrd,
+        "-nographic",
+        "-append",
+        "console=ttyS0",
+        "-enable-kvm",
+        "-m",
+        "1G",
+        "-drive",
+        f"file={disk_img},if=none,id=nvm",
+        "-device",
+        "nvme,serial=deadbeef,drive=nvm",
+    )
 
 
 def main() -> int:
@@ -672,8 +671,12 @@ def main() -> int:
         dd(_if="/dev/zero", of=disk_img, bs=DISK_SIZE, count=1, status="progress")
         with loopback_device(disk_img) as loop:
             setup_device(loop, salt)
-            run_qemu(disk_img, salt, False)
-            run_qemu(disk_img, salt, True)
+            with temp_file(".cpio.xz") as initrd:
+                bootstrap_initrd(initrd, salt, False, DISK_SIZE)
+                run_qemu(disk_img, initrd)
+            with temp_file(".cpio.xz") as initrd:
+                bootstrap_initrd(initrd, salt, True, DISK_SIZE)
+                run_qemu(disk_img, initrd)
     return 0
 
 
