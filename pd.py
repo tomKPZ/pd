@@ -18,7 +18,6 @@ GIB = 1024 * MIB
 
 # Tunable
 DD_DEFAULT_BS = 4 * MIB
-DISK_SIZE = 1 * GIB
 ZERO_HEADER = 1 * MIB
 CRYPT_SECTOR_SIZE = 4 * KIB
 CRYPT_KEY_SIZE = 512
@@ -42,6 +41,15 @@ else:
 USE_TEST_PASSWORD = True
 TEST_PASSWORD = "testpassword"
 SECURE_RAND = True
+KERNEL_PATH = "/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage"
+INSTALL = False
+if INSTALL:
+    INSTALL_DEVICE = "/dev/nvme0n1p10"
+    INSTALL_UKI = True
+    UKI_INSTALL_PATH = "/mnt/EFI/BOOT/BOOTX64.EFI"
+else:
+    TEST_DISK_SIZE = 1 * GIB
+    RUN_QEMU = True
 
 # Constant
 assert SWAP_SIZE % PE_SIZE == 0
@@ -611,11 +619,7 @@ def init_volumes(device: str, salt: str, hidden: bool):
             ]
             with cascade(data_stack, device) as (_, _, _, btrfs_data):
                 cmd("mkdir", f"{btrfs_data}/boot")
-                cmd(
-                    "cp",
-                    "/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage",
-                    f"{btrfs_data}/boot/vmlinuz-linux",
-                )
+                cmd("cp", KERNEL_PATH, f"{btrfs_data}/boot/vmlinuz-linux")
                 system_initrd(f"{btrfs_data}/boot/initramfs-linux.img")
                 with open(f"{btrfs_data}/boot/cmdline-linux.txt", "w") as cmdline:
                     print("console=ttyS0", file=cmdline)
@@ -649,7 +653,7 @@ def run_qemu(disk_img: str, initrd: str):
     cmd(
         "qemu-system-x86_64",
         "-kernel",
-        "/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage",
+        KERNEL_PATH,
         "-initrd",
         initrd,
         "-nographic",
@@ -665,18 +669,47 @@ def run_qemu(disk_img: str, initrd: str):
     )
 
 
+def build_uki(salt: str):
+    with temp_file(".cpio.xz") as initrd:
+        bootstrap_initrd(initrd, salt, False, None)
+        cmd(
+            "ukify",
+            "build",
+            "--linux",
+            KERNEL_PATH,
+            "--initrd",
+            initrd,
+            "--cmdline",
+            "ro",
+            "--output",
+            UKI_INSTALL_PATH,
+        )
+
+
 def main() -> int:
     salt = rand512().hex()
-    with temp_file(".img") as disk_img:
-        dd(_if="/dev/zero", of=disk_img, bs=DISK_SIZE, count=1, status="progress")
-        with loopback_device(disk_img) as loop:
-            setup_device(loop, salt)
-            with temp_file(".cpio.xz") as decoy_initrd:
-                bootstrap_initrd(decoy_initrd, salt, False, DISK_SIZE)
-                run_qemu(disk_img, decoy_initrd)
-            with temp_file(".cpio.xz") as hidden_initrd:
-                bootstrap_initrd(hidden_initrd, salt, True, DISK_SIZE)
-                run_qemu(disk_img, hidden_initrd)
+    if INSTALL:
+        setup_device(INSTALL_DEVICE, salt)
+        if INSTALL_UKI:
+            build_uki(salt)
+    else:
+        with temp_file(".img") as disk_img:
+            dd(
+                _if="/dev/zero",
+                of=disk_img,
+                bs=TEST_DISK_SIZE,
+                count=1,
+                status="progress",
+            )
+            with loopback_device(disk_img) as loop:
+                setup_device(loop, salt)
+                if RUN_QEMU:
+                    with temp_file(".cpio.xz") as decoy_initrd:
+                        bootstrap_initrd(decoy_initrd, salt, False, None)
+                        run_qemu(disk_img, decoy_initrd)
+                    with temp_file(".cpio.xz") as hidden_initrd:
+                        bootstrap_initrd(hidden_initrd, salt, True, TEST_DISK_SIZE)
+                        run_qemu(disk_img, hidden_initrd)
     return 0
 
 
