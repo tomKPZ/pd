@@ -50,4 +50,11 @@ git clean -fdx
 CC="musl-$CC" CFLAGS="$CFLAGS -static" LDFLAGS="$LDFLAGS -static" make -j"$(nproc)"
 make install DESTDIR="$INSTALL_ROOT"
 
+cd "$SCRIPT_DIR/kexec-tools"
+git clean -fdx
+./bootstrap
+LDFLAGS="$LDFLAGS -static" ./configure
+make -j"$(nproc)"
+make install DESTDIR="$INSTALL_ROOT"
+
 tree "$INSTALL_ROOT"
