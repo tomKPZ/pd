@@ -32,6 +32,9 @@ git clean -fdx
 ./configure --enable-static_link --without-udev --without-blkid --without-systemd --disable-readline --enable-pkgconfig LDFLAGS="$LDFLAGS"
 make -j"$(nproc)"
 make install
+mv -f "$ROOT/usr/bin/dmsetup.static" "$ROOT/usr/bin/dmsetup"
+mv -f "$ROOT/usr/bin/lvm.static" "$ROOT/usr/bin/lvm"
+rm "$ROOT/usr/bin/dmstats.static"
 
 cd "$SCRIPT_DIR/util-linux"
 git clean -fdx
