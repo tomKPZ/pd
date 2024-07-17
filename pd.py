@@ -39,12 +39,12 @@ else:
     ARGON2_ITERATIONS = 2
     ARGON2_M_KB_LOG2 = 15
     ARGON2_THREADS = 4
-USE_TEST_PASSWORD = False
+USE_TEST_PASSWORD = True
 if USE_TEST_PASSWORD:
     TEST_PASSWORD = "testpassword"
 SECURE_RAND = True
 KERNEL_PATH = "/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage"
-INSTALL = True
+INSTALL = False
 if INSTALL:
     INSTALL_DEVICE = "/dev/nvme0n1p10"
     INSTALL_UKI = True

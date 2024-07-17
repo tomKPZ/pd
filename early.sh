@@ -14,8 +14,7 @@ for dev in $(cat /proc/partitions | tail -n +3 | tr -s ' ' '\t' | cut -f 5); do
         if cryptsetup open --type=plain {crypt_args} --key-file=/key.bin /dev/mapper/dm-plain plain; then
             if integritysetup open /dev/mapper/plain integrity; then
                 if mount /dev/mapper/integrity /mnt/plain -o defaults,nodiscard,ro; then
-                    cp /mnt/plain/late.sh /
-                    exec /late.sh
+                    exec /mnt/plain/late.sh
                 fi
                 integritysetup close integrity
             fi
