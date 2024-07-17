@@ -421,9 +421,8 @@ def integrity(wrap_dev):
 
 
 @contextlib.contextmanager
-def lvm(wrap_dev):
+def lvm(vg_name, wrap_dev):
     lv_name = "test_lv"
-    vg_name = f"system_{dev_uuid()}"
     swap_name = "swap"
     swap_dev = f"/dev/{vg_name}/{swap_name}"
     thinpool_name = "thinpool"
@@ -611,6 +610,7 @@ def init_volumes(device: str, salt: str, hidden: bool):
                     file=table,
                 )
             header_file = f"{ext4_meta}/header.dat"
+            vg_name = "sysvg1" if hidden else "sysvg"
             data_stack = [
                 lambda dev: device_view(
                     reversed_table(0, dev_size - META_SIZE, dev)
@@ -618,7 +618,7 @@ def init_volumes(device: str, salt: str, hidden: bool):
                     else dmsetup_table(META_SIZE, dev_size, dev)
                 ),
                 functools.partial(detached_luks, key_file, "64", header_file),
-                lvm,
+                functools.partial(lvm, vg_name),
                 btrfs_mount,
             ]
             with cascade(data_stack, device) as (_, _, _, btrfs_data):
