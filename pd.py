@@ -463,6 +463,7 @@ def lvm(vg_name, wrap_dev):
             f"--chunksize={THIN_CHUNK_SIZE}b",
             f"--poolmetadatasize={thin_meta_pe * PE_SIZE}b",
             f"--size={PE_SIZE}b",
+            "--discards=nopassdown",
             vg_name,
         )
 
