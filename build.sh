@@ -54,7 +54,7 @@ cp build/src/{crypt,integrity,verity}setup "$ROOT/usr/bin"
 
 cd "$SCRIPT_DIR/phc-winner-argon2"
 git clean -fdx
-CC="musl-$CC" CFLAGS="$CFLAGS -static" LDFLAGS="$LDFLAGS -static" make -j"$(nproc)"
+CFLAGS="$CFLAGS -static" LDFLAGS="$LDFLAGS -static" make argon2 -j"$(nproc)"
 make install
 
 cd "$SCRIPT_DIR/kexec-tools"
