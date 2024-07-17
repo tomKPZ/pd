@@ -634,10 +634,8 @@ def init_volumes(device: str, salt: str, hidden: bool):
                         print("HELLO FROM DECOY SYSTEM", file=message)
 
 
-def setup_device(device: str, salt: str):
+def setup_device(device: str, shred_key: bytes, salt: str):
     with temp_file() as key_file:
-        shred_key = rand512()
-        print("Using shredding key", shred_key.hex())
         with open(key_file, mode="wb") as key:
             key.write(shred_key)
         with plain_dmcrypt(key_file, device) as plain:
@@ -700,14 +698,14 @@ def build_uki(salt: str):
 
 
 def main() -> int:
+    shred_key = rand512()
     salt = rand512().hex()
+    mods = []
     if INSTALL:
-        setup_device(INSTALL_DEVICE, salt)
+        setup_device(INSTALL_DEVICE, shred_key, salt)
         if INSTALL_UKI:
             build_uki(salt)
-        print("Hidden mods:")
-        for mod in hidden_mods(device_size(INSTALL_DEVICE)):
-            print(mod)
+        mods = hidden_mods(device_size(INSTALL_DEVICE))
     else:
         with temp_file(".img") as disk_img:
             dd(
@@ -718,7 +716,7 @@ def main() -> int:
                 status="progress",
             )
             with loopback_device(disk_img) as loop:
-                setup_device(loop, salt)
+                setup_device(loop, shred_key, salt)
                 if RUN_QEMU:
                     with temp_file(".cpio.xz") as decoy_initrd:
                         bootstrap_initrd(decoy_initrd, salt)
@@ -728,8 +726,13 @@ def main() -> int:
                         bootstrap_initrd(hidden_initrd, salt, mods)
                         run_qemu(disk_img, hidden_initrd)
     if DEBUG_TRACE_CMDS:
+        print("Command trace:")
         for traced in CMD_TRACE:
             print(" ".join(traced))
+    print("Shredding key", shred_key.hex())
+    print("Hidden mods:")
+    for mod in mods:
+        print(mod)
     return 0
 
 
