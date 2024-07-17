@@ -16,8 +16,9 @@ KIB = 1024
 MIB = 1024 * KIB
 GIB = 1024 * MIB
 
-# Tunable
+# Config
 DD_DEFAULT_BS = 4 * MIB
+PARTITION_ALIGN = 1 * MIB
 ZERO_HEADER = 1 * MIB
 CRYPT_SECTOR_SIZE = 4 * KIB
 CRYPT_KEY_SIZE = 512
@@ -39,7 +40,8 @@ else:
     ARGON2_M_KB_LOG2 = 15
     ARGON2_THREADS = 4
 USE_TEST_PASSWORD = False
-TEST_PASSWORD = "testpassword"
+if USE_TEST_PASSWORD:
+    TEST_PASSWORD = "testpassword"
 SECURE_RAND = True
 KERNEL_PATH = "/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage"
 INSTALL = True
@@ -51,7 +53,10 @@ else:
     TEST_DISK_SIZE = 1 * GIB
     RUN_QEMU = True
 
-# Constant
+# Config checks and non-modifiable constants
+assert ZERO_HEADER % PARTITION_ALIGN == 0
+assert META_SIZE % PARTITION_ALIGN == 0
+assert REVERSE_CHUNK_SIZE % PARTITION_ALIGN == 0
 assert SWAP_SIZE % PE_SIZE == 0
 SWAP_SIZE_PE = SWAP_SIZE // PE_SIZE
 DM_SECTOR_SIZE = 512
@@ -92,7 +97,8 @@ def rand512() -> bytes:
 
 
 def device_size(device: str) -> int:
-    return int(cmd_output("blockdev", "--getsize64", device))
+    size = int(cmd_output("blockdev", "--getsize64", device))
+    return size // PARTITION_ALIGN * PARTITION_ALIGN
 
 
 def add_file(root, file):
