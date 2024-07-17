@@ -18,13 +18,13 @@ cd "$SCRIPT_DIR/libaio"
 git clean -fdx
 make -j"$(nproc)"
 echo make install "DESTDIR=$INSTALL_ROOT"
-make install DESTDIR="$INSTALL_ROOT"
+make install
 
 cd "$SCRIPT_DIR/lvm2"
 git clean -fdx
 ./configure --enable-static_link --without-udev --without-blkid --without-systemd --disable-readline --enable-pkgconfig LDFLAGS="$LDFLAGS"
 make -j"$(nproc)"
-make install DESTDIR="$INSTALL_ROOT"
+make install
 
 cd "$SCRIPT_DIR/util-linux"
 git clean -fdx
@@ -48,13 +48,13 @@ cp build/src/{crypt,integrity,verity}setup "$INSTALL_ROOT/usr/bin"
 cd "$SCRIPT_DIR/phc-winner-argon2"
 git clean -fdx
 CC="musl-$CC" CFLAGS="$CFLAGS -static" LDFLAGS="$LDFLAGS -static" make -j"$(nproc)"
-make install DESTDIR="$INSTALL_ROOT"
+make install
 
 cd "$SCRIPT_DIR/kexec-tools"
 git clean -fdx
 ./bootstrap
 LDFLAGS="$LDFLAGS -static" ./configure
 make -j"$(nproc)"
-make install DESTDIR="$INSTALL_ROOT"
+make install
 
 tree "$INSTALL_ROOT"
