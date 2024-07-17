@@ -52,6 +52,7 @@ if INSTALL:
 else:
     TEST_DISK_SIZE = 1 * GIB
     RUN_QEMU = True
+DEBUG_TRACE_CMDS = True
 
 # Config checks and non-modifiable constants
 assert ZERO_HEADER % PARTITION_ALIGN == 0
@@ -79,8 +80,11 @@ CRYPT_ARGS = [
     f"--sector-size={CRYPT_SECTOR_SIZE}",
 ]
 
+CMD_TRACE = []
+
 
 def cmd(*args, check=True, **kwargs):
+    CMD_TRACE.append(args)
     return subprocess.run(args, check=check, **kwargs)
 
 
@@ -723,6 +727,9 @@ def main() -> int:
                         mods = hidden_mods(TEST_DISK_SIZE)
                         bootstrap_initrd(hidden_initrd, salt, mods)
                         run_qemu(disk_img, hidden_initrd)
+    if DEBUG_TRACE_CMDS:
+        for traced in CMD_TRACE:
+            print(" ".join(traced))
     return 0
 
 
