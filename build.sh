@@ -6,7 +6,7 @@ SCRIPT_DIR="$(dirname "$(realpath -e "${BASH_SOURCE[0]}")")"
 
 ROOT="$(mktemp -d)"
 
-install -dm755 "$ROOT"/{new_root,proc,sys,dev,run,tmp,var,etc,usr/{local{,/bin,/sbin,/lib},lib,bin}}
+install -dm755 "$ROOT"/{new_root,proc,sys,dev,run,tmp,var,etc,usr/{lib,bin}}
 ln -s "usr/lib" "$ROOT/lib"
 ln -s "bin" "$ROOT/usr/sbin"
 ln -s "usr/bin" "$ROOT/bin"
@@ -14,9 +14,8 @@ ln -s "usr/bin" "$ROOT/sbin"
 ln -s "../run" "$ROOT/var/run"
 ln -s "lib" "$ROOT/usr/lib64"
 ln -s "usr/lib" "$ROOT/lib64"
+ln -s ".." "$ROOT/usr/local"
 
-# export CC=musl-clang
-# export CFLAGS='-static'
 export CC=clang
 export DESTDIR="$ROOT"
 export CFLAGS="-flto"
@@ -26,7 +25,6 @@ export PKG_CONFIG_PATH="$ROOT/usr/lib/pkgconfig"
 cd "$SCRIPT_DIR/libaio"
 git clean -fdx
 make -j"$(nproc)"
-echo make install "DESTDIR=$ROOT"
 make install
 
 cd "$SCRIPT_DIR/lvm2"
@@ -64,6 +62,6 @@ git clean -fdx
 ./bootstrap
 LDFLAGS="$LDFLAGS -static" ./configure
 make -j"$(nproc)"
-make install
+make install DESTDIR="$ROOT"
 
 tree "$ROOT"
