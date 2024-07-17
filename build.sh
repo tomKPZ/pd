@@ -10,7 +10,8 @@ INSTALL_ROOT="$(mktemp -d)"
 # export CFLAGS='-static'
 export CC=clang
 export DESTDIR="$INSTALL_ROOT"
-export LDFLAGS="-L$INSTALL_ROOT/usr/lib"
+export CFLAGS="-flto"
+export LDFLAGS="-flto -L$INSTALL_ROOT/usr/lib"
 export PKG_CONFIG_PATH="$INSTALL_ROOT/usr/lib/pkgconfig"
 
 cd "$SCRIPT_DIR/libaio"
@@ -46,7 +47,7 @@ cp build/src/{crypt,integrity,verity}setup "$INSTALL_ROOT/usr/bin"
 
 cd "$SCRIPT_DIR/phc-winner-argon2"
 git clean -fdx
-CC=musl-clang CFLAGS='-static' LDFLAGS='-static' make -j"$(nproc)"
+CC="musl-$CC" CFLAGS="$CFLAGS -static" LDFLAGS="$LDFLAGS -static" make -j"$(nproc)"
 make install DESTDIR="$INSTALL_ROOT"
 
 tree "$INSTALL_ROOT"
