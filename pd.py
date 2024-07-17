@@ -111,30 +111,30 @@ def add_library(root, lib):
     dst = os.path.join(root, lib.lstrip("/"))
     if not os.path.isfile(dst):
         add_file(root, lib)
-        subprocess.run(["strip", "--strip-unneeded", dst], check=True)
+        cmd("strip", "--strip-unneeded", dst)
 
 
 def add_binary(root, bin):
     add_file(root, bin)
     dst = os.path.join(root, bin.lstrip("/"))
-    subprocess.run(["strip", "--strip-all", dst], check=True)
+    cmd("strip", "--strip-all", dst)
 
-    links = subprocess.run(
-        ["find", "-L", os.path.dirname(bin), "-samefile", bin, "-xtype", "l"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.splitlines()
+    links = cmd_output(
+        "find",
+        "-L",
+        os.path.dirname(bin),
+        "-samefile",
+        bin,
+        "-xtype",
+        "l",
+    ).splitlines()
 
     for link in links:
         link_path = os.path.join(root, link.lstrip("/"))
         os.makedirs(os.path.dirname(link_path), exist_ok=True)
         os.symlink(os.path.basename(bin), link_path)
 
-    dependencies = subprocess.run(
-        ["ldd", bin], capture_output=True, text=True, check=False
-    ).stdout.splitlines()
-
+    dependencies = cmd_output("ldd", bin, check=False).splitlines()
     for dep in dependencies:
         dep_path = (
             dep.split()[2]
@@ -175,9 +175,7 @@ def common_initrd(root):
         add_binary(root, bin)
 
     add_binary(root, "/usr/bin/busybox")
-    applets = subprocess.run(
-        ["/usr/bin/busybox", "--list"], capture_output=True, text=True, check=True
-    ).stdout.splitlines()
+    applets = cmd_output("/usr/bin/busybox", "--list").splitlines()
     for applet in applets:
         if applet != "busybox":
             os.symlink("busybox", os.path.join(root, "usr", "bin", applet))
@@ -189,7 +187,7 @@ def common_initrd(root):
     shutil.copy(os.path.join(SCRIPT_DIR, "init"), root)
 
 
-def bootstrap_initrd(out_file: str, salt: str, hidden: bool, mods: list[str] = []):
+def bootstrap_initrd(out_file: str, salt: str, mods: list[str] = []):
     with tempfile.TemporaryDirectory() as root:
         common_initrd(root)
 
@@ -216,13 +214,12 @@ def bootstrap_initrd(out_file: str, salt: str, hidden: bool, mods: list[str] = [
             print(dmsetup_table(ZERO_HEADER, META_SIZE, "/boot_disk"), file=table)
 
         for mod in mods:
-            subprocess.check_call(mod, shell=True, cwd=root)
+            cmd(mod, shell=True, cwd=root)
 
-        subprocess.run(
+        cmd(
             f"find . -print0 | cpio --null -o --format=newc | xz --check=crc32 -{INITRD_XZ_LEVEL} >{out_file}",
             cwd=root,
             shell=True,
-            check=True,
         )
 
 
@@ -236,11 +233,10 @@ def system_initrd(out_file):
             os.path.join(SCRIPT_DIR, "system.sh"), os.path.join(root, "early.sh")
         )
 
-        subprocess.run(
+        cmd(
             f"find . -print0 | cpio --null -o --format=newc | xz --check=crc32 -{INITRD_XZ_LEVEL} >{out_file}",
             cwd=root,
             shell=True,
-            check=True,
         )
 
 
@@ -684,7 +680,7 @@ def hidden_mods(disk_size: int) -> list[str]:
 
 def build_uki(salt: str):
     with temp_file(".cpio.xz") as initrd:
-        bootstrap_initrd(initrd, salt, False)
+        bootstrap_initrd(initrd, salt)
         cmd(
             "ukify",
             "build",
@@ -721,11 +717,11 @@ def main() -> int:
                 setup_device(loop, salt)
                 if RUN_QEMU:
                     with temp_file(".cpio.xz") as decoy_initrd:
-                        bootstrap_initrd(decoy_initrd, salt, False)
+                        bootstrap_initrd(decoy_initrd, salt)
                         run_qemu(disk_img, decoy_initrd)
                     with temp_file(".cpio.xz") as hidden_initrd:
                         mods = hidden_mods(TEST_DISK_SIZE)
-                        bootstrap_initrd(hidden_initrd, salt, True, mods)
+                        bootstrap_initrd(hidden_initrd, salt, mods)
                         run_qemu(disk_img, hidden_initrd)
     return 0
 
