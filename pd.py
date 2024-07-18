@@ -6,7 +6,6 @@ import getpass
 import hashlib
 import math
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -29,6 +28,7 @@ META_SIZE = 64 * MIB
 MOVE_PES = False
 REVERSE_CHUNK_SIZE = 8 * MIB
 INITRD_XZ_LEVEL = "1"
+SRC_ROOT = "/"
 HIDDEN_SALT_SUFFIX = "a"
 ARGON2_SECURE = False
 if ARGON2_SECURE:
@@ -106,29 +106,31 @@ def device_size(device: str) -> int:
 
 
 def add_file(root, file):
+    real_file = os.path.join(SRC_ROOT, file)
     dst = os.path.join(root, file.lstrip("/"))
     os.makedirs(os.path.dirname(dst), exist_ok=True)
-    shutil.copy(file, dst)
+    cmd("cp", real_file, dst)
 
 
 def add_library(root, lib):
-    dst = os.path.join(root, lib.lstrip("/"))
+    dst = os.path.join(root, lib.removeprefix(SRC_ROOT))
     if not os.path.isfile(dst):
         add_file(root, lib)
         cmd("strip", "--strip-unneeded", dst)
 
 
 def add_binary(root, bin):
+    real_bin = os.path.join(SRC_ROOT, bin)
     add_file(root, bin)
-    dst = os.path.join(root, bin.lstrip("/"))
+    dst = os.path.join(root, bin.removeprefix(SRC_ROOT))
     cmd("strip", "--strip-all", dst)
 
     links = cmd_output(
         "find",
         "-L",
-        os.path.dirname(bin),
+        os.path.dirname(real_bin),
         "-samefile",
-        bin,
+        real_bin,
         "-xtype",
         "l",
     ).splitlines()
@@ -138,7 +140,7 @@ def add_binary(root, bin):
         os.makedirs(os.path.dirname(link_path), exist_ok=True)
         os.symlink(os.path.basename(bin), link_path)
 
-    dependencies = cmd_output("ldd", bin, check=False).splitlines()
+    dependencies = cmd_output("ldd", real_bin, check=False).splitlines()
     for dep in dependencies:
         dep_path = (
             dep.split()[2]
@@ -169,16 +171,16 @@ def common_initrd(root):
     os.symlink("usr/lib", os.path.join(root, "lib64"))
 
     bins = [
-        "/usr/bin/argon2",
-        "/usr/bin/cryptsetup",
-        "/usr/bin/dmsetup",
-        "/usr/bin/integritysetup",
+        "usr/bin/argon2",
+        "usr/bin/cryptsetup",
+        "usr/bin/dmsetup",
+        "usr/bin/integritysetup",
     ]
 
     for bin in bins:
         add_binary(root, bin)
 
-    add_binary(root, "/usr/bin/busybox")
+    add_binary(root, "usr/bin/busybox")
     applets = cmd_output("/usr/bin/busybox", "--list").splitlines()
     for applet in applets:
         if applet != "busybox":
@@ -188,7 +190,7 @@ def common_initrd(root):
     open(os.path.join(root, "etc", "fstab"), "w").close()
     open(os.path.join(root, "etc", "ld.so.conf"), "w").close()
 
-    shutil.copy(os.path.join(SCRIPT_DIR, "init"), root)
+    cmd("cp", os.path.join(SCRIPT_DIR, "init"), root)
 
 
 def bootstrap_initrd(out_file: str, salt: str, mods: list[str] = []):
@@ -230,12 +232,10 @@ def bootstrap_initrd(out_file: str, salt: str, mods: list[str] = []):
 def system_initrd(out_file):
     with tempfile.TemporaryDirectory() as root:
         common_initrd(root)
-        add_binary(root, "/usr/bin/kexec")
-        add_binary(root, "/usr/bin/lvm")
+        add_binary(root, "usr/bin/kexec")
+        add_binary(root, "usr/bin/lvm")
 
-        shutil.copy(
-            os.path.join(SCRIPT_DIR, "system.sh"), os.path.join(root, "early.sh")
-        )
+        cmd("cp", os.path.join(SCRIPT_DIR, "system.sh"), os.path.join(root, "early.sh"))
 
         cmd(
             f"find . -print0 | cpio --null -o --format=newc | xz --check=crc32 -{INITRD_XZ_LEVEL} >{out_file}",
@@ -598,8 +598,8 @@ def init_volumes(device: str, salt: str, hidden: bool):
             root = os.path.join(ext4_meta, "root")
             os.makedirs(os.path.join(root, "etc", "lvm"), exist_ok=True)
             open(os.path.join(root, "etc", "lvm", "lvm.conf"), "w").close()
-            add_binary(root, "/usr/bin/kexec")
-            add_binary(root, "/usr/bin/lvm")
+            add_binary(root, "usr/bin/kexec")
+            add_binary(root, "usr/bin/lvm")
             cmd("cp", os.path.join(SCRIPT_DIR, "late.sh"), ext4_meta)
             with open(f"{ext4_meta}/table.txt", "w") as table:
                 print(
