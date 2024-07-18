@@ -63,7 +63,7 @@ make install
 cd "$SCRIPT_DIR/kexec-tools"
 git clean -fdx
 ./bootstrap
-LDFLAGS="$LDFLAGS -static" ./configure
+CC=gcc CFLAGS="$CFLAGS -static -fcommon" LDFLAGS="$LDFLAGS -static" ./configure --prefix=/usr --sbindir=/usr/bin --without-lzma
 make -j"$(nproc)"
 make install DESTDIR="$ROOT"
 
