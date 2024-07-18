@@ -57,7 +57,7 @@ cp build/src/{crypt,integrity,verity}setup "$ROOT/usr/bin"
 
 cd "$SCRIPT_DIR/phc-winner-argon2"
 git clean -fdx
-CFLAGS="$CFLAGS -static" LDFLAGS="$LDFLAGS -static" make argon2 -j"$(nproc)"
+CC="musl-$CC" CFLAGS="$CFLAGS -static" LDFLAGS="$LDFLAGS -static" make argon2 -j"$(nproc)"
 make install
 
 cd "$SCRIPT_DIR/kexec-tools"
@@ -76,7 +76,7 @@ sed -i "s|CONFIG_EXTRA_CFLAGS=.*|CONFIG_EXTRA_CFLAGS=\"$CFLAGS -static\"|" .conf
 sed -i "s|CONFIG_EXTRA_LDFLAGS=.*|CONFIG_EXTRA_LDFLAGS=\"$LDFLAGS -static\"|" .config
 echo CONFIG_STATIC=y >>.config
 echo CONFIG_PIE=y >>.config
-make -j32
+CC="musl-$CC" make -j32
 make install DESTDIR="$ROOT"
 
 tree "$ROOT"
