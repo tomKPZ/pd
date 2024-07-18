@@ -18,7 +18,7 @@ ln -s ".." "$ROOT/usr/local"
 
 export CC=clang
 export DESTDIR="$ROOT"
-export CFLAGS="-flto"
+export CFLAGS="-flto -fPIC"
 export LDFLAGS="-flto -L$ROOT/usr/lib"
 export PKG_CONFIG_PATH="$ROOT/usr/lib/pkgconfig"
 
