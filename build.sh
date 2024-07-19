@@ -70,13 +70,10 @@ make install DESTDIR="$ROOT"
 
 cd "$SCRIPT_DIR/busybox"
 git clean -fdx
-make defconfig
-sed -i 's/CONFIG_TC=y/CONFIG_TC=n/' .config
+cp ../busybox_config .config
 sed -i "s|CONFIG_PREFIX=.*|CONFIG_PREFIX=\"$ROOT\"|" .config
 sed -i "s|CONFIG_EXTRA_CFLAGS=.*|CONFIG_EXTRA_CFLAGS=\"$CFLAGS -static\"|" .config
 sed -i "s|CONFIG_EXTRA_LDFLAGS=.*|CONFIG_EXTRA_LDFLAGS=\"$LDFLAGS -static\"|" .config
-echo CONFIG_STATIC=y >>.config
-echo CONFIG_PIE=y >>.config
 CC="musl-$CC" make -j32
 make install DESTDIR="$ROOT"
 
