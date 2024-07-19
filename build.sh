@@ -18,7 +18,8 @@ ln -s ".." "$ROOT/usr/local"
 
 export CC=clang
 export DESTDIR="$ROOT"
-export CFLAGS="-flto -fPIC -O3 -march=native -mtune=native"
+export CFLAGS_NOOPT="-flto -fPIC"
+export CFLAGS="$CFLAGS_NOOPT -O3"
 export LDFLAGS="-flto -L$ROOT/usr/lib"
 export PKG_CONFIG_PATH="$ROOT/usr/lib/pkgconfig"
 
@@ -29,8 +30,8 @@ make install
 
 cd "$SCRIPT_DIR/lvm2"
 git clean -fdx
-./configure --enable-static_link --without-udev --without-blkid --without-systemd --disable-readline --enable-pkgconfig LDFLAGS="$LDFLAGS"
-make -j"$(nproc)"
+CFLAGS="$CFLAGS_NOOPT" ./configure --enable-static_link --without-udev --without-blkid --without-systemd --disable-readline --enable-pkgconfig LDFLAGS="$LDFLAGS"
+CFLAGS="$CFLAGS_NOOPT" make -j"$(nproc)"
 make install
 mv -f "$ROOT/usr/bin/dmsetup.static" "$ROOT/usr/bin/dmsetup"
 mv -f "$ROOT/usr/bin/lvm.static" "$ROOT/usr/bin/lvm"
@@ -79,4 +80,11 @@ echo CONFIG_PIE=y >>.config
 CC="musl-$CC" make -j32
 make install DESTDIR="$ROOT"
 
+cd "$SCRIPT_DIR/thin-provisioning-tools"
+git clean -fdx
+cargo build --target=x86_64-unknown-linux-musl --release
+sed -i 's|target/release/pdata_tools|target/x86_64-unknown-linux-musl/release/pdata_tools|' Makefile
+make install DESTDIR="$ROOT"
+
 tree "$ROOT"
+echo "$ROOT/"
