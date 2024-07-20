@@ -28,6 +28,7 @@ META_SIZE = 64 * MIB
 MOVE_PES = False
 REVERSE_CHUNK_SIZE = 8 * MIB
 INITRD_XZ_LEVEL = "1"
+# SRC_ROOT = "/tmp/tmp.bBzSh9E26M/"
 SRC_ROOT = "/"
 HIDDEN_SALT_SUFFIX = "a"
 ARGON2_SECURE = False
@@ -59,6 +60,8 @@ assert ZERO_HEADER % PARTITION_ALIGN == 0
 assert META_SIZE % PARTITION_ALIGN == 0
 assert REVERSE_CHUNK_SIZE % PARTITION_ALIGN == 0
 assert SWAP_SIZE % PE_SIZE == 0
+assert SRC_ROOT.startswith("/")
+assert SRC_ROOT.endswith("/")
 SWAP_SIZE_PE = SWAP_SIZE // PE_SIZE
 DM_SECTOR_SIZE = 512
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -136,7 +139,7 @@ def add_binary(root, bin):
     ).splitlines()
 
     for link in links:
-        link_path = os.path.join(root, link.lstrip("/"))
+        link_path = os.path.join(root, link.removeprefix(SRC_ROOT))
         os.makedirs(os.path.dirname(link_path), exist_ok=True)
         os.symlink(os.path.basename(bin), link_path)
 
@@ -181,10 +184,13 @@ def common_initrd(root):
         add_binary(root, bin)
 
     add_binary(root, "usr/bin/busybox")
-    applets = cmd_output("/usr/bin/busybox", "--list").splitlines()
-    for applet in applets:
-        if applet != "busybox":
-            os.symlink("busybox", os.path.join(root, "usr", "bin", applet))
+    if not os.path.exists(os.path.join(root, "usr", "bin", "ls")):
+        applets = cmd_output(
+            os.path.join(SRC_ROOT, "usr/bin/busybox"), "--list"
+        ).splitlines()
+        for applet in applets:
+            if applet != "busybox":
+                os.symlink("busybox", os.path.join(root, "usr", "bin", applet))
 
     os.symlink("../proc/self/mounts", os.path.join(root, "etc", "mtab"))
     open(os.path.join(root, "etc", "fstab"), "w").close()
@@ -232,8 +238,8 @@ def bootstrap_initrd(out_file: str, salt: str, mods: list[str] = []):
 def system_initrd(out_file):
     with tempfile.TemporaryDirectory() as root:
         common_initrd(root)
-        add_binary(root, "usr/bin/kexec")
         add_binary(root, "usr/bin/lvm")
+        add_binary(root, "usr/bin/pdata_tools")
 
         cmd("cp", os.path.join(SCRIPT_DIR, "system.sh"), os.path.join(root, "early.sh"))
 
@@ -600,6 +606,7 @@ def init_volumes(device: str, salt: str, hidden: bool):
             open(os.path.join(root, "etc", "lvm", "lvm.conf"), "w").close()
             add_binary(root, "usr/bin/kexec")
             add_binary(root, "usr/bin/lvm")
+            add_binary(root, "usr/bin/pdata_tools")
             cmd("cp", os.path.join(SCRIPT_DIR, "late.sh"), ext4_meta)
             with open(f"{ext4_meta}/table.txt", "w") as table:
                 print(
