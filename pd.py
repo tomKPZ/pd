@@ -28,8 +28,7 @@ META_SIZE = 64 * MIB
 MOVE_PES = False
 REVERSE_CHUNK_SIZE = 8 * MIB
 INITRD_XZ_LEVEL = "1"
-# SRC_ROOT = "/tmp/tmp.bBzSh9E26M/"
-SRC_ROOT = "/"
+USE_STATIC_TOOLS = True
 HIDDEN_SALT_SUFFIX = "a"
 ARGON2_SECURE = False
 if ARGON2_SECURE:
@@ -56,15 +55,19 @@ else:
 DEBUG_TRACE_CMDS = True
 
 # Config checks and non-modifiable constants
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 assert ZERO_HEADER % PARTITION_ALIGN == 0
 assert META_SIZE % PARTITION_ALIGN == 0
 assert REVERSE_CHUNK_SIZE % PARTITION_ALIGN == 0
 assert SWAP_SIZE % PE_SIZE == 0
+if USE_STATIC_TOOLS:
+    SRC_ROOT = os.path.join(SCRIPT_DIR, "static-tools") + "/"
+else:
+    SRC_ROOT = "/"
 assert SRC_ROOT.startswith("/")
 assert SRC_ROOT.endswith("/")
 SWAP_SIZE_PE = SWAP_SIZE // PE_SIZE
 DM_SECTOR_SIZE = 512
-SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 
 ARGON2_ARGS = [
     "-id",
@@ -184,7 +187,7 @@ def common_initrd(root):
         add_binary(root, bin)
 
     add_binary(root, "usr/bin/busybox")
-    if not os.path.exists(os.path.join(root, "usr", "bin", "ls")):
+    if not USE_STATIC_TOOLS:
         applets = cmd_output(
             os.path.join(SRC_ROOT, "usr/bin/busybox"), "--list"
         ).splitlines()

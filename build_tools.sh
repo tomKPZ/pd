@@ -4,7 +4,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(dirname "$(realpath -e "${BASH_SOURCE[0]}")")"
 
-ROOT="$(mktemp -d)"
+ROOT="$SCRIPT_DIR/static-tools"
+rm -rf "$ROOT"
+mkdir -p ROOT
 
 install -dm755 "$ROOT"/{new_root,proc,sys,dev,run,tmp,var,etc,usr/{lib,bin}}
 ln -s "usr/lib" "$ROOT/lib"
@@ -82,6 +84,3 @@ git clean -fdx
 cargo build --target=x86_64-unknown-linux-musl --release
 sed -i 's|target/release/pdata_tools|target/x86_64-unknown-linux-musl/release/pdata_tools|' Makefile
 make install DESTDIR="$ROOT"
-
-tree "$ROOT"
-echo "$ROOT/"
