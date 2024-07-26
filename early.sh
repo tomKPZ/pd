@@ -14,12 +14,10 @@ for dev in $(cat /proc/partitions | tail -n +3 | tr -s ' ' '\t' | cut -f 5); do
         dmsetup create --readonly dm-plain /table.txt &&
         dmsetup mknodes dm-plain &&
         cryptsetup open --type=plain {crypt_args} --key-file=/key.bin /dev/mapper/dm-plain plain &&
-        integritysetup open /dev/mapper/plain integrity &&
-        mount /dev/mapper/integrity /mnt/plain -o defaults,nodiscard,ro &&
+        mount /dev/mapper/plain /mnt/plain -o defaults,nodiscard,ro &&
         exec /mnt/plain/late.sh
 
     umount /mnt/plain || true
-    integritysetup close integrity || true
     cryptsetup close plain || true
     dmsetup remove dm-plain || true
     rm /boot_disk || true

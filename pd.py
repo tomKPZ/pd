@@ -24,7 +24,7 @@ CRYPT_KEY_SIZE = 512
 SWAP_SIZE = 64 * MIB
 PE_SIZE = 4 * MIB
 THIN_CHUNK_SIZE = 64 * KIB
-META_SIZE = 64 * MIB
+META_SIZE = 128 * MIB
 MOVE_PES = False
 REVERSE_CHUNK_SIZE = 8 * MIB
 INITRD_XZ_LEVEL = "1"
@@ -180,7 +180,6 @@ def common_initrd(root):
         "usr/bin/argon2",
         "usr/bin/cryptsetup",
         "usr/bin/dmsetup",
-        "usr/bin/integritysetup",
     ]
 
     for bin in bins:
@@ -408,28 +407,6 @@ def detached_luks(key_file, key_file_offset, header_file, wrap_dev):
 
 
 @contextlib.contextmanager
-def integrity(wrap_dev):
-    integrity_name = f"integrity_test_{dev_uuid()}"
-    integrity_dev = f"/dev/mapper/{integrity_name}"
-
-    cmd(
-        "integritysetup",
-        "format",
-        "--batch-mode",
-        "--integrity=sha512",
-        "--integrity-no-journal",
-        f"--sector-size={CRYPT_SECTOR_SIZE}",
-        wrap_dev,
-    )
-    cmd("integritysetup", "open", wrap_dev, integrity_name)
-    try:
-        dd(_if="/dev/zero", of=integrity_dev, bs=DD_DEFAULT_BS, check=False)
-        yield integrity_dev
-    finally:
-        cmd("integritysetup", "close", integrity_name)
-
-
-@contextlib.contextmanager
 def lvm(vg_name, wrap_dev):
     lv_name = "test_lv"
     swap_name = "swap"
@@ -511,29 +488,7 @@ def lvm(vg_name, wrap_dev):
 
 
 @contextlib.contextmanager
-def ext4_mount(wrap_dev):
-    mount_name = f"ext4_mount_{dev_uuid()}"
-    mount_point = f"/mnt/{mount_name}"
-
-    cmd("mkfs.ext4", wrap_dev, "-E", "nodiscard")
-    os.mkdir(mount_point)
-    try:
-        cmd(
-            "mount",
-            wrap_dev,
-            mount_point,
-            "-o,defaults,nodiscard",
-        )
-        try:
-            yield mount_point
-        finally:
-            cmd("umount", mount_point, check=False)
-    finally:
-        os.rmdir(mount_point)
-
-
-@contextlib.contextmanager
-def btrfs_mount(wrap_dev):
+def btrfs_header_mount(wrap_dev):
     mount_name = f"btrfs_mount_{dev_uuid()}"
     mount_point = f"/mnt/{mount_name}"
 
@@ -550,7 +505,35 @@ def btrfs_mount(wrap_dev):
             "mount",
             wrap_dev,
             mount_point,
-            "-o,defaults,relatime,lazytime,autodefrag,ssd,nodiscard,compress=zstd:3",
+            "-o,defaults,relatime,lazytime,autodefrag,ssd,nodiscard,compress=zstd:12",
+        )
+        try:
+            yield mount_point
+        finally:
+            cmd("umount", mount_point, check=False)
+    finally:
+        os.rmdir(mount_point)
+
+
+@contextlib.contextmanager
+def btrfs_system_mount(wrap_dev):
+    mount_name = f"btrfs_mount_{dev_uuid()}"
+    mount_point = f"/mnt/{mount_name}"
+
+    cmd(
+        "mkfs.btrfs",
+        wrap_dev,
+        "--csum=xxhash",
+        "--force",
+        "--nodiscard",
+    )
+    os.mkdir(mount_point)
+    try:
+        cmd(
+            "mount",
+            wrap_dev,
+            mount_point,
+            "-o,defaults,relatime,lazytime,autodefrag,ssd,nodiscard,compress=zstd:12",
         )
         try:
             yield mount_point
@@ -600,18 +583,17 @@ def init_volumes(device: str, salt: str, hidden: bool):
         header_stack = [
             lambda dev: device_view(dmsetup_table(meta_begin, meta_end, dev)),
             functools.partial(plain_dmcrypt, key_file),
-            integrity,
-            ext4_mount,
+            btrfs_header_mount,
         ]
-        with cascade(header_stack, device) as (_, _, _, ext4_meta):
-            root = os.path.join(ext4_meta, "root")
+        with cascade(header_stack, device) as (_, _, btrfs_meta):
+            root = os.path.join(btrfs_meta, "root")
             os.makedirs(os.path.join(root, "etc", "lvm"), exist_ok=True)
             open(os.path.join(root, "etc", "lvm", "lvm.conf"), "w").close()
             add_binary(root, "usr/bin/kexec")
             add_binary(root, "usr/bin/lvm")
             add_binary(root, "usr/bin/pdata_tools")
-            cmd("cp", os.path.join(SCRIPT_DIR, "late.sh"), ext4_meta)
-            with open(f"{ext4_meta}/table.txt", "w") as table:
+            cmd("cp", os.path.join(SCRIPT_DIR, "late.sh"), btrfs_meta)
+            with open(f"{btrfs_meta}/table.txt", "w") as table:
                 print(
                     (
                         reversed_table(0, dev_size - META_SIZE, "/boot_disk")
@@ -620,7 +602,7 @@ def init_volumes(device: str, salt: str, hidden: bool):
                     ),
                     file=table,
                 )
-            header_file = f"{ext4_meta}/header.dat"
+            header_file = f"{btrfs_meta}/header.dat"
             vg_name = "sysvg1" if hidden else "sysvg"
             data_stack = [
                 lambda dev: device_view(
@@ -630,7 +612,7 @@ def init_volumes(device: str, salt: str, hidden: bool):
                 ),
                 functools.partial(detached_luks, key_file, "64", header_file),
                 functools.partial(lvm, vg_name),
-                btrfs_mount,
+                btrfs_system_mount,
             ]
             with cascade(data_stack, device) as (_, _, _, btrfs_data):
                 cmd("mkdir", f"{btrfs_data}/boot")
