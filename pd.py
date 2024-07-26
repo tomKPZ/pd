@@ -24,7 +24,7 @@ CRYPT_KEY_SIZE = 512
 SWAP_SIZE = 64 * MIB
 PE_SIZE = 4 * MIB
 THIN_CHUNK_SIZE = 64 * KIB
-META_SIZE = 128 * MIB
+META_SIZE = 256 * MIB
 MOVE_PES = False
 REVERSE_CHUNK_SIZE = 8 * MIB
 INITRD_XZ_LEVEL = "1"
@@ -495,7 +495,8 @@ def btrfs_header_mount(wrap_dev):
     cmd(
         "mkfs.btrfs",
         wrap_dev,
-        "--csum=xxhash",
+        "--data=dup",
+        "--csum=sha256",
         "--force",
         "--nodiscard",
     )
@@ -505,7 +506,7 @@ def btrfs_header_mount(wrap_dev):
             "mount",
             wrap_dev,
             mount_point,
-            "-o,defaults,relatime,lazytime,autodefrag,ssd,nodiscard,compress=zstd:12",
+            "-o,defaults,relatime,lazytime,autodefrag,ssd,nodiscard,compress=zstd:15",
         )
         try:
             yield mount_point
