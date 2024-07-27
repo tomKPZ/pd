@@ -547,10 +547,16 @@ def btrfs_system_mount(wrap_dev):
     try:
         cmd("mount", wrap_dev, mount_point, ",".join(OPTS + ["subvolid=5"]))
         try:
-            cmd("btrfs", "subvolume", "create", os.path.join(mount_point, "@"))
-            cmd("btrfs", "subvolume", "create", os.path.join(mount_point, "@home"))
-            cmd("btrfs", "subvolume", "create", os.path.join(mount_point, "@var_log"))
-            cmd("btrfs", "subvolume", "create", os.path.join(mount_point, "@var_cache"))
+            SUBVOLS = [
+                "@",
+                "@home",
+                "@var_cache",
+                "@var_lib_docker",
+                "@var_log",
+                "@var_tmp",
+            ]
+            for subvol in SUBVOLS:
+                cmd("btrfs", "subvolume", "create", os.path.join(mount_point, subvol))
         finally:
             cmd("umount", mount_point, check=False)
         cmd("mount", wrap_dev, mount_point, ",".join(OPTS + ["subvol=@"]))
