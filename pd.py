@@ -135,12 +135,17 @@ def device_size(device: pathlib.Path) -> int:
     return size // PARTITION_ALIGN * PARTITION_ALIGN
 
 
+@functools.cache
+def mkdirs(path: pathlib.Path):
+    cmd("mkdir", "-p", path)
+
+
 def add_file(root: pathlib.Path, file: pathlib.Path):
     assert root.is_absolute()
     assert not file.is_absolute()
     real_file = SRC_ROOT / file
     dst = root / file
-    cmd("mkdir", "-p", dst.parent)
+    mkdirs(dst.parent)
     cmd("cp", real_file, dst)
 
 
@@ -173,7 +178,7 @@ def add_binary(root: pathlib.Path, bin: pathlib.Path):
 
     for link in links:
         link_path = root / pathlib.Path(link).relative_to(SRC_ROOT)
-        cmd("mkdir", "-p", link_path.parent)
+        mkdirs(link_path.parent)
         cmd("ln", "-s", bin.name, link_path)
 
     dependencies = cmd_output("ldd", real_bin, check=False).splitlines()
@@ -624,7 +629,7 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
         with cascade(header_stack, device) as (_, _, btrfs_meta):
             root = btrfs_meta / "root"
             cmd("mkdir", "-p", root / "etc" / "lvm")
-            open(root / "etc" / "lvm" / "lvm.conf", "w").close()
+            cmd("touch", root / "etc" / "lvm" / "lvm.conf")
             add_binary(root, pathlib.Path("usr/bin/kexec"))
             add_binary(root, pathlib.Path("usr/bin/lvm"))
             add_binary(root, pathlib.Path("usr/bin/pdata_tools"))
