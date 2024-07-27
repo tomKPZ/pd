@@ -19,12 +19,13 @@ GIB = 1024 * MIB
 SHRED_DEVICE = False
 INIT_DECOY = False
 INIT_HIDDEN = True
+CREATE_SWAP = False
+SWAP_SIZE = 64 * MIB
 DD_DEFAULT_BS = 4 * MIB
 PARTITION_ALIGN = 1 * MIB
 ZERO_HEADER = 1 * MIB
 CRYPT_SECTOR_SIZE = 4 * KIB
 CRYPT_KEY_SIZE = 512
-SWAP_SIZE = 64 * MIB
 PE_SIZE = 4 * MIB
 THIN_CHUNK_SIZE = 64 * KIB
 META_SIZE = 256 * MIB
@@ -427,15 +428,16 @@ def lvm(vg_name, wrap_dev):
         wrap_dev,
     )
     try:
-        cmd(
-            "lvcreate",
-            "--type=linear",
-            f"--size={SWAP_SIZE}b",
-            f"--name={swap_name}",
-            vg_name,
-        )
-        dd(_if="/dev/zero", of=swap_dev, bs=DD_DEFAULT_BS, check=False)
-        cmd("mkswap", swap_dev)
+        if CREATE_SWAP:
+            cmd(
+                "lvcreate",
+                "--type=linear",
+                f"--size={SWAP_SIZE}b",
+                f"--name={swap_name}",
+                vg_name,
+            )
+            dd(_if="/dev/zero", of=swap_dev, bs=DD_DEFAULT_BS, check=False)
+            cmd("mkswap", swap_dev)
         thin_size_str = cmd_output(
             "thin_metadata_size",
             f"--block-size={THIN_CHUNK_SIZE}b",
