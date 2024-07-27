@@ -17,6 +17,8 @@ GIB = 1024 * MIB
 
 # Config
 SHRED_DEVICE = False
+INIT_DECOY = False
+INIT_HIDDEN = True
 DD_DEFAULT_BS = 4 * MIB
 PARTITION_ALIGN = 1 * MIB
 ZERO_HEADER = 1 * MIB
@@ -660,8 +662,10 @@ def setup_device(device: str, shred_key: bytes, salt: str):
     if SHRED_DEVICE:
         shred_device(device, shred_key)
     dd(_if="/dev/zero", of=device, bs=ZERO_HEADER, count=1)
-    init_volumes(device, salt, False)
-    init_volumes(device, salt, True)
+    if INIT_DECOY:
+        init_volumes(device, salt, False)
+    if INIT_HIDDEN:
+        init_volumes(device, salt, True)
 
 
 def run_qemu(disk_img: str, initrd: str):
@@ -731,13 +735,15 @@ def main() -> int:
             with loopback_device(disk_img) as loop:
                 setup_device(loop, shred_key, salt)
                 if RUN_QEMU:
-                    with temp_file(".cpio.xz") as decoy_initrd:
-                        bootstrap_initrd(decoy_initrd, salt)
-                        run_qemu(disk_img, decoy_initrd)
-                    with temp_file(".cpio.xz") as hidden_initrd:
-                        mods = hidden_mods(TEST_DISK_SIZE)
-                        bootstrap_initrd(hidden_initrd, salt, mods)
-                        run_qemu(disk_img, hidden_initrd)
+                    if INIT_DECOY:
+                        with temp_file(".cpio.xz") as decoy_initrd:
+                            bootstrap_initrd(decoy_initrd, salt)
+                            run_qemu(disk_img, decoy_initrd)
+                    if INIT_HIDDEN:
+                        with temp_file(".cpio.xz") as hidden_initrd:
+                            mods = hidden_mods(TEST_DISK_SIZE)
+                            bootstrap_initrd(hidden_initrd, salt, mods)
+                            run_qemu(disk_img, hidden_initrd)
     if DEBUG_TRACE_CMDS:
         print("Command trace:")
         for traced in CMD_TRACE:
