@@ -5,7 +5,6 @@ import functools
 import getpass
 import hashlib
 import math
-import os
 import pathlib
 import subprocess
 import sys
@@ -98,9 +97,36 @@ def cmd_output(*args, **kwargs):
     return cmd(*args, stdout=subprocess.PIPE, **kwargs).stdout.decode().strip()
 
 
+def dd(**kwargs):
+    DD_OPS = {
+        "bs",
+        "cbs",
+        "conv",
+        "count",
+        "ibs",
+        "if",
+        "iflag",
+        "obs",
+        "of",
+        "oflag",
+        "seek",
+        "skip",
+        "status",
+    }
+    dd = ["dd"]
+    forward_kwargs = {}
+    for k, v in kwargs.items():
+        k = k.lstrip("_")
+        if k in DD_OPS:
+            dd.append(f"{k}={v}")
+        else:
+            forward_kwargs[k] = v
+    return cmd(*dd, **forward_kwargs)
+
+
 def rand512() -> bytes:
     rand8k = cmd("gpg", "--gen-random", "2", "512", stdout=subprocess.PIPE).stdout
-    rand8k += os.urandom(512)
+    rand8k += dd(_if="/dev/random", bs=512, count=1, stdout=subprocess.PIPE).stdout
     return hashlib.sha512(rand8k).digest()
 
 
@@ -114,7 +140,7 @@ def add_file(root: pathlib.Path, file: pathlib.Path):
     assert not file.is_absolute()
     real_file = SRC_ROOT / file
     dst = root / file
-    os.makedirs(dst.parent, exist_ok=True)
+    cmd("mkdir", "-p", dst.parent)
     cmd("cp", real_file, dst)
 
 
@@ -147,8 +173,8 @@ def add_binary(root: pathlib.Path, bin: pathlib.Path):
 
     for link in links:
         link_path = root / pathlib.Path(link).relative_to(SRC_ROOT)
-        os.makedirs(link_path.parent, exist_ok=True)
-        os.symlink(bin.name, link_path)
+        cmd("mkdir", "-p", link_path.parent)
+        cmd("ln", "-s", bin.name, link_path)
 
     dependencies = cmd_output("ldd", real_bin, check=False).splitlines()
     for dep in dependencies:
@@ -162,23 +188,23 @@ def add_binary(root: pathlib.Path, bin: pathlib.Path):
 
 
 def common_initrd(root: pathlib.Path):
-    os.makedirs(root / "dev", exist_ok=True)
-    os.makedirs(root / "etc", exist_ok=True)
-    os.makedirs(root / "mnt", exist_ok=True)
-    os.makedirs(root / "proc", exist_ok=True)
-    os.makedirs(root / "run", exist_ok=True)
-    os.makedirs(root / "sys", exist_ok=True)
-    os.makedirs(root / "tmp", exist_ok=True)
-    os.makedirs(root / "usr" / "bin", exist_ok=True)
-    os.makedirs(root / "usr" / "lib", exist_ok=True)
-    os.makedirs(root / "var", exist_ok=True)
-    os.symlink("usr/lib", root / "lib")
-    os.symlink("bin", root / "usr" / "sbin")
-    os.symlink("usr/bin", root / "bin")
-    os.symlink("usr/bin", root / "sbin")
-    os.symlink("../run", root / "var" / "run")
-    os.symlink("lib", root / "usr" / "lib64")
-    os.symlink("usr/lib", root / "lib64")
+    cmd("mkdir", "-p", root / "dev")
+    cmd("mkdir", "-p", root / "etc")
+    cmd("mkdir", "-p", root / "mnt")
+    cmd("mkdir", "-p", root / "proc")
+    cmd("mkdir", "-p", root / "run")
+    cmd("mkdir", "-p", root / "sys")
+    cmd("mkdir", "-p", root / "tmp")
+    cmd("mkdir", "-p", root / "usr" / "bin")
+    cmd("mkdir", "-p", root / "usr" / "lib")
+    cmd("mkdir", "-p", root / "var")
+    cmd("ln", "-s", "usr/lib", root / "lib")
+    cmd("ln", "-s", "bin", root / "usr" / "sbin")
+    cmd("ln", "-s", "usr/bin", root / "bin")
+    cmd("ln", "-s", "usr/bin", root / "sbin")
+    cmd("ln", "-s", "../run", root / "var" / "run")
+    cmd("ln", "-s", "lib", root / "usr" / "lib64")
+    cmd("ln", "-s", "usr/lib", root / "lib64")
 
     bins = [
         "usr/bin/argon2",
@@ -194,9 +220,9 @@ def common_initrd(root: pathlib.Path):
         applets = cmd_output(SRC_ROOT / "usr/bin/busybox", "--list").splitlines()
         for applet in applets:
             if applet != "busybox":
-                os.symlink("busybox", root / "usr" / "bin" / applet)
+                cmd("ln", "-s", "busybox", root / "usr" / "bin" / applet)
 
-    os.symlink("../proc/self/mounts", root / "etc" / "mtab")
+    cmd("ln", "-s", "../proc/self/mounts", root / "etc" / "mtab")
     open(root / "etc" / "fstab", "w").close()
     open(root / "etc" / "ld.so.conf", "w").close()
 
@@ -223,7 +249,7 @@ def bootstrap_initrd(out_file: pathlib.Path, salt: str, mods: list[str] = []):
                     "read_password": read_password,
                 }
                 dst.write(src.read().format(**format_args))
-            os.chmod(root / "early.sh", 0o755)
+            cmd("chmod", "755", root / "early.sh")
 
         table_file = root / "table.txt"
         with open(table_file, "w") as table:
@@ -257,33 +283,6 @@ def system_initrd(out_file: pathlib.Path):
         )
 
 
-def dd(**kwargs):
-    DD_OPS = {
-        "bs",
-        "cbs",
-        "conv",
-        "count",
-        "ibs",
-        "if",
-        "iflag",
-        "obs",
-        "of",
-        "oflag",
-        "seek",
-        "skip",
-        "status",
-    }
-    dd = ["dd"]
-    forward_kwargs = {}
-    for k, v in kwargs.items():
-        k = k.lstrip("_")
-        if k in DD_OPS:
-            dd.append(f"{k}={v}")
-        else:
-            forward_kwargs[k] = v
-    return cmd(*dd, **forward_kwargs)
-
-
 @contextlib.contextmanager
 def loopback_device(file_path: pathlib.Path):
     loop_dev = cmd_output("losetup", "-f", "--show", file_path)
@@ -299,7 +298,7 @@ def temp_file(suffix=""):
     try:
         yield pathlib.Path(file)
     finally:
-        os.remove(file)
+        cmd("rm", file)
 
 
 @contextlib.contextmanager
@@ -517,7 +516,7 @@ def btrfs_header_mount(wrap_dev: pathlib.Path):
         "--force",
         "--nodiscard",
     )
-    os.mkdir(mount_point)
+    cmd("mkdir", mount_point)
     try:
         cmd(
             "mount",
@@ -530,7 +529,7 @@ def btrfs_header_mount(wrap_dev: pathlib.Path):
         finally:
             cmd("umount", mount_point, check=False)
     finally:
-        os.rmdir(mount_point)
+        cmd("rmdir", mount_point)
 
 
 @contextlib.contextmanager
@@ -545,7 +544,7 @@ def btrfs_system_mount(wrap_dev: pathlib.Path):
         "--force",
         "--nodiscard",
     )
-    os.mkdir(mount_point)
+    cmd("mkdir", mount_point)
     OPTS = [
         "-o",
         "defaults",
@@ -577,7 +576,7 @@ def btrfs_system_mount(wrap_dev: pathlib.Path):
         finally:
             cmd("umount", mount_point, check=False)
     finally:
-        os.rmdir(mount_point)
+        cmd("rmdir", mount_point)
 
 
 @contextlib.contextmanager
@@ -624,7 +623,7 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
         ]
         with cascade(header_stack, device) as (_, _, btrfs_meta):
             root = btrfs_meta / "root"
-            os.makedirs(root / "etc" / "lvm", exist_ok=True)
+            cmd("mkdir", "-p", root / "etc" / "lvm")
             open(root / "etc" / "lvm" / "lvm.conf", "w").close()
             add_binary(root, pathlib.Path("usr/bin/kexec"))
             add_binary(root, pathlib.Path("usr/bin/lvm"))
