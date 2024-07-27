@@ -46,7 +46,6 @@ else:
 USE_TEST_PASSWORD = True
 if USE_TEST_PASSWORD:
     TEST_PASSWORD = "testpassword"
-SECURE_RAND = True
 KERNEL_PATH = "/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage"
 INSTALL = False
 if INSTALL:
@@ -103,11 +102,9 @@ def cmd_output(*args, **kwargs):
 
 
 def rand512() -> bytes:
-    if SECURE_RAND:
-        rand4k = cmd("gpg", "--gen-random", "2", "512", stdout=subprocess.PIPE).stdout
-    else:
-        rand4k = os.urandom(512)
-    return hashlib.sha512(rand4k).digest()
+    rand8k = cmd("gpg", "--gen-random", "2", "512", stdout=subprocess.PIPE).stdout
+    rand8k += os.urandom(512)
+    return hashlib.sha512(rand8k).digest()
 
 
 def device_size(device: str) -> int:
