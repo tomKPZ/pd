@@ -496,7 +496,7 @@ def btrfs_header_mount(wrap_dev):
         "mkfs.btrfs",
         wrap_dev,
         "--data=dup",
-        "--csum=sha256",
+        "--csum=blake2",
         "--force",
         "--nodiscard",
     )
@@ -506,7 +506,7 @@ def btrfs_header_mount(wrap_dev):
             "mount",
             wrap_dev,
             mount_point,
-            "-o,defaults,relatime,lazytime,autodefrag,ssd,nodiscard,compress=zstd:15",
+            "-o,defaults,noatime,autodefrag,ssd,nodiscard,compress=zstd:15",
         )
         try:
             yield mount_point
@@ -529,13 +529,23 @@ def btrfs_system_mount(wrap_dev):
         "--nodiscard",
     )
     os.mkdir(mount_point)
+    OPTS = [
+        "-o",
+        "defaults",
+        "relatime",
+        "lazytime",
+        "autodefrag",
+        "ssd",
+        "nodiscard",
+        "compress=zstd:12",
+    ]
     try:
-        cmd(
-            "mount",
-            wrap_dev,
-            mount_point,
-            "-o,defaults,relatime,lazytime,autodefrag,ssd,nodiscard,compress=zstd:12",
-        )
+        cmd("mount", wrap_dev, mount_point, ",".join(OPTS + ["subvolid=5"]))
+        try:
+            cmd("btrfs", "subvolume", "create", os.path.join(mount_point, "@"))
+        finally:
+            cmd("umount", mount_point, check=False)
+        cmd("mount", wrap_dev, mount_point, ",".join(OPTS + ["subvol=@"]))
         try:
             yield mount_point
         finally:
