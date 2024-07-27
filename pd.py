@@ -6,6 +6,7 @@ import getpass
 import hashlib
 import math
 import os
+import pathlib
 import subprocess
 import sys
 import tempfile
@@ -46,29 +47,25 @@ else:
 USE_TEST_PASSWORD = True
 if USE_TEST_PASSWORD:
     TEST_PASSWORD = "testpassword"
-KERNEL_PATH = "/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage"
+KERNEL_PATH = pathlib.Path("/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage")
 INSTALL = False
 if INSTALL:
-    INSTALL_DEVICE = "/dev/nvme0n1p10"
+    INSTALL_DEVICE = pathlib.Path("/dev/nvme0n1p10")
     INSTALL_UKI = True
-    UKI_INSTALL_PATH = "/mnt/EFI/BOOT/BOOTX64.EFI"
+    UKI_INSTALL_PATH = pathlib.Path("/mnt/EFI/BOOT/BOOTX64.EFI")
 else:
     TEST_DISK_SIZE = 1 * GIB
     RUN_QEMU = True
 DEBUG_TRACE_CMDS = True
 
 # Config checks and non-modifiable constants
-SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 assert ZERO_HEADER % PARTITION_ALIGN == 0
 assert META_SIZE % PARTITION_ALIGN == 0
 assert REVERSE_CHUNK_SIZE % PARTITION_ALIGN == 0
 assert SWAP_SIZE % PE_SIZE == 0
-if USE_STATIC_TOOLS:
-    SRC_ROOT = os.path.join(SCRIPT_DIR, "static-tools") + "/"
-else:
-    SRC_ROOT = "/"
-assert SRC_ROOT.startswith("/")
-assert SRC_ROOT.endswith("/")
+SRC_ROOT = SCRIPT_DIR / "static-tools" if USE_STATIC_TOOLS else pathlib.Path("/")
+assert SRC_ROOT.is_absolute()
 SWAP_SIZE_PE = SWAP_SIZE // PE_SIZE
 DM_SECTOR_SIZE = 512
 
@@ -107,35 +104,41 @@ def rand512() -> bytes:
     return hashlib.sha512(rand8k).digest()
 
 
-def device_size(device: str) -> int:
+def device_size(device: pathlib.Path) -> int:
     size = int(cmd_output("blockdev", "--getsize64", device))
     return size // PARTITION_ALIGN * PARTITION_ALIGN
 
 
-def add_file(root, file):
-    real_file = os.path.join(SRC_ROOT, file)
-    dst = os.path.join(root, file.lstrip("/"))
-    os.makedirs(os.path.dirname(dst), exist_ok=True)
+def add_file(root: pathlib.Path, file: pathlib.Path):
+    assert root.is_absolute()
+    assert not file.is_absolute()
+    real_file = SRC_ROOT / file
+    dst = root / file
+    os.makedirs(dst.parent, exist_ok=True)
     cmd("cp", real_file, dst)
 
 
-def add_library(root, lib):
-    dst = os.path.join(root, lib.removeprefix(SRC_ROOT))
-    if not os.path.isfile(dst):
+def add_library(root: pathlib.Path, lib: pathlib.Path):
+    assert root.is_absolute()
+    assert not lib.is_absolute()
+    dst = root / lib
+    if not dst.is_file():
         add_file(root, lib)
         cmd("strip", "--strip-unneeded", dst)
 
 
-def add_binary(root, bin):
-    real_bin = os.path.join(SRC_ROOT, bin)
+def add_binary(root: pathlib.Path, bin: pathlib.Path):
+    assert root.is_absolute()
+    assert not bin.is_absolute()
+    real_bin = SRC_ROOT / bin
     add_file(root, bin)
-    dst = os.path.join(root, bin.removeprefix(SRC_ROOT))
+    dst = root / bin
     cmd("strip", "--strip-all", dst)
 
     links = cmd_output(
         "find",
         "-L",
-        os.path.dirname(real_bin),
+        real_bin.parent,
         "-samefile",
         real_bin,
         "-xtype",
@@ -143,9 +146,9 @@ def add_binary(root, bin):
     ).splitlines()
 
     for link in links:
-        link_path = os.path.join(root, link.removeprefix(SRC_ROOT))
-        os.makedirs(os.path.dirname(link_path), exist_ok=True)
-        os.symlink(os.path.basename(bin), link_path)
+        link_path = root / pathlib.Path(link).relative_to(SRC_ROOT)
+        os.makedirs(link_path.parent, exist_ok=True)
+        os.symlink(bin.name, link_path)
 
     dependencies = cmd_output("ldd", real_bin, check=False).splitlines()
     for dep in dependencies:
@@ -158,24 +161,24 @@ def add_binary(root, bin):
             add_library(root, dep_path)
 
 
-def common_initrd(root):
-    os.makedirs(os.path.join(root, "dev"), exist_ok=True)
-    os.makedirs(os.path.join(root, "etc"), exist_ok=True)
-    os.makedirs(os.path.join(root, "mnt"), exist_ok=True)
-    os.makedirs(os.path.join(root, "proc"), exist_ok=True)
-    os.makedirs(os.path.join(root, "run"), exist_ok=True)
-    os.makedirs(os.path.join(root, "sys"), exist_ok=True)
-    os.makedirs(os.path.join(root, "tmp"), exist_ok=True)
-    os.makedirs(os.path.join(root, "usr", "bin"), exist_ok=True)
-    os.makedirs(os.path.join(root, "usr", "lib"), exist_ok=True)
-    os.makedirs(os.path.join(root, "var"), exist_ok=True)
-    os.symlink("usr/lib", os.path.join(root, "lib"))
-    os.symlink("bin", os.path.join(root, "usr", "sbin"))
-    os.symlink("usr/bin", os.path.join(root, "bin"))
-    os.symlink("usr/bin", os.path.join(root, "sbin"))
-    os.symlink("../run", os.path.join(root, "var", "run"))
-    os.symlink("lib", os.path.join(root, "usr", "lib64"))
-    os.symlink("usr/lib", os.path.join(root, "lib64"))
+def common_initrd(root: pathlib.Path):
+    os.makedirs(root / "dev", exist_ok=True)
+    os.makedirs(root / "etc", exist_ok=True)
+    os.makedirs(root / "mnt", exist_ok=True)
+    os.makedirs(root / "proc", exist_ok=True)
+    os.makedirs(root / "run", exist_ok=True)
+    os.makedirs(root / "sys", exist_ok=True)
+    os.makedirs(root / "tmp", exist_ok=True)
+    os.makedirs(root / "usr" / "bin", exist_ok=True)
+    os.makedirs(root / "usr" / "lib", exist_ok=True)
+    os.makedirs(root / "var", exist_ok=True)
+    os.symlink("usr/lib", root / "lib")
+    os.symlink("bin", root / "usr" / "sbin")
+    os.symlink("usr/bin", root / "bin")
+    os.symlink("usr/bin", root / "sbin")
+    os.symlink("../run", root / "var" / "run")
+    os.symlink("lib", root / "usr" / "lib64")
+    os.symlink("usr/lib", root / "lib64")
 
     bins = [
         "usr/bin/argon2",
@@ -184,33 +187,31 @@ def common_initrd(root):
     ]
 
     for bin in bins:
-        add_binary(root, bin)
+        add_binary(root, pathlib.Path(bin))
 
-    add_binary(root, "usr/bin/busybox")
+    add_binary(root, pathlib.Path("usr/bin/busybox"))
     if not USE_STATIC_TOOLS:
-        applets = cmd_output(
-            os.path.join(SRC_ROOT, "usr/bin/busybox"), "--list"
-        ).splitlines()
+        applets = cmd_output(SRC_ROOT / "usr/bin/busybox", "--list").splitlines()
         for applet in applets:
             if applet != "busybox":
-                os.symlink("busybox", os.path.join(root, "usr", "bin", applet))
+                os.symlink("busybox", root / "usr" / "bin" / applet)
 
-    os.symlink("../proc/self/mounts", os.path.join(root, "etc", "mtab"))
-    open(os.path.join(root, "etc", "fstab"), "w").close()
-    open(os.path.join(root, "etc", "ld.so.conf"), "w").close()
+    os.symlink("../proc/self/mounts", root / "etc" / "mtab")
+    open(root / "etc" / "fstab", "w").close()
+    open(root / "etc" / "ld.so.conf", "w").close()
 
-    cmd("cp", os.path.join(SCRIPT_DIR, "init"), root)
+    cmd("cp", SCRIPT_DIR / "init", root)
 
 
-def bootstrap_initrd(out_file: str, salt: str, mods: list[str] = []):
-    with tempfile.TemporaryDirectory() as root:
+def bootstrap_initrd(out_file: pathlib.Path, salt: str, mods: list[str] = []):
+    with temp_dir() as root:
         common_initrd(root)
 
-        with open(os.path.join(root, "salt.txt"), "w") as salt_file:
+        with open(root / "salt.txt", "w") as salt_file:
             salt_file.write(salt)
 
-        with open(os.path.join(SCRIPT_DIR, "early.sh")) as src:
-            with open(os.path.join(root, "early.sh"), "w") as dst:
+        with open(SCRIPT_DIR / "early.sh") as src:
+            with open(root / "early.sh", "w") as dst:
                 read_password = (
                     f"password={TEST_PASSWORD}"
                     if USE_TEST_PASSWORD
@@ -222,11 +223,14 @@ def bootstrap_initrd(out_file: str, salt: str, mods: list[str] = []):
                     "read_password": read_password,
                 }
                 dst.write(src.read().format(**format_args))
-            os.chmod(os.path.join(root, "early.sh"), 0o755)
+            os.chmod(root / "early.sh", 0o755)
 
-        table_file = os.path.join(root, "table.txt")
+        table_file = root / "table.txt"
         with open(table_file, "w") as table:
-            print(dmsetup_table(ZERO_HEADER, META_SIZE, "/boot_disk"), file=table)
+            print(
+                dmsetup_table(ZERO_HEADER, META_SIZE, pathlib.Path("/boot_disk")),
+                file=table,
+            )
 
         for mod in mods:
             cmd(mod, shell=True, cwd=root)
@@ -238,13 +242,13 @@ def bootstrap_initrd(out_file: str, salt: str, mods: list[str] = []):
         )
 
 
-def system_initrd(out_file):
-    with tempfile.TemporaryDirectory() as root:
+def system_initrd(out_file: pathlib.Path):
+    with temp_dir() as root:
         common_initrd(root)
-        add_binary(root, "usr/bin/lvm")
-        add_binary(root, "usr/bin/pdata_tools")
+        add_binary(root, pathlib.Path("usr/bin/lvm"))
+        add_binary(root, pathlib.Path("usr/bin/pdata_tools"))
 
-        cmd("cp", os.path.join(SCRIPT_DIR, "system.sh"), os.path.join(root, "early.sh"))
+        cmd("cp", SCRIPT_DIR / "system.sh", root / "early.sh")
 
         cmd(
             f"find . -print0 | cpio --null -o --format=newc | xz --check=crc32 -{INITRD_XZ_LEVEL} >{out_file}",
@@ -281,7 +285,7 @@ def dd(**kwargs):
 
 
 @contextlib.contextmanager
-def loopback_device(file_path):
+def loopback_device(file_path: pathlib.Path):
     loop_dev = cmd_output("losetup", "-f", "--show", file_path)
     try:
         yield loop_dev
@@ -293,19 +297,25 @@ def loopback_device(file_path):
 def temp_file(suffix=""):
     file = tempfile.mktemp(suffix=suffix)
     try:
-        yield file
+        yield pathlib.Path(file)
     finally:
         os.remove(file)
 
 
-def dmsetup_table(start: int, end: int, wrap_dev: str):
+@contextlib.contextmanager
+def temp_dir():
+    with tempfile.TemporaryDirectory() as tmp:
+        yield pathlib.Path(tmp)
+
+
+def dmsetup_table(start: int, end: int, wrap_dev: pathlib.Path):
     start_sector, start_rem = divmod(start, DM_SECTOR_SIZE)
     end_sector, end_rem = divmod(end, DM_SECTOR_SIZE)
     assert start_rem == 0 and end_rem == 0
     return f"0 {end_sector-start_sector} linear {wrap_dev} {start_sector}"
 
 
-def reversed_table(start: int, end: int, wrap_dev: str):
+def reversed_table(start: int, end: int, wrap_dev: pathlib.Path):
     sectors_per_chunk = REVERSE_CHUNK_SIZE // DM_SECTOR_SIZE
 
     start_sector, start_rem = divmod(start, DM_SECTOR_SIZE)
@@ -332,12 +342,12 @@ def dev_uuid() -> str:
 @contextlib.contextmanager
 def device_view(table: str):
     device_name = f"view_{dev_uuid()}"
-    device_path = f"/dev/mapper/{device_name}"
+    device_path = pathlib.Path("/dev/mapper") / device_name
 
     cmd(
         "dmsetup",
         "create",
-        os.path.basename(device_path),
+        device_path.name,
         input=table.encode(),
     )
     try:
@@ -347,9 +357,9 @@ def device_view(table: str):
 
 
 @contextlib.contextmanager
-def plain_dmcrypt(key_file, wrap_dev):
+def plain_dmcrypt(key_file: pathlib.Path, wrap_dev: pathlib.Path):
     crypt_name = f"dmcrypt_test_{dev_uuid()}"
-    crypt_dev = f"/dev/mapper/{crypt_name}"
+    crypt_dev = pathlib.Path("/dev") / "mapper" / crypt_name
     cmd(
         "cryptsetup",
         "open",
@@ -366,9 +376,14 @@ def plain_dmcrypt(key_file, wrap_dev):
 
 
 @contextlib.contextmanager
-def detached_luks(key_file, key_file_offset, header_file, wrap_dev):
+def detached_luks(
+    key_file: pathlib.Path,
+    key_file_offset: int,
+    header_file: pathlib.Path,
+    wrap_dev: pathlib.Path,
+):
     luks_name = f"luks_test_{dev_uuid()}"
-    luks_dev = f"/dev/mapper/{luks_name}"
+    luks_dev = pathlib.Path("/dev") / "mapper" / luks_name
 
     with temp_file() as volume_key:
         with open(volume_key, "wb") as f:
@@ -408,13 +423,13 @@ def detached_luks(key_file, key_file_offset, header_file, wrap_dev):
 
 
 @contextlib.contextmanager
-def lvm(vg_name, wrap_dev):
+def lvm(vg_name: str, wrap_dev: pathlib.Path):
     lv_name = "test_lv"
     swap_name = "swap"
-    swap_dev = f"/dev/{vg_name}/{swap_name}"
+    swap_dev = pathlib.Path("/dev") / vg_name / swap_name
     thinpool_name = "thinpool"
-    thinpool_dev = f"/dev/{vg_name}/{thinpool_name}"
-    lv_dev = f"/dev/{vg_name}/{lv_name}"
+    thinpool_dev = pathlib.Path("/dev") / vg_name / thinpool_name
+    lv_dev = pathlib.Path("/dev") / vg_name / lv_name
 
     dd(_if="/dev/zero", of=wrap_dev, bs=PE_SIZE, count=1)
     cmd("pvcreate", wrap_dev)
@@ -490,9 +505,9 @@ def lvm(vg_name, wrap_dev):
 
 
 @contextlib.contextmanager
-def btrfs_header_mount(wrap_dev):
+def btrfs_header_mount(wrap_dev: pathlib.Path):
     mount_name = f"btrfs_mount_{dev_uuid()}"
-    mount_point = f"/mnt/{mount_name}"
+    mount_point = pathlib.Path("/mnt") / mount_name
 
     cmd(
         "mkfs.btrfs",
@@ -519,9 +534,9 @@ def btrfs_header_mount(wrap_dev):
 
 
 @contextlib.contextmanager
-def btrfs_system_mount(wrap_dev):
+def btrfs_system_mount(wrap_dev: pathlib.Path):
     mount_name = f"btrfs_mount_{dev_uuid()}"
-    mount_point = f"/mnt/{mount_name}"
+    mount_point = pathlib.Path("/mnt") / mount_name
 
     cmd(
         "mkfs.btrfs",
@@ -553,7 +568,7 @@ def btrfs_system_mount(wrap_dev):
                 "@var_tmp",
             ]
             for subvol in SUBVOLS:
-                cmd("btrfs", "subvolume", "create", os.path.join(mount_point, subvol))
+                cmd("btrfs", "subvolume", "create", mount_point / subvol)
         finally:
             cmd("umount", mount_point, check=False)
         cmd("mount", wrap_dev, mount_point, ",".join(OPTS + ["subvol=@"]))
@@ -579,7 +594,7 @@ def cascade(managers, prev, i=0, acc=None):
             yield res
 
 
-def read_password(pw_type):
+def read_password(pw_type: str):
     if USE_TEST_PASSWORD:
         return TEST_PASSWORD
     while True:
@@ -591,7 +606,7 @@ def read_password(pw_type):
             print("Passwords do not match. Please try again.")
 
 
-def init_volumes(device: str, salt: str, hidden: bool):
+def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
     salt_suffix = HIDDEN_SALT_SUFFIX if hidden else ""
     argon_cmd = ["argon2", salt + salt_suffix] + ARGON2_ARGS
     password = read_password("Hidden" if hidden else "Decoy")
@@ -608,23 +623,24 @@ def init_volumes(device: str, salt: str, hidden: bool):
             btrfs_header_mount,
         ]
         with cascade(header_stack, device) as (_, _, btrfs_meta):
-            root = os.path.join(btrfs_meta, "root")
-            os.makedirs(os.path.join(root, "etc", "lvm"), exist_ok=True)
-            open(os.path.join(root, "etc", "lvm", "lvm.conf"), "w").close()
-            add_binary(root, "usr/bin/kexec")
-            add_binary(root, "usr/bin/lvm")
-            add_binary(root, "usr/bin/pdata_tools")
-            cmd("cp", os.path.join(SCRIPT_DIR, "late.sh"), btrfs_meta)
+            root = btrfs_meta / "root"
+            os.makedirs(root / "etc" / "lvm", exist_ok=True)
+            open(root / "etc" / "lvm" / "lvm.conf", "w").close()
+            add_binary(root, pathlib.Path("usr/bin/kexec"))
+            add_binary(root, pathlib.Path("usr/bin/lvm"))
+            add_binary(root, pathlib.Path("usr/bin/pdata_tools"))
+            cmd("cp", SCRIPT_DIR / "late.sh", btrfs_meta)
             with open(f"{btrfs_meta}/table.txt", "w") as table:
+                boot_disk = pathlib.Path("/boot_disk")
                 print(
                     (
-                        reversed_table(0, dev_size - META_SIZE, "/boot_disk")
+                        reversed_table(0, dev_size - META_SIZE, boot_disk)
                         if hidden
-                        else dmsetup_table(META_SIZE, dev_size, "/boot_disk")
+                        else dmsetup_table(META_SIZE, dev_size, boot_disk)
                     ),
                     file=table,
                 )
-            header_file = f"{btrfs_meta}/header.dat"
+            header_file = btrfs_meta / "header.dat"
             vg_name = "sysvg1" if hidden else "sysvg"
             data_stack = [
                 lambda dev: device_view(
@@ -632,24 +648,24 @@ def init_volumes(device: str, salt: str, hidden: bool):
                     if hidden
                     else dmsetup_table(META_SIZE, dev_size, dev)
                 ),
-                functools.partial(detached_luks, key_file, "64", header_file),
+                functools.partial(detached_luks, key_file, 64, header_file),
                 functools.partial(lvm, vg_name),
                 btrfs_system_mount,
             ]
             with cascade(data_stack, device) as (_, _, _, btrfs_data):
                 cmd("mkdir", f"{btrfs_data}/boot")
                 cmd("cp", KERNEL_PATH, f"{btrfs_data}/boot/vmlinuz-linux")
-                system_initrd(f"{btrfs_data}/boot/initramfs-linux.img")
-                with open(f"{btrfs_data}/boot/cmdline-linux.txt", "w") as cmdline:
+                system_initrd(btrfs_data / "boot/initramfs-linux.img")
+                with open(btrfs_data / "boot/cmdline-linux.txt", "w") as cmdline:
                     print("quiet" if INSTALL else "console=ttyS0", file=cmdline)
-                with open(f"{btrfs_data}/message.txt", "w") as message:
+                with open(btrfs_data / "message.txt", "w") as message:
                     if hidden:
                         print("HELLO FROM HIDDEN SYSTEM", file=message)
                     else:
                         print("HELLO FROM DECOY SYSTEM", file=message)
 
 
-def shred_device(device: str, shred_key: bytes):
+def shred_device(device: pathlib.Path, shred_key: bytes):
     with temp_file() as key_file:
         with open(key_file, mode="wb") as key:
             key.write(shred_key)
@@ -663,7 +679,7 @@ def shred_device(device: str, shred_key: bytes):
             )
 
 
-def setup_device(device: str, shred_key: bytes, salt: str):
+def setup_device(device: pathlib.Path, shred_key: bytes, salt: str):
     if SHRED_DEVICE:
         shred_device(device, shred_key)
     dd(_if="/dev/zero", of=device, bs=ZERO_HEADER, count=1)
@@ -673,7 +689,7 @@ def setup_device(device: str, shred_key: bytes, salt: str):
         init_volumes(device, salt, True)
 
 
-def run_qemu(disk_img: str, initrd: str):
+def run_qemu(disk_img: pathlib.Path, initrd: pathlib.Path):
     cmd(
         "qemu-system-x86_64",
         "-kernel",
@@ -752,7 +768,7 @@ def main() -> int:
     if DEBUG_TRACE_CMDS:
         print("Command trace:")
         for traced in CMD_TRACE:
-            print(" ".join(traced))
+            print(" ".join(map(str, traced)))
     if SHRED_DEVICE:
         print("Shredding key", shred_key.hex())
     print("Hidden mods:")
