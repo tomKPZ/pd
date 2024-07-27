@@ -16,6 +16,7 @@ MIB = 1024 * KIB
 GIB = 1024 * MIB
 
 # Config
+SHRED_DEVICE = False
 DD_DEFAULT_BS = 4 * MIB
 PARTITION_ALIGN = 1 * MIB
 ZERO_HEADER = 1 * MIB
@@ -543,6 +544,9 @@ def btrfs_system_mount(wrap_dev):
         cmd("mount", wrap_dev, mount_point, ",".join(OPTS + ["subvolid=5"]))
         try:
             cmd("btrfs", "subvolume", "create", os.path.join(mount_point, "@"))
+            cmd("btrfs", "subvolume", "create", os.path.join(mount_point, "@home"))
+            cmd("btrfs", "subvolume", "create", os.path.join(mount_point, "@var_log"))
+            cmd("btrfs", "subvolume", "create", os.path.join(mount_point, "@var_cache"))
         finally:
             cmd("umount", mount_point, check=False)
         cmd("mount", wrap_dev, mount_point, ",".join(OPTS + ["subvol=@"]))
@@ -638,7 +642,7 @@ def init_volumes(device: str, salt: str, hidden: bool):
                         print("HELLO FROM DECOY SYSTEM", file=message)
 
 
-def setup_device(device: str, shred_key: bytes, salt: str):
+def shred_device(device: str, shred_key: bytes):
     with temp_file() as key_file:
         with open(key_file, mode="wb") as key:
             key.write(shred_key)
@@ -650,7 +654,12 @@ def setup_device(device: str, shred_key: bytes, salt: str):
                 status="progress",
                 check=False,
             )
-    dd(_if="/dev/zero", of=device, bs="4K", count=1)
+
+
+def setup_device(device: str, shred_key: bytes, salt: str):
+    if SHRED_DEVICE:
+        shred_device(device, shred_key)
+    dd(_if="/dev/zero", of=device, bs=ZERO_HEADER, count=1)
     init_volumes(device, salt, False)
     init_volumes(device, salt, True)
 
@@ -733,7 +742,8 @@ def main() -> int:
         print("Command trace:")
         for traced in CMD_TRACE:
             print(" ".join(traced))
-    print("Shredding key", shred_key.hex())
+    if SHRED_DEVICE:
+        print("Shredding key", shred_key.hex())
     print("Hidden mods:")
     for mod in mods:
         print(mod)
