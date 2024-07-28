@@ -17,7 +17,7 @@ link_tmeta
 vgchange -ay --ignoremonitoring --noudevsync -qq $VG
 vgmknodes $VG
 mkdir /mnt/luks
-mount /dev/mapper/$VG-test_lv /mnt/luks -o,defaults,nodiscard,ro,subvol=@
+mount /dev/mapper/$VG-root /mnt/luks -o,defaults,nodiscard,ro,subvol=@
 
 cp /mnt/luks/boot/initramfs-linux.img /
 size=$(stat -c%s /initramfs-linux.img)

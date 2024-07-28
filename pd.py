@@ -16,11 +16,11 @@ MIB = 1024 * KIB
 GIB = 1024 * MIB
 
 # Config
+SHRED_DEVICE = False
+INIT_DECOY = True
+INIT_HIDDEN = True
 VG_DECOY_NAME = "sysvg"
 VG_HIDDEN_NAME = "sysvg1"
-SHRED_DEVICE = False
-INIT_DECOY = False
-INIT_HIDDEN = True
 CREATE_SWAP = False
 SWAP_SIZE = 64 * MIB
 DD_DEFAULT_BS = 4 * MIB
@@ -49,17 +49,16 @@ USE_TEST_PASSWORD = True
 TEST_PASSWORD = "testpassword"
 KERNEL_PATH = pathlib.Path("/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage")
 INSTALL = False
-if INSTALL:
-    INSTALL_DEVICE = pathlib.Path("/dev/nvme0n1p10")
-    INSTALL_UKI = True
-    UKI_INSTALL_PATH = pathlib.Path("/mnt/EFI/BOOT/BOOTX64.EFI")
-else:
-    TEST_DISK_SIZE = 1 * GIB
-    RUN_QEMU = True
-DEBUG_TRACE_CMDS = True
+INSTALL_DEVICE = pathlib.Path("/dev/nvme0n1p10")
+INSTALL_UKI = True
+INSTALL_UKI_PATH = pathlib.Path("/mnt/EFI/BOOT/BOOTX64.EFI")
+TEST_DISK_SIZE = 4 * GIB
+RUN_QEMU = True
+DEBUG_TRACE_CMDS = False
 
 # Config checks and non-modifiable constants
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
+assert TEST_DISK_SIZE % DD_DEFAULT_BS == 0
 assert ZERO_HEADER % PARTITION_ALIGN == 0
 assert META_SIZE % PARTITION_ALIGN == 0
 assert REVERSE_CHUNK_SIZE % PARTITION_ALIGN == 0
@@ -71,6 +70,15 @@ DM_SECTOR_SIZE = 512
 DEV = pathlib.Path("/dev")
 MNT = pathlib.Path("/mnt")
 USR_BIN = pathlib.Path("usr/bin")
+
+BTRFS_SUBVOLS = {
+    "@": "",
+    "@home": "home",
+    "@var_cache": "var/cache",
+    "@var_lib_docker": "var/lib/docker",
+    "@var_log": "var/log",
+    "@var_tmp": "var/tmp",
+}
 
 ARGON2_ARGS = [
     "-id",
@@ -136,6 +144,7 @@ def rand512() -> bytes:
 
 def device_size(device: pathlib.Path) -> int:
     size = int(cmd_output("blockdev", "--getsize64", device))
+    print(size, size // PARTITION_ALIGN * PARTITION_ALIGN)
     return size // PARTITION_ALIGN * PARTITION_ALIGN
 
 
@@ -320,7 +329,7 @@ def dmsetup_table(start: int, end: int, wrap_dev: pathlib.Path):
     start_sector, start_rem = divmod(start, DM_SECTOR_SIZE)
     end_sector, end_rem = divmod(end, DM_SECTOR_SIZE)
     assert start_rem == 0 and end_rem == 0
-    return f"0 {end_sector-start_sector} linear {wrap_dev} {start_sector}"
+    return f"0 {end_sector - start_sector} linear {wrap_dev} {start_sector}"
 
 
 def reversed_table(start: int, end: int, wrap_dev: pathlib.Path):
@@ -432,7 +441,7 @@ def detached_luks(
 
 @contextlib.contextmanager
 def lvm(vg_name: str, wrap_dev: pathlib.Path):
-    lv_name = "test_lv"
+    lv_name = "root"
     swap_name = "swap"
     swap_dev = DEV / vg_name / swap_name
     thinpool_name = "thinpool"
@@ -567,23 +576,23 @@ def btrfs_system_mount(wrap_dev: pathlib.Path):
     try:
         cmd("mount", wrap_dev, mount_point, ",".join(OPTS + ["subvolid=5"]))
         try:
-            SUBVOLS = [
-                "@",
-                "@home",
-                "@var_cache",
-                "@var_lib_docker",
-                "@var_log",
-                "@var_tmp",
-            ]
-            for subvol in SUBVOLS:
+            for subvol in BTRFS_SUBVOLS.keys():
                 cmd("btrfs", "subvolume", "create", mount_point / subvol)
         finally:
             cmd("umount", mount_point, check=False)
-        cmd("mount", wrap_dev, mount_point, ",".join(OPTS + ["subvol=@"]))
         try:
+            for name, path in BTRFS_SUBVOLS.items():
+                mkdirs(mount_point / path)
+                cmd(
+                    "mount",
+                    wrap_dev,
+                    mount_point / path,
+                    ",".join(OPTS + [f"subvol={name}"]),
+                )
             yield mount_point
         finally:
-            cmd("umount", mount_point, check=False)
+            for path in reversed(BTRFS_SUBVOLS.values()):
+                cmd("umount", mount_point / path, check=False)
     finally:
         cmd("rmdir", mount_point)
 
@@ -631,6 +640,10 @@ def write_late_env(dst: pathlib.Path, hidden: bool):
                 file=late_env,
             )
         print("}", file=late_env)
+
+
+def install_arch(root: pathlib.Path):
+    pass
 
 
 def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
@@ -690,6 +703,7 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
                         print("HELLO FROM HIDDEN SYSTEM", file=message)
                     else:
                         print("HELLO FROM DECOY SYSTEM", file=message)
+                install_arch(btrfs_data)
 
 
 def shred_device(device: pathlib.Path, shred_key: bytes):
@@ -758,7 +772,7 @@ def build_uki(salt: str):
             "--cmdline",
             "quiet ro",
             "--output",
-            UKI_INSTALL_PATH,
+            INSTALL_UKI_PATH,
         )
 
 
@@ -776,8 +790,8 @@ def main() -> int:
             dd(
                 _if="/dev/zero",
                 of=disk_img,
-                bs=TEST_DISK_SIZE,
-                count=1,
+                bs=DD_DEFAULT_BS,
+                count=TEST_DISK_SIZE // DD_DEFAULT_BS,
                 status="progress",
             )
             with loopback_device(disk_img) as loop:

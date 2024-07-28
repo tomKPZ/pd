@@ -14,5 +14,5 @@ vgchange -ay --ignoremonitoring --noudevsync -qq $VG
 vgmknodes $VG
 
 mkdir /mnt/luks
-mount /dev/mapper/$VG-test_lv /mnt/luks -o,defaults,nodiscard,ro,subvol=@
+mount /dev/mapper/$VG-root /mnt/luks -o,defaults,nodiscard,ro,subvol=@
 cat /mnt/luks/message.txt
