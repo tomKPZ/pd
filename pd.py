@@ -68,6 +68,9 @@ SRC_ROOT = SCRIPT_DIR / "static-tools" if USE_STATIC_TOOLS else pathlib.Path("/"
 assert SRC_ROOT.is_absolute()
 SWAP_SIZE_PE = SWAP_SIZE // PE_SIZE
 DM_SECTOR_SIZE = 512
+DEV = pathlib.Path("/dev")
+MNT = pathlib.Path("/mnt")
+USR_BIN = pathlib.Path("usr/bin")
 
 ARGON2_ARGS = [
     "-id",
@@ -213,17 +216,16 @@ def common_initrd(root: pathlib.Path):
     cmd("ln", "-s", "usr/lib", root / "lib64")
 
     bins = [
-        "usr/bin/argon2",
-        "usr/bin/cryptsetup",
-        "usr/bin/dmsetup",
+        USR_BIN / "argon2",
+        USR_BIN / "cryptsetup",
+        USR_BIN / "dmsetup",
     ]
-
     for bin in bins:
-        add_binary(root, pathlib.Path(bin))
+        add_binary(root, bin)
 
-    add_binary(root, pathlib.Path("usr/bin/busybox"))
+    add_binary(root, USR_BIN / "busybox")
     if not USE_STATIC_TOOLS:
-        applets = cmd_output(SRC_ROOT / "usr/bin/busybox", "--list").splitlines()
+        applets = cmd_output(SRC_ROOT / USR_BIN / "busybox", "--list").splitlines()
         for applet in applets:
             if applet != "busybox":
                 cmd("ln", "-s", "busybox", root / "usr" / "bin" / applet)
@@ -277,8 +279,8 @@ def bootstrap_initrd(out_file: pathlib.Path, salt: str, mods: list[str] = []):
 def system_initrd(out_file: pathlib.Path, hidden: bool):
     with temp_dir() as root:
         common_initrd(root)
-        add_binary(root, pathlib.Path("usr/bin/lvm"))
-        add_binary(root, pathlib.Path("usr/bin/pdata_tools"))
+        add_binary(root, USR_BIN / "lvm")
+        add_binary(root, USR_BIN / "pdata_tools")
 
         cmd("cp", SCRIPT_DIR / "system.sh", root / "early.sh")
         write_late_env(root / "system_env.sh", hidden)
@@ -348,7 +350,7 @@ def dev_uuid() -> str:
 @contextlib.contextmanager
 def device_view(table: str):
     device_name = f"view_{dev_uuid()}"
-    device_path = pathlib.Path("/dev/mapper") / device_name
+    device_path = DEV / "mapper" / device_name
 
     cmd(
         "dmsetup",
@@ -365,7 +367,7 @@ def device_view(table: str):
 @contextlib.contextmanager
 def plain_dmcrypt(key_file: pathlib.Path, wrap_dev: pathlib.Path):
     crypt_name = f"dmcrypt_test_{dev_uuid()}"
-    crypt_dev = pathlib.Path("/dev") / "mapper" / crypt_name
+    crypt_dev = DEV / "mapper" / crypt_name
     cmd(
         "cryptsetup",
         "open",
@@ -389,7 +391,7 @@ def detached_luks(
     wrap_dev: pathlib.Path,
 ):
     luks_name = f"luks_test_{dev_uuid()}"
-    luks_dev = pathlib.Path("/dev") / "mapper" / luks_name
+    luks_dev = DEV / "mapper" / luks_name
 
     with temp_file() as volume_key:
         with open(volume_key, "wb") as f:
@@ -432,10 +434,10 @@ def detached_luks(
 def lvm(vg_name: str, wrap_dev: pathlib.Path):
     lv_name = "test_lv"
     swap_name = "swap"
-    swap_dev = pathlib.Path("/dev") / vg_name / swap_name
+    swap_dev = DEV / vg_name / swap_name
     thinpool_name = "thinpool"
-    thinpool_dev = pathlib.Path("/dev") / vg_name / thinpool_name
-    lv_dev = pathlib.Path("/dev") / vg_name / lv_name
+    thinpool_dev = DEV / vg_name / thinpool_name
+    lv_dev = DEV / vg_name / lv_name
 
     dd(_if="/dev/zero", of=wrap_dev, bs=PE_SIZE, count=1)
     cmd("pvcreate", wrap_dev)
@@ -513,7 +515,7 @@ def lvm(vg_name: str, wrap_dev: pathlib.Path):
 @contextlib.contextmanager
 def btrfs_header_mount(wrap_dev: pathlib.Path):
     mount_name = f"btrfs_mount_{dev_uuid()}"
-    mount_point = pathlib.Path("/mnt") / mount_name
+    mount_point = MNT / mount_name
 
     cmd(
         "mkfs.btrfs",
@@ -542,7 +544,7 @@ def btrfs_header_mount(wrap_dev: pathlib.Path):
 @contextlib.contextmanager
 def btrfs_system_mount(wrap_dev: pathlib.Path):
     mount_name = f"btrfs_mount_{dev_uuid()}"
-    mount_point = pathlib.Path("/mnt") / mount_name
+    mount_point = MNT / mount_name
 
     cmd(
         "mkfs.btrfs",
@@ -651,9 +653,9 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
             root = btrfs_meta / "root"
             cmd("mkdir", "-p", root / "etc" / "lvm")
             cmd("touch", root / "etc" / "lvm" / "lvm.conf")
-            add_binary(root, pathlib.Path("usr/bin/kexec"))
-            add_binary(root, pathlib.Path("usr/bin/lvm"))
-            add_binary(root, pathlib.Path("usr/bin/pdata_tools"))
+            add_binary(root, USR_BIN / "kexec")
+            add_binary(root, USR_BIN / "lvm")
+            add_binary(root, USR_BIN / "pdata_tools")
             cmd("cp", SCRIPT_DIR / "late.sh", btrfs_meta)
             write_late_env(btrfs_meta / "late_env.sh", hidden)
             with open(f"{btrfs_meta}/table.txt", "w") as table:
