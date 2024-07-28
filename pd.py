@@ -44,8 +44,7 @@ else:
     ARGON2_M_KB_LOG2 = 15
     ARGON2_THREADS = 4
 USE_TEST_PASSWORD = True
-if USE_TEST_PASSWORD:
-    TEST_PASSWORD = "testpassword"
+TEST_PASSWORD = "testpassword"
 KERNEL_PATH = pathlib.Path("/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage")
 INSTALL = False
 if INSTALL:
@@ -228,8 +227,8 @@ def common_initrd(root: pathlib.Path):
                 cmd("ln", "-s", "busybox", root / "usr" / "bin" / applet)
 
     cmd("ln", "-s", "../proc/self/mounts", root / "etc" / "mtab")
-    open(root / "etc" / "fstab", "w").close()
-    open(root / "etc" / "ld.so.conf", "w").close()
+    cmd("touch", root / "etc" / "fstab")
+    cmd("touch", root / "etc" / "ld.so.conf")
 
     cmd("cp", SCRIPT_DIR / "init", root)
 
@@ -241,20 +240,20 @@ def bootstrap_initrd(out_file: pathlib.Path, salt: str, mods: list[str] = []):
         with open(root / "salt.txt", "w") as salt_file:
             salt_file.write(salt)
 
-        with open(SCRIPT_DIR / "early.sh") as src:
-            with open(root / "early.sh", "w") as dst:
-                read_password = (
-                    f"password={TEST_PASSWORD}"
-                    if USE_TEST_PASSWORD
-                    else "read -sp 'Password: ' password\necho"
-                )
-                format_args = {
-                    "argon_args": " ".join(ARGON2_ARGS),
-                    "crypt_args": " ".join(CRYPT_ARGS),
-                    "read_password": read_password,
-                }
-                dst.write(src.read().format(**format_args))
-            cmd("chmod", "755", root / "early.sh")
+        cmd("cp", SCRIPT_DIR / "early.sh", root)
+        with open(root / "early_env.sh", "w") as early_env:
+            env = {
+                "ARGON_ARGS": " ".join(ARGON2_ARGS),
+                "CRYPT_ARGS": " ".join(CRYPT_ARGS),
+            }
+            for k, v in env.items():
+                print(f'{k}="{v}"', file=early_env)
+            print("read_password() {", file=early_env)
+            if USE_TEST_PASSWORD:
+                print(f"  PASSWORD={TEST_PASSWORD}", file=early_env)
+            else:
+                print(f"  read -sp 'Password: ' PASSWORD\necho", file=early_env)
+            print("}", file=early_env)
 
         table_file = root / "table.txt"
         with open(table_file, "w") as table:
