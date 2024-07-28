@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+source /mnt/plain/late_env.sh
+
 find /mnt/plain/root ! -type d | while read -r ITEM; do
     REL_PATH="${ITEM#/mnt/plain/root/}"
     mkdir -p "$(dirname "$REL_PATH")"
@@ -11,8 +13,7 @@ done
 dmsetup create --readonly dm-luks /mnt/plain/table.txt
 dmsetup mknodes dm-luks
 cryptsetup open --key-file=/key.bin --keyfile-offset=64 --header=/mnt/plain/header.dat /dev/mapper/dm-luks luks
-VG=$(vgs --headings none | awk '{print $1;}' | head -n 1)
-# ln -s /dev/mapper/luks /dev/mapper/$VG-thinpool_tmeta
+link_tmeta
 vgchange -ay --ignoremonitoring --noudevsync -qq $VG
 vgmknodes $VG
 mkdir /mnt/luks

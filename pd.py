@@ -16,6 +16,8 @@ MIB = 1024 * KIB
 GIB = 1024 * MIB
 
 # Config
+VG_DECOY_NAME = "sysvg"
+VG_HIDDEN_NAME = "sysvg1"
 SHRED_DEVICE = False
 INIT_DECOY = False
 INIT_HIDDEN = True
@@ -32,7 +34,7 @@ META_SIZE = 256 * MIB
 MOVE_PES = False
 REVERSE_CHUNK_SIZE = 8 * MIB
 INITRD_XZ_LEVEL = "1"
-USE_STATIC_TOOLS = True
+USE_STATIC_TOOLS = False
 HIDDEN_SALT_SUFFIX = "a"
 ARGON2_SECURE = False
 if ARGON2_SECURE:
@@ -188,20 +190,20 @@ def add_binary(root: pathlib.Path, bin: pathlib.Path):
             else None
         )
         if dep_path:
-            add_library(root, dep_path)
+            add_library(root, pathlib.Path(dep_path).relative_to(SRC_ROOT))
 
 
 def common_initrd(root: pathlib.Path):
-    cmd("mkdir", "-p", root / "dev")
-    cmd("mkdir", "-p", root / "etc")
-    cmd("mkdir", "-p", root / "mnt")
-    cmd("mkdir", "-p", root / "proc")
-    cmd("mkdir", "-p", root / "run")
-    cmd("mkdir", "-p", root / "sys")
-    cmd("mkdir", "-p", root / "tmp")
-    cmd("mkdir", "-p", root / "usr" / "bin")
-    cmd("mkdir", "-p", root / "usr" / "lib")
-    cmd("mkdir", "-p", root / "var")
+    mkdirs(root / "dev")
+    mkdirs(root / "etc")
+    mkdirs(root / "mnt")
+    mkdirs(root / "proc")
+    mkdirs(root / "run")
+    mkdirs(root / "sys")
+    mkdirs(root / "tmp")
+    mkdirs(root / "usr" / "bin")
+    mkdirs(root / "usr" / "lib")
+    mkdirs(root / "var")
     cmd("ln", "-s", "usr/lib", root / "lib")
     cmd("ln", "-s", "bin", root / "usr" / "sbin")
     cmd("ln", "-s", "usr/bin", root / "bin")
@@ -272,13 +274,14 @@ def bootstrap_initrd(out_file: pathlib.Path, salt: str, mods: list[str] = []):
         )
 
 
-def system_initrd(out_file: pathlib.Path):
+def system_initrd(out_file: pathlib.Path, hidden: bool):
     with temp_dir() as root:
         common_initrd(root)
         add_binary(root, pathlib.Path("usr/bin/lvm"))
         add_binary(root, pathlib.Path("usr/bin/pdata_tools"))
 
         cmd("cp", SCRIPT_DIR / "system.sh", root / "early.sh")
+        write_late_env(root / "system_env.sh", hidden)
 
         cmd(
             f"find . -print0 | cpio --null -o --format=newc | xz --check=crc32 -{INITRD_XZ_LEVEL} >{out_file}",
@@ -609,6 +612,25 @@ def read_password(pw_type: str):
             print("Passwords do not match. Please try again.")
 
 
+def get_vg_name(hidden: bool):
+    return VG_HIDDEN_NAME if hidden else VG_DECOY_NAME
+
+
+def write_late_env(dst: pathlib.Path, hidden: bool):
+    vg_name = get_vg_name(hidden)
+    with open(dst, "w") as late_env:
+        print(f"VG={vg_name}", file=late_env)
+        print("link_tmeta() {", file=late_env)
+        if USE_STATIC_TOOLS:
+            print("  true", file=late_env)
+        else:
+            print(
+                f"  ln -s /dev/mapper/luks /dev/mapper/{vg_name}-thinpool_tmeta",
+                file=late_env,
+            )
+        print("}", file=late_env)
+
+
 def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
     salt_suffix = HIDDEN_SALT_SUFFIX if hidden else ""
     argon_cmd = ["argon2", salt + salt_suffix] + ARGON2_ARGS
@@ -633,6 +655,7 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
             add_binary(root, pathlib.Path("usr/bin/lvm"))
             add_binary(root, pathlib.Path("usr/bin/pdata_tools"))
             cmd("cp", SCRIPT_DIR / "late.sh", btrfs_meta)
+            write_late_env(btrfs_meta / "late_env.sh", hidden)
             with open(f"{btrfs_meta}/table.txt", "w") as table:
                 boot_disk = pathlib.Path("/boot_disk")
                 print(
@@ -644,7 +667,6 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
                     file=table,
                 )
             header_file = btrfs_meta / "header.dat"
-            vg_name = "sysvg1" if hidden else "sysvg"
             data_stack = [
                 lambda dev: device_view(
                     reversed_table(0, dev_size - META_SIZE, dev)
@@ -652,13 +674,13 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
                     else dmsetup_table(META_SIZE, dev_size, dev)
                 ),
                 functools.partial(detached_luks, key_file, 64, header_file),
-                functools.partial(lvm, vg_name),
+                functools.partial(lvm, get_vg_name(hidden)),
                 btrfs_system_mount,
             ]
             with cascade(data_stack, device) as (_, _, _, btrfs_data):
                 cmd("mkdir", f"{btrfs_data}/boot")
                 cmd("cp", KERNEL_PATH, f"{btrfs_data}/boot/vmlinuz-linux")
-                system_initrd(btrfs_data / "boot/initramfs-linux.img")
+                system_initrd(btrfs_data / "boot/initramfs-linux.img", hidden)
                 with open(btrfs_data / "boot/cmdline-linux.txt", "w") as cmdline:
                     print("quiet" if INSTALL else "console=ttyS0", file=cmdline)
                 with open(btrfs_data / "message.txt", "w") as message:
