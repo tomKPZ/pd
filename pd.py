@@ -19,8 +19,7 @@ GIB = 1024 * MIB
 SHRED_DEVICE = False
 INIT_DECOY = True
 INIT_HIDDEN = False
-VG_DECOY_NAME = "sysvg"
-VG_HIDDEN_NAME = "sysvg1"
+VG_NAME = "sysvg"
 CREATE_SWAP = True
 SWAP_SIZE = 512 * MIB
 DD_DEFAULT_BS = 4 * MIB
@@ -286,14 +285,14 @@ def bootstrap_initrd(out_file: pathlib.Path, salt: str, mods: list[str] = []):
         )
 
 
-def system_initrd(out_file: pathlib.Path, hidden: bool):
+def system_initrd(out_file: pathlib.Path):
     with temp_dir() as root:
         common_initrd(root)
         add_binary(root, USR_BIN / "lvm")
         add_binary(root, USR_BIN / "pdata_tools")
 
         cmd("cp", SCRIPT_DIR / "system.sh", root / "early.sh")
-        write_late_env(root / "system_env.sh", hidden)
+        write_late_env(root / "system_env.sh")
 
         cmd(
             f"find . -print0 | cpio --null -o --format=newc | xz --check=crc32 -{INITRD_XZ_LEVEL} >{out_file}",
@@ -624,27 +623,21 @@ def read_password(pw_type: str):
             print("Passwords do not match. Please try again.")
 
 
-def get_vg_name(hidden: bool):
-    return VG_HIDDEN_NAME if hidden else VG_DECOY_NAME
-
-
-def write_late_env(dst: pathlib.Path, hidden: bool):
-    vg_name = get_vg_name(hidden)
+def write_late_env(dst: pathlib.Path):
     with open(dst, "w") as late_env:
-        print(f"VG={vg_name}", file=late_env)
+        print(f"VG={VG_NAME}", file=late_env)
         print("link_tmeta() {", file=late_env)
         if USE_STATIC_TOOLS:
             print("  true", file=late_env)
         else:
             print(
-                f"  ln -s /dev/mapper/luks /dev/mapper/{vg_name}-thinpool_tmeta",
+                f"  ln -s /dev/mapper/luks /dev/mapper/{VG_NAME}-thinpool_tmeta",
                 file=late_env,
             )
         print("}", file=late_env)
 
 
-def install_arch(root: pathlib.Path, hidden: bool):
-    vg_name = get_vg_name(hidden)
+def install_arch(root: pathlib.Path):
     PACKAGES = [
         "base",
         "linux",
@@ -689,7 +682,7 @@ def install_arch(root: pathlib.Path, hidden: bool):
     with open(root / "etc/fstab", "w") as fstab:
         for name, path in BTRFS_SUBVOLS.items():
             print(
-                f"/dev/{vg_name}/root",
+                f"/dev/{VG_NAME}/root",
                 "/" + path,
                 "btrfs",
                 ",".join(OPTS + [f"subvol={name}"]),
@@ -698,7 +691,7 @@ def install_arch(root: pathlib.Path, hidden: bool):
                 file=fstab,
             )
         print(
-            f"/dev/{vg_name}/swap",
+            f"/dev/{VG_NAME}/SWap",
             "swap",
             "swap",
             "defaults,relatime,lazytime,ssd,nodiscard",
@@ -712,9 +705,9 @@ def install_arch(root: pathlib.Path, hidden: bool):
         KERNEL_CMDLINE = [
             "console=ttyS0",
             "rw",
-            f"root=/dev/{vg_name}/root",
+            f"root=/dev/{VG_NAME}/Root",
             "rootflags=subvol=@",
-            f"resume=/dev/{vg_name}/swap",
+            f"resume=/dev/{VG_NAME}/swap",
         ]
         print(*KERNEL_CMDLINE, file=cmdline)
 
@@ -743,7 +736,7 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
             add_binary(root, USR_BIN / "lvm")
             add_binary(root, USR_BIN / "pdata_tools")
             cmd("cp", SCRIPT_DIR / "late.sh", btrfs_meta)
-            write_late_env(btrfs_meta / "late_env.sh", hidden)
+            write_late_env(btrfs_meta / "late_env.sh")
             with open(f"{btrfs_meta}/table.txt", "w") as table:
                 boot_disk = pathlib.Path("/boot_disk")
                 print(
@@ -762,16 +755,16 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
                     else dmsetup_table(META_SIZE, dev_size, dev)
                 ),
                 functools.partial(detached_luks, key_file, 64, header_file),
-                functools.partial(lvm, get_vg_name(hidden)),
+                functools.partial(lvm, VG_NAME),
                 btrfs_system_mount,
             ]
             with cascade(data_stack, device) as (_, _, _, btrfs_data):
                 if INSTALL_ARCH:
-                    install_arch(btrfs_data, hidden)
+                    install_arch(btrfs_data)
                 else:
                     cmd("mkdir", f"{btrfs_data}/boot")
                     cmd("cp", KERNEL_PATH, f"{btrfs_data}/boot/vmlinuz-linux")
-                    system_initrd(btrfs_data / "boot/initramfs-linux.img", hidden)
+                    system_initrd(btrfs_data / "boot/initramfs-linux.img")
                     with open(btrfs_data / "message.txt", "w") as message:
                         if hidden:
                             print("HELLO FROM HIDDEN SYSTEM", file=message)
