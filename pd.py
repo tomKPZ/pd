@@ -18,7 +18,7 @@ GIB = 1024 * MIB
 # Config
 SHRED_DEVICE = False
 INIT_DECOY = True
-INIT_HIDDEN = False
+INIT_HIDDEN = True
 VG_NAME = "sysvg"
 CREATE_SWAP = True
 SWAP_SIZE = 512 * MIB
@@ -44,11 +44,11 @@ else:
     ARGON2_ITERATIONS = 2
     ARGON2_M_KB_LOG2 = 15
     ARGON2_THREADS = 4
-USE_TEST_PASSWORD = True
+USE_TEST_PASSWORD = False
 TEST_PASSWORD = "testpassword"
 INSTALL_ARCH = True
 KERNEL_PATH = pathlib.Path("/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage")
-INSTALL = False
+INSTALL = True
 INSTALL_DEVICE = pathlib.Path("/dev/nvme0n1p10")
 INSTALL_UKI = True
 INSTALL_UKI_PATH = pathlib.Path("/mnt/EFI/BOOT/BOOTX64.EFI")
@@ -144,7 +144,6 @@ def rand512() -> bytes:
 
 def device_size(device: pathlib.Path) -> int:
     size = int(cmd_output("blockdev", "--getsize64", device))
-    print(size, size // PARTITION_ALIGN * PARTITION_ALIGN)
     return size // PARTITION_ALIGN * PARTITION_ALIGN
 
 
@@ -440,20 +439,20 @@ def detached_luks(
 
 
 @contextlib.contextmanager
-def lvm(vg_name: str, wrap_dev: pathlib.Path):
+def lvm(wrap_dev: pathlib.Path):
     lv_name = "root"
     swap_name = "swap"
-    swap_dev = DEV / vg_name / swap_name
+    swap_dev = DEV / VG_NAME / swap_name
     thinpool_name = "thinpool"
-    thinpool_dev = DEV / vg_name / thinpool_name
-    lv_dev = DEV / vg_name / lv_name
+    thinpool_dev = DEV / VG_NAME / thinpool_name
+    lv_dev = DEV / VG_NAME / lv_name
 
     dd(_if="/dev/zero", of=wrap_dev, bs=PE_SIZE, count=1)
     cmd("pvcreate", wrap_dev)
     cmd(
         "vgcreate",
         f"--physicalextentsize={PE_SIZE}b",
-        vg_name,
+        VG_NAME,
         wrap_dev,
     )
     try:
@@ -463,7 +462,7 @@ def lvm(vg_name: str, wrap_dev: pathlib.Path):
                 "--type=linear",
                 f"--size={SWAP_SIZE}b",
                 f"--name={swap_name}",
-                vg_name,
+                VG_NAME,
             )
             dd(_if="/dev/zero", of=swap_dev, bs=DD_DEFAULT_BS, check=False)
             cmd("mkswap", swap_dev)
@@ -484,7 +483,7 @@ def lvm(vg_name: str, wrap_dev: pathlib.Path):
             f"--poolmetadatasize={thin_meta_pe * PE_SIZE}b",
             f"--size={PE_SIZE}b",
             "--discards=nopassdown",
-            vg_name,
+            VG_NAME,
         )
 
         def move(src, dst, size):
@@ -518,7 +517,7 @@ def lvm(vg_name: str, wrap_dev: pathlib.Path):
         )
         yield lv_dev
     finally:
-        cmd("vgchange", "-an", vg_name)
+        cmd("vgchange", "-an", VG_NAME)
 
 
 @contextlib.contextmanager
@@ -691,7 +690,7 @@ def install_arch(root: pathlib.Path):
                 file=fstab,
             )
         print(
-            f"/dev/{VG_NAME}/SWap",
+            f"/dev/{VG_NAME}/swap",
             "swap",
             "swap",
             "defaults,relatime,lazytime,ssd,nodiscard",
@@ -703,12 +702,13 @@ def install_arch(root: pathlib.Path):
     cmd("arch-chroot", root, "passwd", "root")
     with open(root / "boot/cmdline-linux.txt", "w") as cmdline:
         KERNEL_CMDLINE = [
-            "console=ttyS0",
             "rw",
-            f"root=/dev/{VG_NAME}/Root",
+            f"root=/dev/{VG_NAME}/root",
             "rootflags=subvol=@",
             f"resume=/dev/{VG_NAME}/swap",
         ]
+        if not INSTALL:
+            KERNEL_CMDLINE.append("console=ttyS0")
         print(*KERNEL_CMDLINE, file=cmdline)
 
 
@@ -755,7 +755,7 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
                     else dmsetup_table(META_SIZE, dev_size, dev)
                 ),
                 functools.partial(detached_luks, key_file, 64, header_file),
-                functools.partial(lvm, VG_NAME),
+                lvm,
                 btrfs_system_mount,
             ]
             with cascade(data_stack, device) as (_, _, _, btrfs_data):
