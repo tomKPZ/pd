@@ -21,8 +21,8 @@ INIT_DECOY = True
 INIT_HIDDEN = True
 VG_DECOY_NAME = "sysvg"
 VG_HIDDEN_NAME = "sysvg1"
-CREATE_SWAP = False
-SWAP_SIZE = 64 * MIB
+CREATE_SWAP = True
+SWAP_SIZE = 512 * MIB
 DD_DEFAULT_BS = 4 * MIB
 PARTITION_ALIGN = 1 * MIB
 ZERO_HEADER = 1 * MIB
@@ -47,12 +47,13 @@ else:
     ARGON2_THREADS = 4
 USE_TEST_PASSWORD = True
 TEST_PASSWORD = "testpassword"
+INSTALL_ARCH = True
 KERNEL_PATH = pathlib.Path("/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage")
 INSTALL = False
 INSTALL_DEVICE = pathlib.Path("/dev/nvme0n1p10")
 INSTALL_UKI = True
 INSTALL_UKI_PATH = pathlib.Path("/mnt/EFI/BOOT/BOOTX64.EFI")
-TEST_DISK_SIZE = 4 * GIB
+TEST_DISK_SIZE = 8 * GIB
 RUN_QEMU = True
 DEBUG_TRACE_CMDS = False
 
@@ -642,8 +643,74 @@ def write_late_env(dst: pathlib.Path, hidden: bool):
         print("}", file=late_env)
 
 
-def install_arch(root: pathlib.Path):
-    pass
+def install_arch(root: pathlib.Path, hidden: bool):
+    vg_name = get_vg_name(hidden)
+    cmd("pacstrap", "-c", root, "base", "linux", "linux-firmware", "lvm2")
+    cmd("cp", SCRIPT_DIR / "encrypt_install.sh", root / "etc/initcpio/install/mycrypt")
+    cmd("cp", SCRIPT_DIR / "encrypt_hook.sh", root / "etc/initcpio/hooks/mycrypt")
+    HOOKS = [
+        "base",
+        "udev",
+        "autodetect",
+        "modconf",
+        "kms",
+        "keyboard",
+        "keymap",
+        "consolefont",
+        "block",
+        "mycrypt",
+        "lvm2",
+        "filesystems",
+        "resume",
+        "fsck",
+    ]
+    cmd(
+        "sed",
+        "-i",
+        f"s/^HOOKS=.*/HOOKS=({' '.join(HOOKS)})/",
+        root / "etc/mkinitcpio.conf",
+    )
+    OPTS = [
+        "defaults",
+        "relatime",
+        "lazytime",
+        "autodefrag",
+        "ssd",
+        "nodiscard",
+        "compress=zstd:12",
+    ]
+    with open(root / "etc/fstab", "w") as fstab:
+        for name, path in BTRFS_SUBVOLS.items():
+            print(
+                f"/dev/{vg_name}/root",
+                "/" + path,
+                "btrfs",
+                ",".join(OPTS + [f"subvol={name}"]),
+                0,
+                0,
+                file=fstab,
+            )
+        print(
+            f"/dev/{vg_name}/swap",
+            "swap",
+            "swap",
+            "defaults,relatime,lazytime,ssd,nodiscard",
+            0,
+            0,
+            file=fstab,
+        )
+    # TODO: Figure out why the return code is 1.
+    cmd("arch-chroot", root, "mkinitcpio", "-P", check=False)
+    cmd("arch-chroot", root, "passwd", "root")
+    with open(root / "boot/cmdline-linux.txt", "w") as cmdline:
+        KERNEL_CMDLINE = [
+            "console=ttyS0",
+            "rw",
+            f"root=/dev/{vg_name}/root",
+            "rootflags=subvol=@",
+            f"resume=/dev/{vg_name}/swap",
+        ]
+        print(*KERNEL_CMDLINE, file=cmdline)
 
 
 def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
@@ -693,17 +760,19 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
                 btrfs_system_mount,
             ]
             with cascade(data_stack, device) as (_, _, _, btrfs_data):
-                cmd("mkdir", f"{btrfs_data}/boot")
-                cmd("cp", KERNEL_PATH, f"{btrfs_data}/boot/vmlinuz-linux")
-                system_initrd(btrfs_data / "boot/initramfs-linux.img", hidden)
-                with open(btrfs_data / "boot/cmdline-linux.txt", "w") as cmdline:
-                    print("quiet" if INSTALL else "console=ttyS0", file=cmdline)
-                with open(btrfs_data / "message.txt", "w") as message:
-                    if hidden:
-                        print("HELLO FROM HIDDEN SYSTEM", file=message)
-                    else:
-                        print("HELLO FROM DECOY SYSTEM", file=message)
-                install_arch(btrfs_data)
+                if INSTALL_ARCH:
+                    install_arch(btrfs_data, hidden)
+                else:
+                    cmd("mkdir", f"{btrfs_data}/boot")
+                    cmd("cp", KERNEL_PATH, f"{btrfs_data}/boot/vmlinuz-linux")
+                    system_initrd(btrfs_data / "boot/initramfs-linux.img", hidden)
+                    with open(btrfs_data / "message.txt", "w") as message:
+                        if hidden:
+                            print("HELLO FROM HIDDEN SYSTEM", file=message)
+                        else:
+                            print("HELLO FROM DECOY SYSTEM", file=message)
+                    with open(btrfs_data / "boot/cmdline-linux.txt", "w") as cmdline:
+                        print("quiet" if INSTALL else "console=ttyS0", file=cmdline)
 
 
 def shred_device(device: pathlib.Path, shred_key: bytes):
