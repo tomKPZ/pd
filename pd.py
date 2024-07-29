@@ -18,7 +18,7 @@ GIB = 1024 * MIB
 # Config
 SHRED_DEVICE = False
 INIT_DECOY = True
-INIT_HIDDEN = True
+INIT_HIDDEN = False
 VG_DECOY_NAME = "sysvg"
 VG_HIDDEN_NAME = "sysvg1"
 CREATE_SWAP = True
@@ -645,7 +645,14 @@ def write_late_env(dst: pathlib.Path, hidden: bool):
 
 def install_arch(root: pathlib.Path, hidden: bool):
     vg_name = get_vg_name(hidden)
-    cmd("pacstrap", "-c", root, "base", "linux", "linux-firmware", "lvm2")
+    PACKAGES = [
+        "base",
+        "linux",
+        "linux-firmware",
+        "lvm2",
+        "btrfs-progs",
+    ]
+    cmd("pacstrap", "-c", root, *PACKAGES)
     cmd("cp", SCRIPT_DIR / "encrypt_install.sh", root / "etc/initcpio/install/mycrypt")
     cmd("cp", SCRIPT_DIR / "encrypt_hook.sh", root / "etc/initcpio/hooks/mycrypt")
     HOOKS = [
@@ -699,8 +706,7 @@ def install_arch(root: pathlib.Path, hidden: bool):
             0,
             file=fstab,
         )
-    # TODO: Figure out why the return code is 1.
-    cmd("arch-chroot", root, "mkinitcpio", "-P", check=False)
+    cmd("arch-chroot", root, "mkinitcpio", "-P")
     cmd("arch-chroot", root, "passwd", "root")
     with open(root / "boot/cmdline-linux.txt", "w") as cmdline:
         KERNEL_CMDLINE = [
