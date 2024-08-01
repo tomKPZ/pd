@@ -46,9 +46,9 @@ else:
     ARGON2_THREADS = 4
 USE_TEST_PASSWORD = False
 TEST_PASSWORD = "testpassword"
-INSTALL_ARCH = True
+INSTALL_ARCH = False
 KERNEL_PATH = pathlib.Path("/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage")
-INSTALL = True
+INSTALL = False
 INSTALL_DEVICE = pathlib.Path("/dev/nvme0n1p10")
 INSTALL_UKI = True
 INSTALL_UKI_PATH = pathlib.Path("/mnt/EFI/BOOT/BOOTX64.EFI")

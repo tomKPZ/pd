@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+if [ -n "${DEBUG:-}" ]; then
+    exit 0
+fi
+
 source /mnt/plain/late_env.sh
 
 find /mnt/plain/root ! -type d | while read -r ITEM; do
