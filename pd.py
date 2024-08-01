@@ -44,7 +44,7 @@ else:
     ARGON2_ITERATIONS = 2
     ARGON2_M_KB_LOG2 = 15
     ARGON2_THREADS = 4
-USE_TEST_PASSWORD = False
+USE_TEST_PASSWORD = True
 TEST_PASSWORD = "testpassword"
 INSTALL_ARCH = False
 KERNEL_PATH = pathlib.Path("/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage")
