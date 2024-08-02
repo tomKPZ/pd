@@ -18,7 +18,7 @@ GIB = 1024 * MIB
 # Config
 SHRED_DEVICE = False
 INIT_DECOY = True
-INIT_HIDDEN = True
+INIT_HIDDEN = False
 VG_NAME = "sysvg"
 CREATE_SWAP = True
 SWAP_SIZE = 512 * MIB
@@ -264,7 +264,8 @@ def bootstrap_initrd(out_file: pathlib.Path, salt: str, mods: list[str] = []):
             if USE_TEST_PASSWORD:
                 print(f"  PASSWORD={TEST_PASSWORD}", file=early_env)
             else:
-                print(f"  read -sp 'Password: ' PASSWORD\necho", file=early_env)
+                print(f"  IFS= read -rsp 'Password: ' PASSWORD", file=early_env)
+                print(f"  echo", file=early_env)
             print("}", file=early_env)
 
         table_file = root / "table.txt"
