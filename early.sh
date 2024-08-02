@@ -15,7 +15,7 @@ for dev in $(cat /proc/partitions | tail -n +3 | tr -s ' ' '\t' | cut -f 5); do
     ln -s "/dev/$dev" /boot_disk &&
         dmsetup create --readonly dm-plain /table.txt &&
         dmsetup mknodes dm-plain &&
-        cryptsetup open --type=plain $CRYPT_ARGS --key-file=/key.bin /dev/mapper/dm-plain plain &&
+        cryptsetup open --batch-mode --type=plain $CRYPT_ARGS --key-file=/key.bin /dev/mapper/dm-plain plain &&
         mount -t btrfs /dev/mapper/plain /mnt/plain -o defaults,nodiscard,ro &&
         exec /mnt/plain/late.sh
 
