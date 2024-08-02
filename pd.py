@@ -41,11 +41,11 @@ ARGON2_THREADS = 4
 # ARGON2_ITERATIONS = 14
 # ARGON2_M_KB_LOG2 = 18
 # ARGON2_THREADS = 16
-USE_TEST_PASSWORD = True
+USE_TEST_PASSWORD = False
 TEST_PASSWORD = "testpassword"
 INSTALL_ARCH = False
 KERNEL_PATH = pathlib.Path("/home/tom/dev/local/pd/bzImage")
-INSTALL = False
+INSTALL = True
 INSTALL_DEVICE = pathlib.Path("/dev/nvme0n1p10")
 INSTALL_UKI = True
 INSTALL_UKI_PATH = pathlib.Path("/mnt/EFI/BOOT/BOOTX64.EFI")
@@ -65,7 +65,7 @@ SRC_ROOT = SCRIPT_DIR / "static-tools" if USE_STATIC_TOOLS else pathlib.Path("/"
 assert SRC_ROOT.is_absolute()
 DM_SECTOR_SIZE = 512
 DEV = pathlib.Path("/dev")
-MNT = pathlib.Path("/mnt")
+MEDIA = pathlib.Path("/media")
 USR_BIN = pathlib.Path("usr/bin")
 
 BTRFS_SUBVOLS = {
@@ -521,7 +521,7 @@ def lvm(wrap_dev: pathlib.Path):
 @contextlib.contextmanager
 def btrfs_header_mount(wrap_dev: pathlib.Path):
     mount_name = f"btrfs_mount_{dev_uuid()}"
-    mount_point = MNT / mount_name
+    mount_point = MEDIA / mount_name
 
     cmd(
         "mkfs.btrfs",
@@ -550,7 +550,7 @@ def btrfs_header_mount(wrap_dev: pathlib.Path):
 @contextlib.contextmanager
 def btrfs_system_mount(wrap_dev: pathlib.Path):
     mount_name = f"btrfs_mount_{dev_uuid()}"
-    mount_point = MNT / mount_name
+    mount_point = MEDIA / mount_name
 
     cmd(
         "mkfs.btrfs",
@@ -769,7 +769,7 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
                         else:
                             print("HELLO FROM DECOY SYSTEM", file=message)
                     with open(btrfs_data / "boot/cmdline-linux.txt", "w") as cmdline:
-                        print("quiet" if INSTALL else "console=ttyS0", file=cmdline)
+                        print("" if INSTALL else "console=ttyS0", file=cmdline)
 
 
 def shred_device(device: pathlib.Path, shred_key: bytes):
@@ -836,7 +836,7 @@ def build_uki(salt: str):
             "--initrd",
             initrd,
             "--cmdline",
-            "quiet ro",
+            "ro",
             "--output",
             INSTALL_UKI_PATH,
         )
@@ -847,9 +847,9 @@ def main() -> int:
     salt = rand512().hex()
     mods = []
     if INSTALL:
-        setup_device(INSTALL_DEVICE, shred_key, salt)
         if INSTALL_UKI:
             build_uki(salt)
+        setup_device(INSTALL_DEVICE, shred_key, salt)
         mods = hidden_mods(device_size(INSTALL_DEVICE))
     else:
         with temp_file(".img") as disk_img:
