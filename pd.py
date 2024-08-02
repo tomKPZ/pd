@@ -35,19 +35,16 @@ REVERSE_CHUNK_SIZE = 8 * MIB
 INITRD_XZ_LEVEL = "1"
 USE_STATIC_TOOLS = False
 HIDDEN_SALT_SUFFIX = "a"
-ARGON2_SECURE = False
-if ARGON2_SECURE:
-    ARGON2_ITERATIONS = 14
-    ARGON2_M_KB_LOG2 = 18
-    ARGON2_THREADS = 16
-else:
-    ARGON2_ITERATIONS = 2
-    ARGON2_M_KB_LOG2 = 15
-    ARGON2_THREADS = 4
+ARGON2_ITERATIONS = 2
+ARGON2_M_KB_LOG2 = 15
+ARGON2_THREADS = 4
+# ARGON2_ITERATIONS = 14
+# ARGON2_M_KB_LOG2 = 18
+# ARGON2_THREADS = 16
 USE_TEST_PASSWORD = True
 TEST_PASSWORD = "testpassword"
 INSTALL_ARCH = False
-KERNEL_PATH = pathlib.Path("/run/media/tom/vbox/linux/arch/x86_64/boot/bzImage")
+KERNEL_PATH = pathlib.Path("/home/tom/dev/local/pd/bzImage")
 INSTALL = False
 INSTALL_DEVICE = pathlib.Path("/dev/nvme0n1p10")
 INSTALL_UKI = True
@@ -63,9 +60,9 @@ assert ZERO_HEADER % PARTITION_ALIGN == 0
 assert META_SIZE % PARTITION_ALIGN == 0
 assert REVERSE_CHUNK_SIZE % PARTITION_ALIGN == 0
 assert SWAP_SIZE % PE_SIZE == 0
+SWAP_SIZE_PE = SWAP_SIZE // PE_SIZE
 SRC_ROOT = SCRIPT_DIR / "static-tools" if USE_STATIC_TOOLS else pathlib.Path("/")
 assert SRC_ROOT.is_absolute()
-SWAP_SIZE_PE = SWAP_SIZE // PE_SIZE
 DM_SECTOR_SIZE = 512
 DEV = pathlib.Path("/dev")
 MNT = pathlib.Path("/mnt")
