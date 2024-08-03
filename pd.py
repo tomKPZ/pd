@@ -875,6 +875,7 @@ def main() -> int:
             print(" ".join(map(str, traced)))
     if SHRED_DEVICE:
         print("Shredding key", shred_key.hex())
+    print("Salt:", salt)
     print("Hidden mods:")
     for mod in mods:
         print(mod)
