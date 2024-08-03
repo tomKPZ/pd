@@ -257,13 +257,10 @@ def bootstrap_initrd(out_file: pathlib.Path, salt: str, mods: list[str] = []):
             }
             for k, v in env.items():
                 print(f'{k}="{v}"', file=early_env)
-            print("read_password() {", file=early_env)
             if USE_TEST_PASSWORD:
+                print("read_password() {", file=early_env)
                 print(f"  PASSWORD={TEST_PASSWORD}", file=early_env)
-            else:
-                print(f"  IFS= read -rsp 'Password: ' PASSWORD", file=early_env)
-                print(f"  echo", file=early_env)
-            print("}", file=early_env)
+                print("}", file=early_env)
 
         table_file = root / "table.txt"
         with open(table_file, "w") as table:
@@ -769,7 +766,7 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
                         else:
                             print("HELLO FROM DECOY SYSTEM", file=message)
                     with open(btrfs_data / "boot/cmdline-linux.txt", "w") as cmdline:
-                        print("" if INSTALL else "console=ttyS0", file=cmdline)
+                        print("quiet" if INSTALL else "console=ttyS0", file=cmdline)
 
 
 def shred_device(device: pathlib.Path, shred_key: bytes):
@@ -836,7 +833,7 @@ def build_uki(salt: str):
             "--initrd",
             initrd,
             "--cmdline",
-            "ro",
+            "quiet ro",
             "--output",
             INSTALL_UKI_PATH,
         )
