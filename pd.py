@@ -490,11 +490,12 @@ def lvm(wrap_dev: pathlib.Path):
         )
 
         def move(src, dst, size):
+            swap_pe = SWAP_SIZE_PE if CREATE_SWAP else 0
             cmd(
                 "pvmove",
                 "--alloc=anywhere",
-                f"{wrap_dev}:{SWAP_SIZE_PE + src}-{SWAP_SIZE_PE + src + size - 1}",
-                f"{wrap_dev}:{SWAP_SIZE_PE + dst}-{SWAP_SIZE_PE + dst + size - 1}",
+                f"{wrap_dev}:{swap_pe + src}-{swap_pe + src + size - 1}",
+                f"{wrap_dev}:{swap_pe + dst}-{swap_pe + dst + size - 1}",
             )
 
         if MOVE_PES:
@@ -521,6 +522,8 @@ def lvm(wrap_dev: pathlib.Path):
         yield lv_dev
     finally:
         cmd("vgchange", "-an", VG_NAME)
+        if MOVE_PES:
+            cmd("lvchange", "-an", f"{VG_NAME}/lvol0_pmspare")
 
 
 @contextlib.contextmanager
