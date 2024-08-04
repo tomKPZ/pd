@@ -21,7 +21,7 @@ INIT_DECOY = True
 INIT_HIDDEN = True
 VG_NAME = "sysvg"
 CREATE_SWAP = True
-SWAP_SIZE = 32 * GIB
+SWAP_SIZE = 6 * GIB
 DD_DEFAULT_BS = 4 * MIB
 PARTITION_ALIGN = 1 * MIB
 ZERO_HEADER = 1 * MIB
@@ -33,7 +33,7 @@ USE_POOL_META_SIZE = True
 POOL_META_SIZE = 128 * MIB
 META_SIZE = 256 * MIB
 MOVE_PES = True
-REVERSE_CHUNK_SIZE = 256 * MIB
+REVERSE_CHUNK_SIZE = 1 * GIB
 INITRD_XZ_LEVEL = "9"
 USE_STATIC_TOOLS = True
 HIDDEN_SALT_SUFFIX = "a"
@@ -666,7 +666,6 @@ def install_arch(root: pathlib.Path):
         "mycrypt",
         "lvm2",
         "filesystems",
-        "resume",
         "fsck",
     ]
     cmd(
@@ -711,7 +710,6 @@ def install_arch(root: pathlib.Path):
             "rw",
             f"root=/dev/{VG_NAME}/root",
             "rootflags=subvol=@",
-            f"resume=/dev/{VG_NAME}/swap",
         ]
         if not INSTALL:
             KERNEL_CMDLINE.append("console=ttyS0")
