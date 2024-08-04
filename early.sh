@@ -3,20 +3,9 @@
 set -euo pipefail
 
 read_password() {
-    PASSWORD=
-    prompt="${1:-Password: }"
-    while IFS= read -p "$prompt" -r -s -n 1 char; do
-        if [ -z "$char" ]; then
-            break
-        fi
-        if [[ $char == $'\177' ]]; then
-            prompt=$'\b \b'
-            PASSWORD="${PASSWORD%?}"
-        else
-            prompt='*'
-            PASSWORD="$PASSWORD$char"
-        fi
-    done
+    IFS= read -rsp "Wait for keyboard: " PASSWORD || true
+    echo
+    IFS= read -rsp "Password: " PASSWORD
     echo
 }
 
