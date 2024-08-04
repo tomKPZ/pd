@@ -17,10 +17,10 @@ GIB = 1024 * MIB
 
 # Config
 SHRED_DEVICE = False
-INIT_DECOY = True
-INIT_HIDDEN = False
+INIT_DECOY = False
+INIT_HIDDEN = True
 VG_NAME = "sysvg"
-CREATE_SWAP = True
+CREATE_SWAP = False
 SWAP_SIZE = 512 * MIB
 DD_DEFAULT_BS = 4 * MIB
 PARTITION_ALIGN = 1 * MIB
@@ -28,10 +28,12 @@ ZERO_HEADER = 1 * MIB
 CRYPT_SECTOR_SIZE = 4 * KIB
 CRYPT_KEY_SIZE = 512
 PE_SIZE = 4 * MIB
-THIN_CHUNK_SIZE = 64 * KIB
+THIN_CHUNK_SIZE = 512 * KIB
+USE_POOL_META_SIZE = True
+POOL_META_SIZE = 128 * MIB
 META_SIZE = 256 * MIB
 MOVE_PES = False
-REVERSE_CHUNK_SIZE = 8 * MIB
+REVERSE_CHUNK_SIZE = 256 * MIB
 INITRD_XZ_LEVEL = "1"
 USE_STATIC_TOOLS = False
 HIDDEN_SALT_SUFFIX = "a"
@@ -41,13 +43,13 @@ ARGON2_THREADS = 4
 # ARGON2_ITERATIONS = 14
 # ARGON2_M_KB_LOG2 = 18
 # ARGON2_THREADS = 16
-USE_TEST_PASSWORD = False
+USE_TEST_PASSWORD = True
 TEST_PASSWORD = "testpassword"
-INSTALL_ARCH = False
+INSTALL_ARCH = True
 KERNEL_PATH = pathlib.Path("/home/tom/dev/local/pd/bzImage")
 INSTALL = True
-INSTALL_DEVICE = pathlib.Path("/dev/nvme0n1p10")
-INSTALL_UKI = True
+INSTALL_DEVICE = pathlib.Path("/dev/sda")
+INSTALL_UKI = False
 INSTALL_UKI_PATH = pathlib.Path("/mnt/EFI/BOOT/BOOTX64.EFI")
 TEST_DISK_SIZE = 8 * GIB
 RUN_QEMU = True
@@ -59,6 +61,7 @@ assert TEST_DISK_SIZE % DD_DEFAULT_BS == 0
 assert ZERO_HEADER % PARTITION_ALIGN == 0
 assert META_SIZE % PARTITION_ALIGN == 0
 assert REVERSE_CHUNK_SIZE % PARTITION_ALIGN == 0
+assert POOL_META_SIZE % PE_SIZE == 0
 assert SWAP_SIZE % PE_SIZE == 0
 SWAP_SIZE_PE = SWAP_SIZE // PE_SIZE
 SRC_ROOT = SCRIPT_DIR / "static-tools" if USE_STATIC_TOOLS else pathlib.Path("/")
@@ -461,21 +464,26 @@ def lvm(wrap_dev: pathlib.Path):
             )
             dd(_if="/dev/zero", of=swap_dev, bs=DD_DEFAULT_BS, check=False)
             cmd("mkswap", swap_dev)
-        thin_size_str = cmd_output(
-            "thin_metadata_size",
-            f"--block-size={THIN_CHUNK_SIZE}b",
-            f"--pool-size={device_size(wrap_dev)}b",
-            "--max-thins=1000",
-            "-u=b",
-            "-n",
-        )
-        thin_meta_pe = (math.ceil(float(thin_size_str)) + (PE_SIZE - 1)) // PE_SIZE
+        if USE_POOL_META_SIZE:
+            pool_meta_size = POOL_META_SIZE
+            pool_meta_pe = POOL_META_SIZE // PE_SIZE
+        else:
+            thin_size_str = cmd_output(
+                "thin_metadata_size",
+                f"--block-size={THIN_CHUNK_SIZE}b",
+                f"--pool-size={device_size(wrap_dev)}b",
+                "--max-thins=1000",
+                "-u=b",
+                "-n",
+            )
+            pool_meta_pe = (math.ceil(float(thin_size_str)) + (PE_SIZE - 1)) // PE_SIZE
+            pool_meta_size = pool_meta_pe * PE_SIZE
         cmd(
             "lvcreate",
             "--type=thin-pool",
             f"--thinpool={thinpool_name}",
             f"--chunksize={THIN_CHUNK_SIZE}b",
-            f"--poolmetadatasize={thin_meta_pe * PE_SIZE}b",
+            f"--poolmetadatasize={pool_meta_size}b",
             f"--size={PE_SIZE}b",
             "--discards=nopassdown",
             VG_NAME,
@@ -490,10 +498,10 @@ def lvm(wrap_dev: pathlib.Path):
             )
 
         if MOVE_PES:
-            move(thin_meta_pe + 1, 2 * thin_meta_pe + 1, thin_meta_pe)
-            move(thin_meta_pe, 3 * thin_meta_pe + 1, 1)
-            move(2 * thin_meta_pe + 1, thin_meta_pe, thin_meta_pe)
-            move(3 * thin_meta_pe + 1, 2 * thin_meta_pe, 1)
+            move(pool_meta_pe + 1, 2 * pool_meta_pe + 1, pool_meta_pe)
+            move(pool_meta_pe, 3 * pool_meta_pe + 1, 1)
+            move(2 * pool_meta_pe + 1, pool_meta_pe, pool_meta_pe)
+            move(3 * pool_meta_pe + 1, 2 * pool_meta_pe, 1)
         cmd("lvextend", "-l+100%FREE", thinpool_dev)
         pool_size = cmd_output(
             "lvs",
