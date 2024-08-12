@@ -18,7 +18,7 @@ GIB = 1024 * MIB
 # Config
 SHRED_DEVICE = False
 INIT_DECOY = True
-INIT_HIDDEN = False
+INIT_HIDDEN = True
 VG_NAME = "sysvg"
 CREATE_SWAP = True
 SWAP_SIZE = 6 * GIB
@@ -43,11 +43,11 @@ HIDDEN_SALT_SUFFIX = "a"
 ARGON2_ITERATIONS = 14
 ARGON2_M_KB_LOG2 = 18
 ARGON2_THREADS = 8
-USE_TEST_PASSWORD = True
+USE_TEST_PASSWORD = False
 TEST_PASSWORD = "testpassword"
-INSTALL_ARCH = False
+INSTALL_ARCH = True
 KERNEL_PATH = pathlib.Path("/home/tom/dev/local/pd/bzImage")
-INSTALL = False
+INSTALL = True
 INSTALL_DEVICE = pathlib.Path("/dev/nvme0n1")
 INSTALL_UKI = True
 INSTALL_UKI_PATH = pathlib.Path("/mnt/EFI/BOOT/BOOTX64.EFI")
@@ -78,6 +78,8 @@ BTRFS_SUBVOLS = {
     "@var_lib_docker": "var/lib/docker",
     "@var_log": "var/log",
     "@var_tmp": "var/tmp",
+    "@snapshots": ".snapshots",
+    "@home_snapshots": "home/.snapshots",
 }
 
 ARGON2_ARGS = [
