@@ -660,6 +660,7 @@ def install_arch(root: pathlib.Path):
         "base",
         "udev",
         "autodetect",
+        "microcode",
         "modconf",
         "kms",
         "keyboard",
