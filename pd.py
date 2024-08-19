@@ -441,12 +441,14 @@ def detached_luks(
 
 @contextlib.contextmanager
 def lvm(wrap_dev: pathlib.Path):
-    lv_name = "root"
+    lv_root_name = "root"
+    lv_data_name = "data"
     swap_name = "swap"
     swap_dev = DEV / VG_NAME / swap_name
     thinpool_name = "thinpool"
     thinpool_dev = DEV / VG_NAME / thinpool_name
-    lv_dev = DEV / VG_NAME / lv_name
+    lv_root_dev = DEV / VG_NAME / lv_root_name
+    lv_data_dev = DEV / VG_NAME / lv_data_name
 
     dd(_if="/dev/zero", of=wrap_dev, bs=PE_SIZE, count=1)
     cmd("pvcreate", wrap_dev)
@@ -518,11 +520,19 @@ def lvm(wrap_dev: pathlib.Path):
         cmd(
             "lvcreate",
             "--thin",
-            f"--name={lv_name}",
+            f"--name={lv_data_name}",
             f"--virtualsize={pool_size}",
             thinpool_dev,
         )
-        yield lv_dev
+        cmd("mkfs.ext4", lv_data_dev)
+        cmd(
+            "lvcreate",
+            "--thin",
+            f"--name={lv_root_name}",
+            f"--virtualsize={pool_size}",
+            thinpool_dev,
+        )
+        yield lv_root_dev
     finally:
         cmd("vgchange", "-an", VG_NAME)
         if MOVE_PES:
