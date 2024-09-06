@@ -266,7 +266,7 @@ def btrfs_mount(wrap_dev):
             wrap_dev,
             MOUNT_POINT,
             "-o",
-            "defaults,relatime,lazytime,autodefrag,ssd,discard=async,compress=zstd:3,space_cache=v2",
+            "defaults,noatime,lazytime,autodefrag,ssd,discard=async,compress=zstd:3,space_cache=v2",
         ]
     )
     try:

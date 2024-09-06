@@ -584,7 +584,7 @@ def btrfs_system_mount(wrap_dev: pathlib.Path):
     OPTS = [
         "-o",
         "defaults",
-        "relatime",
+        "noatime",
         "lazytime",
         "autodefrag",
         "ssd",
@@ -690,7 +690,7 @@ def install_arch(root: pathlib.Path):
     )
     OPTS = [
         "defaults",
-        "relatime",
+        "noatime",
         "lazytime",
         "autodefrag",
         "ssd",
@@ -712,7 +712,7 @@ def install_arch(root: pathlib.Path):
             f"/dev/{VG_NAME}/swap",
             "swap",
             "swap",
-            "defaults,relatime,lazytime,ssd,nodiscard",
+            "defaults,noatime,lazytime,ssd,nodiscard",
             0,
             0,
             file=fstab,
