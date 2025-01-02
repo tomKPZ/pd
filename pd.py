@@ -18,10 +18,10 @@ GIB = 1024 * MIB
 # Config
 SHRED_DEVICE = False
 INIT_DECOY = True
-INIT_HIDDEN = True
-VG_NAME = "sysvg"
+INIT_HIDDEN = False
+VG_NAME = "system2"
 CREATE_SWAP = True
-SWAP_SIZE = 6 * GIB
+SWAP_SIZE = 64 * MIB
 DD_DEFAULT_BS = 4 * MIB
 PARTITION_ALIGN = 1 * MIB
 ZERO_HEADER = 1 * MIB
@@ -32,10 +32,10 @@ THIN_CHUNK_SIZE = 512 * KIB
 USE_POOL_META_SIZE = True
 POOL_META_SIZE = 128 * MIB
 META_SIZE = 256 * MIB
-MOVE_PES = True
+MOVE_PES = False
 REVERSE_CHUNK_SIZE = 1 * GIB
 INITRD_XZ_LEVEL = "9"
-USE_STATIC_TOOLS = True
+TOOLS_ROOT = pathlib.Path("/")
 HIDDEN_SALT_SUFFIX = "a"
 # ARGON2_ITERATIONS = 2
 # ARGON2_M_KB_LOG2 = 15
@@ -43,29 +43,30 @@ HIDDEN_SALT_SUFFIX = "a"
 ARGON2_ITERATIONS = 14
 ARGON2_M_KB_LOG2 = 18
 ARGON2_THREADS = 8
-USE_TEST_PASSWORD = False
+USE_TEST_PASSWORD = True
 TEST_PASSWORD = "testpassword"
 INSTALL_ARCH = True
-KERNEL_PATH = pathlib.Path("/home/tom/dev/local/pd/bzImage")
-INSTALL = True
+KERNEL_PATH = pathlib.Path("/media/data/dev/linux/arch/x86/boot/bzImage")
+INSTALL = False
 INSTALL_DEVICE = pathlib.Path("/dev/nvme0n1")
 INSTALL_UKI = True
 INSTALL_UKI_PATH = pathlib.Path("/mnt/EFI/BOOT/BOOTX64.EFI")
-TEST_DISK_SIZE = 8 * GIB
+TEST_DISK_SIZE = 2 * GIB
 RUN_QEMU = True
 DEBUG_TRACE_CMDS = False
 
-# Config checks and non-modifiable constants
-SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
+# Config checks
 assert TEST_DISK_SIZE % DD_DEFAULT_BS == 0
 assert ZERO_HEADER % PARTITION_ALIGN == 0
 assert META_SIZE % PARTITION_ALIGN == 0
 assert REVERSE_CHUNK_SIZE % PARTITION_ALIGN == 0
 assert POOL_META_SIZE % PE_SIZE == 0
 assert SWAP_SIZE % PE_SIZE == 0
+assert TOOLS_ROOT.is_absolute()
+
+# non-modifiable constants
+SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 SWAP_SIZE_PE = SWAP_SIZE // PE_SIZE
-SRC_ROOT = SCRIPT_DIR / "static-tools" if USE_STATIC_TOOLS else pathlib.Path("/")
-assert SRC_ROOT.is_absolute()
 DM_SECTOR_SIZE = 512
 DEV = pathlib.Path("/dev")
 MEDIA = pathlib.Path("/media")
@@ -158,7 +159,7 @@ def mkdirs(path: pathlib.Path):
 def add_file(root: pathlib.Path, file: pathlib.Path):
     assert root.is_absolute()
     assert not file.is_absolute()
-    real_file = SRC_ROOT / file
+    real_file = TOOLS_ROOT / file
     dst = root / file
     mkdirs(dst.parent)
     cmd("cp", real_file, dst)
@@ -176,7 +177,7 @@ def add_library(root: pathlib.Path, lib: pathlib.Path):
 def add_binary(root: pathlib.Path, bin: pathlib.Path):
     assert root.is_absolute()
     assert not bin.is_absolute()
-    real_bin = SRC_ROOT / bin
+    real_bin = TOOLS_ROOT / bin
     add_file(root, bin)
     dst = root / bin
     cmd("strip", "--strip-all", dst)
@@ -192,7 +193,7 @@ def add_binary(root: pathlib.Path, bin: pathlib.Path):
     ).splitlines()
 
     for link in links:
-        link_path = root / pathlib.Path(link).relative_to(SRC_ROOT)
+        link_path = root / pathlib.Path(link).relative_to(TOOLS_ROOT)
         mkdirs(link_path.parent)
         cmd("ln", "-s", bin.name, link_path)
 
@@ -204,7 +205,7 @@ def add_binary(root: pathlib.Path, bin: pathlib.Path):
             else None
         )
         if dep_path:
-            add_library(root, pathlib.Path(dep_path).relative_to(SRC_ROOT))
+            add_library(root, pathlib.Path(dep_path).relative_to(TOOLS_ROOT))
 
 
 def common_initrd(root: pathlib.Path):
@@ -235,11 +236,10 @@ def common_initrd(root: pathlib.Path):
         add_binary(root, bin)
 
     add_binary(root, USR_BIN / "busybox")
-    if not USE_STATIC_TOOLS:
-        applets = cmd_output(SRC_ROOT / USR_BIN / "busybox", "--list").splitlines()
-        for applet in applets:
-            if applet != "busybox":
-                cmd("ln", "-s", "busybox", root / "usr" / "bin" / applet)
+    applets = cmd_output(TOOLS_ROOT / USR_BIN / "busybox", "--list").splitlines()
+    for applet in applets:
+        if applet != "busybox":
+            cmd("ln", "-s", "busybox", root / "usr" / "bin" / applet)
 
     cmd("ln", "-s", "../proc/self/mounts", root / "etc" / "mtab")
     cmd("touch", root / "etc" / "fstab")
@@ -645,13 +645,10 @@ def write_late_env(dst: pathlib.Path):
     with open(dst, "w") as late_env:
         print(f"VG={VG_NAME}", file=late_env)
         print("link_tmeta() {", file=late_env)
-        if USE_STATIC_TOOLS:
-            print("  true", file=late_env)
-        else:
-            print(
-                f"  ln -s /dev/mapper/luks /dev/mapper/{VG_NAME}-thinpool_tmeta",
-                file=late_env,
-            )
+        print(
+            f"  ln -s /dev/mapper/luks /dev/mapper/{VG_NAME}-thinpool_tmeta",
+            file=late_env,
+        )
         print("}", file=late_env)
 
 
