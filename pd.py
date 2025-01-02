@@ -5,6 +5,7 @@ import functools
 import getpass
 import hashlib
 import math
+import os
 import pathlib
 import subprocess
 import sys
@@ -19,7 +20,7 @@ GIB = 1024 * MIB
 SHRED_DEVICE = False
 INIT_DECOY = True
 INIT_HIDDEN = False
-VG_NAME = "system2"
+VG_NAME = "system"
 CREATE_SWAP = True
 SWAP_SIZE = 64 * MIB
 DD_DEFAULT_BS = 4 * MIB
@@ -655,36 +656,13 @@ def write_late_env(dst: pathlib.Path):
 def install_arch(root: pathlib.Path):
     PACKAGES = [
         "base",
+        "btrfs-progs",
+        "dracut",
         "linux",
         "linux-firmware",
         "lvm2",
-        "btrfs-progs",
     ]
     cmd("pacstrap", "-c", root, *PACKAGES)
-    cmd("cp", SCRIPT_DIR / "encrypt_install.sh", root / "etc/initcpio/install/mycrypt")
-    cmd("cp", SCRIPT_DIR / "encrypt_hook.sh", root / "etc/initcpio/hooks/mycrypt")
-    HOOKS = [
-        "base",
-        "udev",
-        "autodetect",
-        "microcode",
-        "modconf",
-        "kms",
-        "keyboard",
-        "keymap",
-        "consolefont",
-        "block",
-        "mycrypt",
-        "lvm2",
-        "filesystems",
-        "fsck",
-    ]
-    cmd(
-        "sed",
-        "-i",
-        f"s/^HOOKS=.*/HOOKS=({' '.join(HOOKS)})/",
-        root / "etc/mkinitcpio.conf",
-    )
     OPTS = [
         "defaults",
         "noatime",
@@ -714,7 +692,26 @@ def install_arch(root: pathlib.Path):
             0,
             file=fstab,
         )
-    cmd("arch-chroot", root, "mkinitcpio", "-P")
+
+    modules_dir = root / "usr/lib/modules"
+    kernel_version = os.listdir(modules_dir)[0]
+    vmlinuz = root / "usr/lib/modules" / kernel_version / "vmlinuz"
+    link_dst = os.path.relpath(vmlinuz, root / "boot")
+    os.symlink(link_dst, root / "boot/vmlinuz-linux")
+
+    dracut_module_dir = root / "usr/lib/dracut/modules.d/95encrypt"
+    mkdirs(dracut_module_dir)
+    cmd("cp", SCRIPT_DIR / "module-setup.sh", dracut_module_dir / "module-setup.sh")
+    cmd("cp", SCRIPT_DIR / "encrypt.sh", dracut_module_dir / "encrypt.sh")
+    cmd(
+        "arch-chroot",
+        root,
+        "dracut",
+        "--force",
+        "/boot/initramfs-linux.img",
+        kernel_version,
+    )
+
     cmd("arch-chroot", root, "passwd", "root")
     with open(root / "boot/cmdline-linux.txt", "w") as cmdline:
         KERNEL_CMDLINE = [
