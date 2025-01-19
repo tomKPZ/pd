@@ -47,7 +47,8 @@ ARGON2_THREADS = 8
 USE_TEST_PASSWORD = True
 TEST_PASSWORD = "testpassword"
 INSTALL_ARCH = True
-KERNEL_PATH = pathlib.Path("/media/data/dev/linux/arch/x86/boot/bzImage")
+KERNEL_VERSION = "6.12.9-zen1-1-zen"
+KERNEL_PATH = pathlib.Path(f"/usr/lib/modules/{KERNEL_VERSION}/vmlinuz")
 INSTALL = False
 INSTALL_DEVICE = pathlib.Path("/dev/nvme0n1")
 INSTALL_UKI = True
@@ -246,12 +247,11 @@ def common_initrd(root: pathlib.Path):
     cmd("touch", root / "etc" / "fstab")
     cmd("touch", root / "etc" / "ld.so.conf")
 
-    cmd("cp", SCRIPT_DIR / "init", root)
-
 
 def bootstrap_initrd(out_file: pathlib.Path, salt: str, mods: list[str] = []):
     with temp_dir() as root:
-        common_initrd(root)
+        mkdirs(root / "usr" / "bin")
+        cmd("cp", SCRIPT_DIR / "dracut-emergency", root / "usr" / "bin")
 
         with open(root / "salt.txt", "w") as salt_file:
             salt_file.write(salt)
@@ -279,16 +279,51 @@ def bootstrap_initrd(out_file: pathlib.Path, salt: str, mods: list[str] = []):
         for mod in mods:
             cmd(mod, shell=True, cwd=root)
 
+        INSTALL_BINS = [
+            "argon2",
+            "cryptsetup",
+            "dmeventd",
+            "kexec",
+            "lsblk",
+            "mount",
+            "vi",
+        ]
+        ADD_MODS = [
+            "busybox",
+            "debug",
+            "rescue",
+        ]
+        OMIT_MODS = [
+            "brltty",
+            "cifs",
+            "net-lib",
+            "network",
+            "network-manager",
+            "nfs",
+            "plymouth",
+        ]
         cmd(
-            f"find . -print0 | cpio --null -o --format=newc | xz --check=crc32 -{INITRD_XZ_LEVEL} >{out_file}",
-            cwd=root,
-            shell=True,
+            "dracut",
+            "--no-hostonly",
+            "--install",
+            " ".join("/usr/bin/" + bin for bin in INSTALL_BINS),
+            "--add",
+            " ".join(ADD_MODS),
+            "--omit",
+            " ".join(OMIT_MODS),
+            "--include",
+            root,
+            "/",
+            out_file,
+            KERNEL_VERSION,
         )
 
 
 def system_initrd(out_file: pathlib.Path):
     with temp_dir() as root:
         common_initrd(root)
+        cmd("cp", SCRIPT_DIR / "init", root)
+
         add_binary(root, USR_BIN / "lvm")
         add_binary(root, USR_BIN / "pdata_tools")
 
@@ -819,14 +854,12 @@ def run_qemu(disk_img: pathlib.Path, initrd: pathlib.Path):
         initrd,
         "-nographic",
         "-append",
-        "console=ttyS0",
+        "console=ttyS0 rd.break=cleanup systemd.unit=rescue.target",
         "-enable-kvm",
         "-m",
         "1G",
-        "-drive",
-        f"file={disk_img},if=none,id=nvm",
-        "-device",
-        "nvme,serial=deadbeef,drive=nvm",
+        "-hda",
+        disk_img,
     )
 
 
