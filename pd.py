@@ -35,7 +35,6 @@ POOL_META_SIZE = 128 * MIB
 META_SIZE = 256 * MIB
 MOVE_PES = False
 REVERSE_CHUNK_SIZE = 1 * GIB
-INITRD_XZ_LEVEL = "9"
 TOOLS_ROOT = pathlib.Path("/")
 HIDDEN_SALT_SUFFIX = "a"
 # ARGON2_ITERATIONS = 2
@@ -46,9 +45,10 @@ ARGON2_M_KB_LOG2 = 18
 ARGON2_THREADS = 8
 USE_TEST_PASSWORD = True
 TEST_PASSWORD = "testpassword"
-INSTALL_ARCH = True
-KERNEL_VERSION = "6.12.9-zen1-1-zen"
-KERNEL_PATH = pathlib.Path(f"/usr/lib/modules/{KERNEL_VERSION}/vmlinuz")
+BOOTSTRAP_KERNEL_VERSION = "6.12.9-zen1-1-zen"
+BOOTSTRAP_KERNEL_PATH = pathlib.Path(
+    f"/usr/lib/modules/{BOOTSTRAP_KERNEL_VERSION}/vmlinuz"
+)
 INSTALL = False
 INSTALL_DEVICE = pathlib.Path("/dev/nvme0n1")
 INSTALL_UKI = True
@@ -130,15 +130,15 @@ def dd(**kwargs):
         "skip",
         "status",
     }
-    dd = ["dd"]
+    dd_cmd = ["dd"]
     forward_kwargs = {}
     for k, v in kwargs.items():
         k = k.lstrip("_")
         if k in DD_OPS:
-            dd.append(f"{k}={v}")
+            dd_cmd.append(f"{k}={v}")
         else:
             forward_kwargs[k] = v
-    return cmd(*dd, **forward_kwargs)
+    return cmd(*dd_cmd, **forward_kwargs)
 
 
 def rand512() -> bytes:
@@ -156,185 +156,6 @@ def device_size(device: pathlib.Path) -> int:
 @functools.cache
 def mkdirs(path: pathlib.Path):
     cmd("mkdir", "-p", path)
-
-
-def add_file(root: pathlib.Path, file: pathlib.Path):
-    assert root.is_absolute()
-    assert not file.is_absolute()
-    real_file = TOOLS_ROOT / file
-    dst = root / file
-    mkdirs(dst.parent)
-    cmd("cp", real_file, dst)
-
-
-def add_library(root: pathlib.Path, lib: pathlib.Path):
-    assert root.is_absolute()
-    assert not lib.is_absolute()
-    dst = root / lib
-    if not dst.is_file():
-        add_file(root, lib)
-        cmd("strip", "--strip-unneeded", dst)
-
-
-def add_binary(root: pathlib.Path, bin: pathlib.Path):
-    assert root.is_absolute()
-    assert not bin.is_absolute()
-    real_bin = TOOLS_ROOT / bin
-    add_file(root, bin)
-    dst = root / bin
-    cmd("strip", "--strip-all", dst)
-
-    links = cmd_output(
-        "find",
-        "-L",
-        real_bin.parent,
-        "-samefile",
-        real_bin,
-        "-xtype",
-        "l",
-    ).splitlines()
-
-    for link in links:
-        link_path = root / pathlib.Path(link).relative_to(TOOLS_ROOT)
-        mkdirs(link_path.parent)
-        cmd("ln", "-s", bin.name, link_path)
-
-    dependencies = cmd_output("ldd", real_bin, check=False).splitlines()
-    for dep in dependencies:
-        dep_path = (
-            dep.split()[2]
-            if len(dep.split()) > 2 and dep.split()[2].startswith("/")
-            else None
-        )
-        if dep_path:
-            add_library(root, pathlib.Path(dep_path).relative_to(TOOLS_ROOT))
-
-
-def common_initrd(root: pathlib.Path):
-    mkdirs(root / "dev")
-    mkdirs(root / "etc")
-    mkdirs(root / "mnt")
-    mkdirs(root / "proc")
-    mkdirs(root / "run")
-    mkdirs(root / "sys")
-    mkdirs(root / "tmp")
-    mkdirs(root / "usr" / "bin")
-    mkdirs(root / "usr" / "lib")
-    mkdirs(root / "var")
-    cmd("ln", "-s", "usr/lib", root / "lib")
-    cmd("ln", "-s", "bin", root / "usr" / "sbin")
-    cmd("ln", "-s", "usr/bin", root / "bin")
-    cmd("ln", "-s", "usr/bin", root / "sbin")
-    cmd("ln", "-s", "../run", root / "var" / "run")
-    cmd("ln", "-s", "lib", root / "usr" / "lib64")
-    cmd("ln", "-s", "usr/lib", root / "lib64")
-
-    bins = [
-        USR_BIN / "argon2",
-        USR_BIN / "cryptsetup",
-        USR_BIN / "dmsetup",
-    ]
-    for bin in bins:
-        add_binary(root, bin)
-
-    add_binary(root, USR_BIN / "busybox")
-    applets = cmd_output(TOOLS_ROOT / USR_BIN / "busybox", "--list").splitlines()
-    for applet in applets:
-        if applet != "busybox":
-            cmd("ln", "-s", "busybox", root / "usr" / "bin" / applet)
-
-    cmd("ln", "-s", "../proc/self/mounts", root / "etc" / "mtab")
-    cmd("touch", root / "etc" / "fstab")
-    cmd("touch", root / "etc" / "ld.so.conf")
-
-
-def bootstrap_initrd(out_file: pathlib.Path, salt: str, mods: list[str] = []):
-    with temp_dir() as root:
-        mkdirs(root / "usr" / "bin")
-        cmd("cp", SCRIPT_DIR / "dracut-emergency", root / "usr" / "bin")
-
-        with open(root / "salt.txt", "w") as salt_file:
-            salt_file.write(salt)
-
-        cmd("cp", SCRIPT_DIR / "early.sh", root)
-        with open(root / "early_env.sh", "w") as early_env:
-            env = {
-                "ARGON_ARGS": " ".join(ARGON2_ARGS),
-                "CRYPT_ARGS": " ".join(CRYPT_ARGS),
-            }
-            for k, v in env.items():
-                print(f'{k}="{v}"', file=early_env)
-            if USE_TEST_PASSWORD:
-                print("read_password() {", file=early_env)
-                print(f"  PASSWORD={TEST_PASSWORD}", file=early_env)
-                print("}", file=early_env)
-
-        table_file = root / "table.txt"
-        with open(table_file, "w") as table:
-            print(
-                dmsetup_table(ZERO_HEADER, META_SIZE, pathlib.Path("/boot_disk")),
-                file=table,
-            )
-
-        for mod in mods:
-            cmd(mod, shell=True, cwd=root)
-
-        INSTALL_BINS = [
-            "argon2",
-            "cryptsetup",
-            "dmeventd",
-            "kexec",
-            "lsblk",
-            "mount",
-            "vi",
-        ]
-        ADD_MODS = [
-            "busybox",
-            "debug",
-            "rescue",
-        ]
-        OMIT_MODS = [
-            "brltty",
-            "cifs",
-            "net-lib",
-            "network",
-            "network-manager",
-            "nfs",
-            "plymouth",
-        ]
-        cmd(
-            "dracut",
-            "--no-hostonly",
-            "--install",
-            " ".join("/usr/bin/" + bin for bin in INSTALL_BINS),
-            "--add",
-            " ".join(ADD_MODS),
-            "--omit",
-            " ".join(OMIT_MODS),
-            "--include",
-            root,
-            "/",
-            out_file,
-            KERNEL_VERSION,
-        )
-
-
-def system_initrd(out_file: pathlib.Path):
-    with temp_dir() as root:
-        common_initrd(root)
-        cmd("cp", SCRIPT_DIR / "init", root)
-
-        add_binary(root, USR_BIN / "lvm")
-        add_binary(root, USR_BIN / "pdata_tools")
-
-        cmd("cp", SCRIPT_DIR / "system.sh", root / "early.sh")
-        write_late_env(root / "system_env.sh")
-
-        cmd(
-            f"find . -print0 | cpio --null -o --format=newc | xz --check=crc32 -{INITRD_XZ_LEVEL} >{out_file}",
-            cwd=root,
-            shell=True,
-        )
 
 
 @contextlib.contextmanager
@@ -380,10 +201,10 @@ def reversed_table(start: int, end: int, wrap_dev: pathlib.Path):
 
     dmsetup_input = []
     for i in range(num_chunks):
-        start = i * sectors_per_chunk
+        chunk_start = i * sectors_per_chunk
         reversed_start = num_sectors - (i + 1) * sectors_per_chunk
         dmsetup_input.append(
-            f"{start_sector + start} {sectors_per_chunk} linear {wrap_dev} {reversed_start}"
+            f"{start_sector + chunk_start} {sectors_per_chunk} linear {wrap_dev} {reversed_start}"
         )
     return "\n".join(dmsetup_input) + "\n"
 
@@ -759,6 +580,78 @@ def install_arch(root: pathlib.Path):
         print(*KERNEL_CMDLINE, file=cmdline)
 
 
+def bootstrap_initrd(out_file: pathlib.Path, salt: str, mods: list[str] = []):
+    with temp_dir() as root:
+        mkdirs(root / "usr" / "bin")
+        cmd("cp", SCRIPT_DIR / "dracut-emergency", root / "usr" / "bin")
+
+        with open(root / "salt.txt", "w") as salt_file:
+            salt_file.write(salt)
+
+        cmd("cp", SCRIPT_DIR / "early.sh", root)
+        with open(root / "early_env.sh", "w") as early_env:
+            env = {
+                "ARGON_ARGS": " ".join(ARGON2_ARGS),
+                "CRYPT_ARGS": " ".join(CRYPT_ARGS),
+            }
+            for k, v in env.items():
+                print(f'{k}="{v}"', file=early_env)
+            if USE_TEST_PASSWORD:
+                print("read_password() {", file=early_env)
+                print(f"  PASSWORD={TEST_PASSWORD}", file=early_env)
+                print("}", file=early_env)
+
+        table_file = root / "table.txt"
+        with open(table_file, "w") as table:
+            print(
+                dmsetup_table(ZERO_HEADER, META_SIZE, pathlib.Path("/boot_disk")),
+                file=table,
+            )
+
+        for mod in mods:
+            cmd(mod, shell=True, cwd=root)
+
+        INSTALL_BINS = [
+            "argon2",
+            "cryptsetup",
+            "dmeventd",
+            "kexec",
+            "lsblk",
+            "mount",
+            "vi",
+        ]
+        ADD_MODS = [
+            "busybox",
+            "debug",
+            "rescue",
+        ]
+        OMIT_MODS = [
+            "brltty",
+            "cifs",
+            "net-lib",
+            "network",
+            "network-manager",
+            "nfs",
+            "plymouth",
+            "rngd",
+        ]
+        cmd(
+            "dracut",
+            "--no-hostonly",
+            "--install",
+            " ".join("/usr/bin/" + bin for bin in INSTALL_BINS),
+            "--add",
+            " ".join(ADD_MODS),
+            "--omit",
+            " ".join(OMIT_MODS),
+            "--include",
+            root,
+            "/",
+            out_file,
+            BOOTSTRAP_KERNEL_VERSION,
+        )
+
+
 def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
     salt_suffix = HIDDEN_SALT_SUFFIX if hidden else ""
     argon_cmd = ["argon2", salt + salt_suffix] + ARGON2_ARGS
@@ -770,6 +663,7 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
         dd(of=key_file, input=key_bytes)
         meta_begin = dev_size - META_SIZE if hidden else ZERO_HEADER
         meta_end = dev_size - ZERO_HEADER if hidden else META_SIZE
+
         header_stack = [
             lambda dev: device_view(dmsetup_table(meta_begin, meta_end, dev)),
             functools.partial(plain_dmcrypt, key_file),
@@ -779,9 +673,7 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
             root = btrfs_meta / "root"
             cmd("mkdir", "-p", root / "etc" / "lvm")
             cmd("touch", root / "etc" / "lvm" / "lvm.conf")
-            add_binary(root, USR_BIN / "kexec")
-            add_binary(root, USR_BIN / "lvm")
-            add_binary(root, USR_BIN / "pdata_tools")
+
             cmd("cp", SCRIPT_DIR / "late.sh", btrfs_meta)
             write_late_env(btrfs_meta / "late_env.sh")
             with open(f"{btrfs_meta}/table.txt", "w") as table:
@@ -806,19 +698,7 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
                 btrfs_system_mount,
             ]
             with cascade(data_stack, device) as (_, _, _, btrfs_data):
-                if INSTALL_ARCH:
-                    install_arch(btrfs_data)
-                else:
-                    cmd("mkdir", f"{btrfs_data}/boot")
-                    cmd("cp", KERNEL_PATH, f"{btrfs_data}/boot/vmlinuz-linux")
-                    system_initrd(btrfs_data / "boot/initramfs-linux.img")
-                    with open(btrfs_data / "message.txt", "w") as message:
-                        if hidden:
-                            print("HELLO FROM HIDDEN SYSTEM", file=message)
-                        else:
-                            print("HELLO FROM DECOY SYSTEM", file=message)
-                    with open(btrfs_data / "boot/cmdline-linux.txt", "w") as cmdline:
-                        print("quiet" if INSTALL else "console=ttyS0", file=cmdline)
+                install_arch(btrfs_data)
 
 
 def shred_device(device: pathlib.Path, shred_key: bytes):
@@ -849,7 +729,7 @@ def run_qemu(disk_img: pathlib.Path, initrd: pathlib.Path):
     cmd(
         "qemu-system-x86_64",
         "-kernel",
-        KERNEL_PATH,
+        BOOTSTRAP_KERNEL_PATH,
         "-initrd",
         initrd,
         "-nographic",
@@ -879,7 +759,7 @@ def build_uki(salt: str):
             "ukify",
             "build",
             "--linux",
-            KERNEL_PATH,
+            BOOTSTRAP_KERNEL_PATH,
             "--initrd",
             initrd,
             "--cmdline",
