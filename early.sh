@@ -16,16 +16,22 @@ echo -n "$PASSWORD" |
 unset PASSWORD
 
 mkdir -p /mnt/plain
-for dev in $(tail /proc/partitions -n +3 | tr -s ' ' '\t' | cut -f 5); do
-    ln -s "/dev/$dev" /boot_disk &&
-        dmsetup create --readonly dm-plain /table.txt &&
-        cryptsetup open --batch-mode --type=plain $CRYPT_ARGS --key-file=/key.bin /dev/mapper/dm-plain plain &&
-        mount -t btrfs /dev/mapper/plain /mnt/plain -o defaults,nodiscard,ro &&
-        exec /mnt/plain/late.sh
 
-    umount /mnt/plain || true
-    cryptsetup close plain || true
-    dmsetup remove dm-plain || true
+for dev in /dev/disk/by-id/*; do
+    echo "Trying disk $dev"
+    ln -s "${dev}" /boot_disk
+    if dmsetup create --readonly dm-plain /table.txt 2>/dev/null; then
+        if cryptsetup open --batch-mode --type=plain $CRYPT_ARGS --key-file=/key.bin /dev/mapper/dm-plain plain 2>/dev/null; then
+            if mount -t btrfs /dev/mapper/plain /mnt/plain -o defaults,nodiscard,ro 2>/dev/null; then
+                if [ -x /mnt/plain/late.sh ]; then
+                    exec /mnt/plain/late.sh
+                fi
+                umount /mnt/plain || true
+            fi
+            cryptsetup close plain || true
+        fi
+        dmsetup remove dm-plain || true
+    fi
     rm /boot_disk || true
 done
 
