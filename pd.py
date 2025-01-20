@@ -606,7 +606,7 @@ def bootstrap_initrd(out_file: pathlib.Path, salt: str, mods: list[str] = []):
             "kexec",
             "lsblk",
             "mount",
-            "vi",
+            "vim",
         ]
         ADD_MODS = [
             "busybox",
