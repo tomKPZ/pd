@@ -17,7 +17,7 @@ MIB = 1024 * KIB
 GIB = 1024 * MIB
 
 # Config
-SHRED_DEVICE = False
+SHRED_DEVICE = True
 INIT_DECOY = True
 INIT_HIDDEN = True
 VG_NAME = "system"
