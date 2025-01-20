@@ -19,7 +19,7 @@ GIB = 1024 * MIB
 # Config
 SHRED_DEVICE = False
 INIT_DECOY = True
-INIT_HIDDEN = False
+INIT_HIDDEN = True
 VG_NAME = "system"
 CREATE_SWAP = True
 SWAP_SIZE = 64 * MIB
@@ -34,7 +34,7 @@ USE_POOL_META_SIZE = True
 POOL_META_SIZE = 128 * MIB
 META_SIZE = 256 * MIB
 MOVE_PES = False
-REVERSE_CHUNK_SIZE = 1 * GIB
+REVERSE_CHUNK_SIZE = 256 * MIB
 TOOLS_ROOT = pathlib.Path("/")
 HIDDEN_SALT_SUFFIX = "a"
 # ARGON2_ITERATIONS = 2
@@ -53,7 +53,7 @@ INSTALL = False
 INSTALL_DEVICE = pathlib.Path("/dev/nvme0n1")
 INSTALL_UKI = True
 INSTALL_UKI_PATH = pathlib.Path("/mnt/EFI/BOOT/BOOTX64.EFI")
-TEST_DISK_SIZE = 2 * GIB
+TEST_DISK_SIZE = 4 * GIB
 RUN_QEMU = True
 DEBUG_TRACE_CMDS = False
 
@@ -144,7 +144,6 @@ def dd(**kwargs):
 def rand512() -> bytes:
     rand_bytes = cmd("gpg", "--gen-random", "2", "512", stdout=subprocess.PIPE).stdout
     rand_bytes += dd(_if="/dev/random", bs=512, count=1, stdout=subprocess.PIPE).stdout
-    rand_bytes += cmd(SCRIPT_DIR / "rdseed", stdout=subprocess.PIPE).stdout
     return hashlib.sha512(rand_bytes).digest()
 
 
@@ -498,17 +497,6 @@ def read_password(pw_type: str):
             print("Passwords do not match. Please try again.")
 
 
-def write_late_env(dst: pathlib.Path):
-    with open(dst, "w") as late_env:
-        print(f"VG={VG_NAME}", file=late_env)
-        print("link_tmeta() {", file=late_env)
-        print(
-            f"  ln -s /dev/mapper/luks /dev/mapper/{VG_NAME}-thinpool_tmeta",
-            file=late_env,
-        )
-        print("}", file=late_env)
-
-
 def install_arch(root: pathlib.Path):
     PACKAGES = [
         "base",
@@ -675,7 +663,8 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
             cmd("touch", root / "etc" / "lvm" / "lvm.conf")
 
             cmd("cp", SCRIPT_DIR / "late.sh", btrfs_meta)
-            write_late_env(btrfs_meta / "late_env.sh")
+            with open(btrfs_meta / "late_env.sh", "w") as late_env:
+                print(f"VG={VG_NAME}", file=late_env)
             with open(f"{btrfs_meta}/table.txt", "w") as table:
                 boot_disk = pathlib.Path("/boot_disk")
                 print(
@@ -699,6 +688,7 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
             ]
             with cascade(data_stack, device) as (_, _, _, btrfs_data):
                 install_arch(btrfs_data)
+                cmd("sync")
 
 
 def shred_device(device: pathlib.Path, shred_key: bytes):
