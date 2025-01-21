@@ -19,7 +19,7 @@ GIB = 1024 * MIB
 # Config
 SHRED_DEVICE = True
 INIT_DECOY = True
-INIT_HIDDEN = True
+INIT_HIDDEN = False
 VG_NAME = "system"
 CREATE_SWAP = True
 SWAP_SIZE = 64 * MIB
@@ -49,13 +49,49 @@ BOOTSTRAP_KERNEL_VERSION = "6.12.9-zen1-1-zen"
 BOOTSTRAP_KERNEL_PATH = pathlib.Path(
     f"/usr/lib/modules/{BOOTSTRAP_KERNEL_VERSION}/vmlinuz"
 )
+BOOTSTRAP_CMDLINE = ["ro", "rd.break=cleanup", "systemd.unit=rescue.target"]
 INSTALL = False
+INSTALL_OS = "nixos"
 INSTALL_DEVICE = pathlib.Path("/dev/nvme0n1")
 INSTALL_UKI = True
 INSTALL_UKI_PATH = pathlib.Path("/mnt/EFI/BOOT/BOOTX64.EFI")
 TEST_DISK_SIZE = 4 * GIB
 RUN_QEMU = True
 DEBUG_TRACE_CMDS = False
+BTRFS_OPTS = [
+    "defaults",
+    "noatime",
+    "lazytime",
+    "autodefrag",
+    "ssd",
+    "nodiscard",
+    "compress=zstd:12",
+]
+SWAP_OPTS = [
+    "defaults",
+    "noatime",
+    "lazytime",
+    "ssd",
+    "nodiscard",
+]
+
+# OS-specific config
+LVM_ROOT_NAME = {
+    "arch": "root",
+    "nixos": "nixroot",
+}
+KERNEL_PATH = {
+    "arch": "/boot/vmlinuz-linux",
+    "nixos": "/boot/nixos-kernel",
+}
+INITRD_PATH = {
+    "arch": "/boot/initramfs-linux.img",
+    "nixos": "/boot/nixos-initrd",
+}
+CMDLINE = {
+    "arch": [f"root=/dev/{VG_NAME}/{LVM_ROOT_NAME['arch']}", "rootflags=subvol=@"],
+    "nixos": ["init=/boot/nixos-init", "loglevel=4"],
+}
 
 # Config checks
 assert TEST_DISK_SIZE % DD_DEFAULT_BS == 0
@@ -77,12 +113,12 @@ USR_BIN = pathlib.Path("usr/bin")
 BTRFS_SUBVOLS = {
     "@": "",
     "@home": "home",
+    "@home_snapshots": "home/.snapshots",
+    "@snapshots": ".snapshots",
     "@var_cache": "var/cache",
     "@var_lib_docker": "var/lib/docker",
     "@var_log": "var/log",
     "@var_tmp": "var/tmp",
-    "@snapshots": ".snapshots",
-    "@home_snapshots": "home/.snapshots",
 }
 
 ARGON2_ARGS = [
@@ -297,7 +333,7 @@ def detached_luks(
 
 @contextlib.contextmanager
 def lvm(wrap_dev: pathlib.Path):
-    lv_root_name = "root"
+    lv_root_name = LVM_ROOT_NAME[INSTALL_OS]
     lv_data_name = "data"
     swap_name = "swap"
     swap_dev = DEV / VG_NAME / swap_name
@@ -507,22 +543,14 @@ def install_arch(root: pathlib.Path):
         "lvm2",
     ]
     cmd("pacstrap", "-c", root, *PACKAGES)
-    OPTS = [
-        "defaults",
-        "noatime",
-        "lazytime",
-        "autodefrag",
-        "ssd",
-        "nodiscard",
-        "compress=zstd:12",
-    ]
+
     with open(root / "etc/fstab", "w") as fstab:
         for name, path in BTRFS_SUBVOLS.items():
             print(
                 f"/dev/{VG_NAME}/root",
                 "/" + path,
                 "btrfs",
-                ",".join(OPTS + [f"subvol={name}"]),
+                ",".join(BTRFS_OPTS + [f"subvol={name}"]),
                 0,
                 0,
                 file=fstab,
@@ -531,7 +559,7 @@ def install_arch(root: pathlib.Path):
             f"/dev/{VG_NAME}/swap",
             "swap",
             "swap",
-            "defaults,noatime,lazytime,ssd,nodiscard",
+            ",".join(SWAP_OPTS),
             0,
             0,
             file=fstab,
@@ -557,15 +585,48 @@ def install_arch(root: pathlib.Path):
     )
 
     cmd("arch-chroot", root, "passwd", "root")
-    with open(root / "boot/cmdline-linux.txt", "w") as cmdline:
-        KERNEL_CMDLINE = [
-            "rw",
-            f"root=/dev/{VG_NAME}/root",
-            "rootflags=subvol=@",
-        ]
-        if not INSTALL:
-            KERNEL_CMDLINE.append("console=ttyS0")
-        print(*KERNEL_CMDLINE, file=cmdline)
+
+
+def install_nixos(root: pathlib.Path):
+    HOME = os.environ["HOME"]
+    PATH = os.environ.get("PATH", "")
+    os.environ["PATH"] = (f"{HOME}/.nix-profile/bin:" + PATH).rstrip(":")
+
+    ETC_NIXOS = root / "etc" / "nixos"
+    mkdirs(ETC_NIXOS)
+    cmd("cp", SCRIPT_DIR / "configuration.nix", ETC_NIXOS)
+    cmd("cp", SCRIPT_DIR / "hardware-configuration.nix", ETC_NIXOS)
+
+    with open(ETC_NIXOS / "filesystems.nix", "w") as fs:
+        print("{ ... }: {", file=fs)
+        root_name = LVM_ROOT_NAME[INSTALL_OS]
+        for name, path in BTRFS_SUBVOLS.items():
+            print(f'  fileSystems."/{path}" = {{', file=fs)
+            print(f'    device = "/dev/{VG_NAME}/{root_name}";', file=fs)
+            print('    fsType = "btrfs";', file=fs)
+            opts = " ".join(f'"{opt}"' for opt in (BTRFS_OPTS + [f"subvol={name}"]))
+            print(f"    options= [ {opts} ];", file=fs)
+            print("  };", file=fs)
+            print(file=fs)
+        print("  swapDevices = [{", file=fs)
+        print(f'    device = "/dev/{VG_NAME}/swap";', file=fs)
+        opts = " ".join(f'"{opt}"' for opt in SWAP_OPTS)
+        print(f"    options= [ {opts} ];", file=fs)
+        print("  }];", file=fs)
+        print("}", file=fs)
+
+    cpus = os.cpu_count()
+    cmd(
+        "env",
+        "NIX_PATH=nixpkgs=channel:nixos-24.11",
+        "nixos-install",
+        "--root",
+        root,
+        "-j",
+        str(cpus),
+        "--cores",
+        str(cpus),
+    )
 
 
 def bootstrap_initrd(out_file: pathlib.Path, salt: str, mods: list[str] = []):
@@ -665,6 +726,15 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
             cmd("cp", SCRIPT_DIR / "late.sh", btrfs_meta)
             with open(btrfs_meta / "late_env.sh", "w") as late_env:
                 print(f"VG={VG_NAME}", file=late_env)
+                print(f"LV_ROOT={LVM_ROOT_NAME[INSTALL_OS]}", file=late_env)
+                print(f"KERNEL={KERNEL_PATH[INSTALL_OS]}", file=late_env)
+                print(f"INITRD={INITRD_PATH[INSTALL_OS]}", file=late_env)
+                cmdline = ["rw"]
+                if not INSTALL:
+                    cmdline.append("console=ttyS0")
+                # TODO: Pass boot.kernelParams
+                cmdline += CMDLINE[INSTALL_OS]
+                print(f"CMDLINE='{' '.join(cmdline)}'", file=late_env)
             with open(f"{btrfs_meta}/table.txt", "w") as table:
                 boot_disk = pathlib.Path("/boot_disk")
                 print(
@@ -687,7 +757,11 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
                 btrfs_system_mount,
             ]
             with cascade(data_stack, device) as (_, _, _, btrfs_data):
-                install_arch(btrfs_data)
+                INSTALLER = {
+                    "arch": install_arch,
+                    "nixos": install_nixos,
+                }
+                INSTALLER[INSTALL_OS](btrfs_data)
                 cmd("sync")
 
 
@@ -724,7 +798,7 @@ def run_qemu(disk_img: pathlib.Path, initrd: pathlib.Path):
         initrd,
         "-nographic",
         "-append",
-        "console=ttyS0 rd.break=cleanup systemd.unit=rescue.target",
+        " ".join(["console=ttyS0"] + BOOTSTRAP_CMDLINE),
         "-enable-kvm",
         "-m",
         "1G",
@@ -753,7 +827,7 @@ def build_uki(salt: str):
             "--initrd",
             initrd,
             "--cmdline",
-            "quiet ro",
+            " ".join(["quiet"] + BOOTSTRAP_CMDLINE),
             "--output",
             INSTALL_UKI_PATH,
         )
