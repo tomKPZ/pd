@@ -51,7 +51,7 @@ BOOTSTRAP_KERNEL_PATH = pathlib.Path(
 )
 BOOTSTRAP_CMDLINE = ["ro", "rd.break=cleanup", "systemd.unit=rescue.target"]
 INSTALL = False
-INSTALL_OS = "arch"
+INSTALL_OS = "nixos"
 INSTALL_DEVICE = pathlib.Path("/dev/nvme0n1")
 INSTALL_UKI = True
 INSTALL_UKI_PATH = pathlib.Path("/mnt/EFI/BOOT/BOOTX64.EFI")
@@ -66,6 +66,12 @@ BTRFS_OPTS = [
     "ssd",
     "nodiscard",
     "compress=zstd:12",
+]
+EXT4_OPTS = [
+    "defaults",
+    "noatime",
+    "lazytime",
+    "nodiscard",
 ]
 SWAP_OPTS = [
     "defaults",
@@ -555,6 +561,15 @@ def install_arch(root: pathlib.Path):
                 file=fstab,
             )
         print(
+            f"/dev/{VG_NAME}/data",
+            "/media/data",
+            "ext4",
+            ",".join(EXT4_OPTS),
+            0,
+            0,
+            file=fstab,
+        )
+        print(
             f"/dev/{VG_NAME}/swap",
             "swap",
             "swap",
@@ -602,10 +617,6 @@ def install_arch(root: pathlib.Path):
 
 
 def install_nixos(root: pathlib.Path):
-    HOME = os.environ["HOME"]
-    PATH = os.environ.get("PATH", "")
-    os.environ["PATH"] = (f"{HOME}/.nix-profile/bin:" + PATH).rstrip(":")
-
     ETC_NIXOS = root / "etc" / "nixos"
     mkdirs(ETC_NIXOS)
     cmd("cp", SCRIPT_DIR / "configuration.nix", ETC_NIXOS)
@@ -622,6 +633,15 @@ def install_nixos(root: pathlib.Path):
             print(f"    options= [ {opts} ];", file=fs)
             print("  };", file=fs)
             print(file=fs)
+
+        print('  fileSystems."/media/data" = {', file=fs)
+        print(f'    device = "/dev/{VG_NAME}/data";', file=fs)
+        print('    fsType = "ext4";', file=fs)
+        opts = " ".join(f'"{opt}"' for opt in EXT4_OPTS)
+        print(f"    options= [ {opts} ];", file=fs)
+        print("  };", file=fs)
+        print(file=fs)
+
         print("  swapDevices = [{", file=fs)
         print(f'    device = "/dev/{VG_NAME}/swap";', file=fs)
         opts = " ".join(f'"{opt}"' for opt in SWAP_OPTS)
@@ -630,16 +650,16 @@ def install_nixos(root: pathlib.Path):
         print("}", file=fs)
 
     cpus = os.cpu_count()
+    nixos_install = pathlib.Path.home() / ".nix-profile/bin/nixos-install"
     cmd(
-        "env",
-        "NIX_PATH=nixpkgs=channel:nixos-24.11",
-        "nixos-install",
+        nixos_install,
         "--root",
         root,
         "-j",
         str(cpus),
         "--cores",
         str(cpus),
+        env=os.environ | {"NIX_PATH": "nixpkgs=channel:nixos-24.11"},
     )
 
 
