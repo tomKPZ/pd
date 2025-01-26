@@ -20,9 +20,7 @@ for dev in /dev/disk/by-id/*; do
     if dmsetup create --readonly dm-plain /table.txt 2>/dev/null; then
         if cryptsetup open --batch-mode --type=plain $CRYPT_ARGS --key-file=/boot_tmp/key.bin /dev/mapper/dm-plain plain 2>/dev/null; then
             if mount -t btrfs /dev/mapper/plain /mnt/plain -o defaults,nodiscard,ro 2>/dev/null; then
-                if [ -x /mnt/plain/late.sh ]; then
-                    exec /mnt/plain/late.sh
-                fi
+                /mnt/plain/late.sh || true
                 umount /mnt/plain || true
             fi
             cryptsetup close plain || true

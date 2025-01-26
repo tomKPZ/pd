@@ -124,6 +124,7 @@ BTRFS_SUBVOLS = {
     "@": "",
     "@home": "home",
     "@home_snapshots": "home/.snapshots",
+    "@nix": "nix",
     "@snapshots": ".snapshots",
     "@var_cache": "var/cache",
     "@var_lib_docker": "var/lib/docker",
