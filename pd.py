@@ -51,7 +51,7 @@ BOOTSTRAP_KERNEL_PATH = pathlib.Path(
 )
 BOOTSTRAP_CMDLINE = ["ro", "rd.break=cleanup", "systemd.unit=rescue.target"]
 INSTALL = False
-INSTALL_OS = "nixos"
+INSTALL_OS = "arch"
 INSTALL_DEVICE = pathlib.Path("/dev/nvme0n1")
 INSTALL_UKI = True
 INSTALL_UKI_PATH = pathlib.Path("/mnt/EFI/BOOT/BOOTX64.EFI")
@@ -537,7 +537,6 @@ def install_arch(root: pathlib.Path):
     PACKAGES = [
         "base",
         "btrfs-progs",
-        "dracut",
         "linux",
         "linux-firmware",
         "lvm2",
@@ -565,24 +564,39 @@ def install_arch(root: pathlib.Path):
             file=fstab,
         )
 
-    modules_dir = root / "usr/lib/modules"
-    kernel_version = os.listdir(modules_dir)[0]
-    vmlinuz = root / "usr/lib/modules" / kernel_version / "vmlinuz"
-    link_dst = os.path.relpath(vmlinuz, root / "boot")
-    os.symlink(link_dst, root / "boot/vmlinuz-linux")
-
-    dracut_module_dir = root / "usr/lib/dracut/modules.d/95encrypt"
-    mkdirs(dracut_module_dir)
-    cmd("cp", SCRIPT_DIR / "module-setup.sh", dracut_module_dir / "module-setup.sh")
-    cmd("cp", SCRIPT_DIR / "encrypt.sh", dracut_module_dir / "encrypt.sh")
+    cmd("cp", SCRIPT_DIR / "encrypt_install.sh", root / "etc/initcpio/install/mycrypt")
+    cmd("cp", SCRIPT_DIR / "encrypt_hook.sh", root / "etc/initcpio/hooks/mycrypt")
+    MODULES = [
+        "btrfs",
+        # Needed for qemu.
+        "ata_piix",
+    ]
+    HOOKS = [
+        "base",
+        "udev",
+        "autodetect",
+        "microcode",
+        "modconf",
+        "kms",
+        "keyboard",
+        "keymap",
+        "consolefont",
+        "block",
+        "mycrypt",
+        "lvm2",
+        "filesystems",
+        "fsck",
+    ]
     cmd(
-        "arch-chroot",
-        root,
-        "dracut",
-        "--force",
-        "/boot/initramfs-linux.img",
-        kernel_version,
+        "sed",
+        "-i",
+        "-e",
+        f"s/^MODULES=.*/MODULES=({' '.join(MODULES)})/",
+        "-e",
+        f"s/^HOOKS=.*/HOOKS=({' '.join(HOOKS)})/",
+        root / "etc/mkinitcpio.conf",
     )
+    cmd("arch-chroot", root, "mkinitcpio", "-P")
 
     cmd("arch-chroot", root, "passwd", "root")
 
