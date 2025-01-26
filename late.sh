@@ -6,7 +6,7 @@ if [ -n "${DEBUG:-}" ]; then
     exit 0
 fi
 
-source /mnt/plain/late_env.sh
+source "/mnt/plain/late_env_$LATE.sh"
 
 dmsetup create --readonly dm-luks /mnt/plain/table.txt
 cryptsetup open --key-file=/key.bin --keyfile-offset=64 --header=/mnt/plain/header.dat /dev/mapper/dm-luks luks

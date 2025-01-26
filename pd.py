@@ -18,8 +18,12 @@ GIB = 1024 * MIB
 
 # Config
 SHRED_DEVICE = True
-INIT_DECOY = True
-INIT_HIDDEN = False
+INIT_VOLUMES = [
+    # Decoy
+    False,
+    # Hidden
+    # True,
+]
 VG_NAME = "system"
 CREATE_SWAP = True
 SWAP_SIZE = 64 * MIB
@@ -51,9 +55,9 @@ BOOTSTRAP_KERNEL_PATH = pathlib.Path(
 )
 BOOTSTRAP_CMDLINE = ["ro", "rd.break=cleanup", "systemd.unit=rescue.target"]
 INSTALL = False
-INSTALL_OS = "nixos"
+INSTALL_OS = ["arch", "nixos"]
 INSTALL_DEVICE = pathlib.Path("/dev/nvme0n1")
-INSTALL_UKI = True
+INSTALL_UKI = "nixos"
 INSTALL_UKI_PATH = pathlib.Path("/mnt/EFI/BOOT/BOOTX64.EFI")
 TEST_DISK_SIZE = 4 * GIB
 RUN_QEMU = True
@@ -83,7 +87,7 @@ SWAP_OPTS = [
 
 # OS-specific config
 LVM_ROOT_NAME = {
-    "arch": "root",
+    "arch": "archroot",
     "nixos": "nixroot",
 }
 KERNEL_PATH = {
@@ -339,13 +343,11 @@ def detached_luks(
 
 @contextlib.contextmanager
 def lvm(wrap_dev: pathlib.Path):
-    lv_root_name = LVM_ROOT_NAME[INSTALL_OS]
     lv_data_name = "data"
     swap_name = "swap"
     swap_dev = DEV / VG_NAME / swap_name
     thinpool_name = "thinpool"
     thinpool_dev = DEV / VG_NAME / thinpool_name
-    lv_root_dev = DEV / VG_NAME / lv_root_name
     lv_data_dev = DEV / VG_NAME / lv_data_name
 
     dd(_if="/dev/zero", of=wrap_dev, bs=PE_SIZE, count=1)
@@ -423,14 +425,19 @@ def lvm(wrap_dev: pathlib.Path):
             thinpool_dev,
         )
         cmd("mkfs.ext4", lv_data_dev)
-        cmd(
-            "lvcreate",
-            "--thin",
-            f"--name={lv_root_name}",
-            f"--virtualsize={pool_size}",
-            thinpool_dev,
-        )
-        yield lv_root_dev
+        root_lvs = {
+            install_os: DEV / VG_NAME / LVM_ROOT_NAME[install_os]
+            for install_os in INSTALL_OS
+        }
+        for install_os in INSTALL_OS:
+            cmd(
+                "lvcreate",
+                "--thin",
+                f"--name={LVM_ROOT_NAME[install_os]}",
+                f"--virtualsize={pool_size}",
+                thinpool_dev,
+            )
+        yield root_lvs
     finally:
         cmd("vgchange", "-an", VG_NAME)
         if MOVE_PES:
@@ -552,7 +559,7 @@ def install_arch(root: pathlib.Path):
     with open(root / "etc/fstab", "w") as fstab:
         for name, path in BTRFS_SUBVOLS.items():
             print(
-                f"/dev/{VG_NAME}/root",
+                f"/dev/{VG_NAME}/{LVM_ROOT_NAME['arch']}",
                 "/" + path,
                 "btrfs",
                 ",".join(BTRFS_OPTS + [f"subvol={name}"]),
@@ -624,7 +631,7 @@ def install_nixos(root: pathlib.Path):
 
     with open(ETC_NIXOS / "filesystems.nix", "w") as fs:
         print("{ ... }: {", file=fs)
-        root_name = LVM_ROOT_NAME[INSTALL_OS]
+        root_name = LVM_ROOT_NAME["nixos"]
         for name, path in BTRFS_SUBVOLS.items():
             print(f'  fileSystems."/{path}" = {{', file=fs)
             print(f'    device = "/dev/{VG_NAME}/{root_name}";', file=fs)
@@ -663,7 +670,9 @@ def install_nixos(root: pathlib.Path):
     )
 
 
-def bootstrap_initrd(out_file: pathlib.Path, salt: str, mods: list[str] = []):
+def bootstrap_initrd(
+    out_file: pathlib.Path, salt: str, install_os: str, mods: list[str]
+):
     with temp_dir() as root:
         mkdirs(root / "usr" / "bin")
         cmd("cp", SCRIPT_DIR / "dracut-emergency", root / "usr" / "bin")
@@ -676,9 +685,10 @@ def bootstrap_initrd(out_file: pathlib.Path, salt: str, mods: list[str] = []):
             env = {
                 "ARGON_ARGS": " ".join(ARGON2_ARGS),
                 "CRYPT_ARGS": " ".join(CRYPT_ARGS),
+                "LATE": install_os,
             }
             for k, v in env.items():
-                print(f'{k}="{v}"', file=early_env)
+                print(f'export {k}="{v}"', file=early_env)
             if USE_TEST_PASSWORD:
                 print("read_password() {", file=early_env)
                 print(f"  PASSWORD={TEST_PASSWORD}", file=early_env)
@@ -753,22 +763,19 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
             btrfs_header_mount,
         ]
         with cascade(header_stack, device) as (_, _, btrfs_meta):
-            root = btrfs_meta / "root"
-            cmd("mkdir", "-p", root / "etc" / "lvm")
-            cmd("touch", root / "etc" / "lvm" / "lvm.conf")
-
             cmd("cp", SCRIPT_DIR / "late.sh", btrfs_meta)
-            with open(btrfs_meta / "late_env.sh", "w") as late_env:
-                print(f"VG={VG_NAME}", file=late_env)
-                print(f"LV_ROOT={LVM_ROOT_NAME[INSTALL_OS]}", file=late_env)
-                print(f"KERNEL={KERNEL_PATH[INSTALL_OS]}", file=late_env)
-                print(f"INITRD={INITRD_PATH[INSTALL_OS]}", file=late_env)
-                cmdline = ["rw"]
-                if not INSTALL:
-                    cmdline.append("console=ttyS0")
-                # TODO: Pass boot.kernelParams
-                cmdline += CMDLINE[INSTALL_OS]
-                print(f"CMDLINE='{' '.join(cmdline)}'", file=late_env)
+            for install_os in INSTALL_OS:
+                with open(btrfs_meta / f"late_env_{install_os}.sh", "w") as late_env:
+                    print(f"VG={VG_NAME}", file=late_env)
+                    print(f"LV_ROOT={LVM_ROOT_NAME[install_os]}", file=late_env)
+                    print(f"KERNEL={KERNEL_PATH[install_os]}", file=late_env)
+                    print(f"INITRD={INITRD_PATH[install_os]}", file=late_env)
+                    cmdline = ["rw"]
+                    if not INSTALL:
+                        cmdline.append("console=ttyS0")
+                    # TODO: Pass boot.kernelParams
+                    cmdline += CMDLINE[install_os]
+                    print(f"CMDLINE='{' '.join(cmdline)}'", file=late_env)
             with open(f"{btrfs_meta}/table.txt", "w") as table:
                 boot_disk = pathlib.Path("/boot_disk")
                 print(
@@ -788,15 +795,16 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
                 ),
                 functools.partial(detached_luks, key_file, 64, header_file),
                 lvm,
-                btrfs_system_mount,
             ]
-            with cascade(data_stack, device) as (_, _, _, btrfs_data):
-                INSTALLER = {
-                    "arch": install_arch,
-                    "nixos": install_nixos,
-                }
-                INSTALLER[INSTALL_OS](btrfs_data)
-                cmd("sync")
+            with cascade(data_stack, device) as (_, _, lvs):
+                for install_os, lv in lvs.items():
+                    with btrfs_system_mount(lv) as btrfs_data:
+                        INSTALLER = {
+                            "arch": install_arch,
+                            "nixos": install_nixos,
+                        }
+                        INSTALLER[install_os](btrfs_data)
+                        cmd("sync")
 
 
 def shred_device(device: pathlib.Path, shred_key: bytes):
@@ -817,10 +825,8 @@ def setup_device(device: pathlib.Path, shred_key: bytes, salt: str):
     if SHRED_DEVICE:
         shred_device(device, shred_key)
     dd(_if="/dev/zero", of=device, bs=ZERO_HEADER, count=1)
-    if INIT_DECOY:
-        init_volumes(device, salt, False)
-    if INIT_HIDDEN:
-        init_volumes(device, salt, True)
+    for hidden in INIT_VOLUMES:
+        init_volumes(device, salt, hidden)
 
 
 def run_qemu(disk_img: pathlib.Path, initrd: pathlib.Path):
@@ -850,9 +856,9 @@ def hidden_mods(disk_size: int) -> list[str]:
     ]
 
 
-def build_uki(salt: str):
+def build_uki(salt: str, install_os: str):
     with temp_file(".cpio.xz") as initrd:
-        bootstrap_initrd(initrd, salt)
+        bootstrap_initrd(initrd, salt, install_os, [])
         cmd(
             "ukify",
             "build",
@@ -873,7 +879,7 @@ def main() -> int:
     mods = []
     if INSTALL:
         if INSTALL_UKI:
-            build_uki(salt)
+            build_uki(salt, INSTALL_UKI)
         setup_device(INSTALL_DEVICE, shred_key, salt)
         mods = hidden_mods(device_size(INSTALL_DEVICE))
     else:
@@ -888,15 +894,12 @@ def main() -> int:
             with loopback_device(disk_img) as loop:
                 setup_device(loop, shred_key, salt)
                 if RUN_QEMU:
-                    if INIT_DECOY:
-                        with temp_file(".cpio.xz") as decoy_initrd:
-                            bootstrap_initrd(decoy_initrd, salt)
-                            run_qemu(disk_img, decoy_initrd)
-                    if INIT_HIDDEN:
-                        with temp_file(".cpio.xz") as hidden_initrd:
-                            mods = hidden_mods(TEST_DISK_SIZE)
-                            bootstrap_initrd(hidden_initrd, salt, mods)
-                            run_qemu(disk_img, hidden_initrd)
+                    for hidden in INIT_VOLUMES:
+                        for install_os in INSTALL_OS:
+                            with temp_file(".cpio.xz") as hidden_initrd:
+                                mods = hidden_mods(TEST_DISK_SIZE) if hidden else []
+                                bootstrap_initrd(hidden_initrd, salt, install_os, mods)
+                                run_qemu(disk_img, hidden_initrd)
     if DEBUG_TRACE_CMDS:
         print("Command trace:")
         for traced in CMD_TRACE:
