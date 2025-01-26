@@ -4,9 +4,8 @@ set -euo pipefail
 
 source /early_env.sh
 
+mkdir -p /boot_tmp
 read_password
-
-mkdir /boot_tmp
 echo -n "$PASSWORD" |
     argon2 "$(cat /salt.txt)" $ARGON_ARGS |
     xxd -r -p >/boot_tmp/key.bin
@@ -20,7 +19,7 @@ for dev in /dev/disk/by-id/*; do
     if dmsetup create --readonly dm-plain /table.txt 2>/dev/null; then
         if cryptsetup open --batch-mode --type=plain $CRYPT_ARGS --key-file=/boot_tmp/key.bin /dev/mapper/dm-plain plain 2>/dev/null; then
             if mount -t btrfs /dev/mapper/plain /mnt/plain -o defaults,nodiscard,ro 2>/dev/null; then
-                /mnt/plain/late.sh || true
+                /mnt/plain/late.sh && exit 0
                 umount /mnt/plain || true
             fi
             cryptsetup close plain || true

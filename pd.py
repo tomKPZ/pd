@@ -87,15 +87,15 @@ SWAP_OPTS = [
 
 # OS-specific config
 LVM_ROOT_NAME = {
-    "arch": "archroot",
+    "arch": "root",
     "nixos": "nixroot",
 }
 KERNEL_PATH = {
-    "arch": "/boot/vmlinuz-linux",
+    "arch": "/boot/arch-kernel",
     "nixos": "/boot/nixos-kernel",
 }
 INITRD_PATH = {
-    "arch": "/boot/initramfs-linux.img",
+    "arch": "/boot/arch-initrd",
     "nixos": "/boot/nixos-initrd",
 }
 CMDLINE = {
@@ -694,8 +694,8 @@ def bootstrap_initrd(
             if USE_TEST_PASSWORD:
                 print(f"  PASSWORD={TEST_PASSWORD}", file=early_env)
             else:
-                print('IFS= read -rsp "Password: " PASSWORD', file=early_env)
-                print("echo", file=early_env)
+                print('  IFS= read -rsp "Password: " PASSWORD', file=early_env)
+                print("  echo", file=early_env)
             print("}", file=early_env)
 
         table_file = root / "table.txt"
