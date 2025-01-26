@@ -2,26 +2,23 @@
 
 set -euo pipefail
 
-read_password() {
-    IFS= read -rsp "Password: " PASSWORD
-    echo
-}
-
 source /early_env.sh
 
 read_password
+
+mkdir /boot_tmp
 echo -n "$PASSWORD" |
     argon2 "$(cat /salt.txt)" $ARGON_ARGS |
-    xxd -r -p >/key.bin
+    xxd -r -p >/boot_tmp/key.bin
 unset PASSWORD
 
 mkdir -p /mnt/plain
 
 for dev in /dev/disk/by-id/*; do
     echo "Trying disk $dev"
-    ln -s "${dev}" /boot_disk
+    ln -s "${dev}" /boot_tmp/disk
     if dmsetup create --readonly dm-plain /table.txt 2>/dev/null; then
-        if cryptsetup open --batch-mode --type=plain $CRYPT_ARGS --key-file=/key.bin /dev/mapper/dm-plain plain 2>/dev/null; then
+        if cryptsetup open --batch-mode --type=plain $CRYPT_ARGS --key-file=/boot_tmp/key.bin /dev/mapper/dm-plain plain 2>/dev/null; then
             if mount -t btrfs /dev/mapper/plain /mnt/plain -o defaults,nodiscard,ro 2>/dev/null; then
                 if [ -x /mnt/plain/late.sh ]; then
                     exec /mnt/plain/late.sh
@@ -32,7 +29,7 @@ for dev in /dev/disk/by-id/*; do
         fi
         dmsetup remove dm-plain || true
     fi
-    rm /boot_disk || true
+    rm /boot_tmp/disk || true
 done
 
-shred -u /key.bin
+shred -u /boot_tmp/key.bin

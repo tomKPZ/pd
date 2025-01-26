@@ -18,10 +18,10 @@
 
     initrd.preLVMCommands = ''
       udevadm settle
-      dmsetup create dm-luks /table.txt
-      rm -f /boot_disk
-      cryptsetup open --key-file=/key.bin --keyfile-offset=64 --header=/header.dat /dev/mapper/dm-luks luks
-      shred -u /table.txt /header.dat /key.bin
+      dmsetup create dm-luks /boot_tmp/table.txt
+      rm -f /boot_tmp/disk
+      cryptsetup open --key-file=/boot_tmp/key.bin --keyfile-offset=64 --header=/boot_tmp/header.dat /dev/mapper/dm-luks luks
+      shred -u /boot_tmp/*
     '';
     loader.grub = {
       enable = false;

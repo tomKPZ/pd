@@ -689,15 +689,18 @@ def bootstrap_initrd(
             }
             for k, v in env.items():
                 print(f'export {k}="{v}"', file=early_env)
+            print("read_password() {", file=early_env)
             if USE_TEST_PASSWORD:
-                print("read_password() {", file=early_env)
                 print(f"  PASSWORD={TEST_PASSWORD}", file=early_env)
-                print("}", file=early_env)
+            else:
+                print('IFS= read -rsp "Password: " PASSWORD', file=early_env)
+                print("echo", file=early_env)
+            print("}", file=early_env)
 
         table_file = root / "table.txt"
         with open(table_file, "w") as table:
             print(
-                dmsetup_table(ZERO_HEADER, META_SIZE, pathlib.Path("/boot_disk")),
+                dmsetup_table(ZERO_HEADER, META_SIZE, pathlib.Path("/boot_tmp/disk")),
                 file=table,
             )
 
@@ -777,7 +780,7 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
                     cmdline += CMDLINE[install_os]
                     print(f"CMDLINE='{' '.join(cmdline)}'", file=late_env)
             with open(f"{btrfs_meta}/table.txt", "w") as table:
-                boot_disk = pathlib.Path("/boot_disk")
+                boot_disk = pathlib.Path("/boot_tmp/disk")
                 print(
                     (
                         reversed_table(0, dev_size - META_SIZE, boot_disk)
