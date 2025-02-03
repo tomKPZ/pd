@@ -1,5 +1,7 @@
 #!/usr/bin/bash
 
+efibootmgr --delete-bootnum --bootnum "$(efibootmgr | grep BootCurrent | awk '{print $2}')"
+
 set -euo pipefail
 
 source /early_env.sh

@@ -11,8 +11,8 @@ fi
 dmsetup create --readonly dm-luks /mnt/plain/table.txt
 cryptsetup open --key-file=/boot_tmp/key.bin --keyfile-offset=64 --header=/mnt/plain/header.dat /dev/mapper/dm-luks luks
 lvm vgchange -ay --ignoremonitoring -qq "$VG"
-mkdir /mnt/luks
-mount -t btrfs "/dev/$VG/$LV_ROOT" /mnt/luks -o,defaults,nodiscard,ro,subvol=@
+mkdir -p /mnt/luks/boot
+mount -t btrfs "/dev/$VG/$LV_ROOT" /mnt/luks/boot -o,defaults,nodiscard,ro,subvol=@boot
 
 cp "/mnt/luks/$INITRD" /tmp/initrd
 size=$(stat -c%s /tmp/initrd)

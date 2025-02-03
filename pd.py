@@ -49,7 +49,7 @@ ARGON2_M_KB_LOG2 = 18
 ARGON2_THREADS = 8
 USE_TEST_PASSWORD = True
 TEST_PASSWORD = "testpassword"
-BOOTSTRAP_KERNEL_VERSION = "6.12.9-zen1-1-zen"
+BOOTSTRAP_KERNEL_VERSION = "6.12.10-zen1-1-zen"
 BOOTSTRAP_KERNEL_PATH = pathlib.Path(
     f"/usr/lib/modules/{BOOTSTRAP_KERNEL_VERSION}/vmlinuz"
 )
@@ -122,6 +122,7 @@ USR_BIN = pathlib.Path("usr/bin")
 
 BTRFS_SUBVOLS = {
     "@": "",
+    "@boot": "boot",
     "@home": "home",
     "@home_snapshots": "home/.snapshots",
     "@nix": "nix",
@@ -621,6 +622,9 @@ def install_arch(root: pathlib.Path):
     )
     cmd("arch-chroot", root, "mkinitcpio", "-P")
 
+    cmd("ln", "-s", "vmlinuz-linux", root / KERNEL_PATH["arch"].lstrip("/"))
+    cmd("ln", "-s", "initramfs-linux.img", root / INITRD_PATH["arch"].lstrip("/"))
+
     cmd("arch-chroot", root, "passwd", "root")
 
 
@@ -639,6 +643,8 @@ def install_nixos(root: pathlib.Path):
             print('    fsType = "btrfs";', file=fs)
             opts = " ".join(f'"{opt}"' for opt in (BTRFS_OPTS + [f"subvol={name}"]))
             print(f"    options= [ {opts} ];", file=fs)
+            if name == "@boot":
+                print("    neededForBoot = true;", file=fs)
             print("  };", file=fs)
             print(file=fs)
 
@@ -712,6 +718,7 @@ def bootstrap_initrd(
             "argon2",
             "cryptsetup",
             "dmeventd",
+            "efibootmgr",
             "kexec",
             "lsblk",
             "mount",
