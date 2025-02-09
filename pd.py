@@ -40,6 +40,8 @@ META_SIZE = 256 * MIB
 MOVE_PES = False
 REVERSE_CHUNK_SIZE = 256 * MIB
 TOOLS_ROOT = pathlib.Path("/")
+STATIC_SALT = True
+SALT = "mysalt"
 HIDDEN_SALT_SUFFIX = "a"
 # ARGON2_ITERATIONS = 2
 # ARGON2_M_KB_LOG2 = 15
@@ -56,8 +58,8 @@ BOOTSTRAP_KERNEL_PATH = pathlib.Path(
 BOOTSTRAP_CMDLINE = ["ro", "rd.break=cleanup", "systemd.unit=rescue.target"]
 INSTALL = False
 INSTALL_OS = ["arch", "nixos"]
-INSTALL_DEVICE = pathlib.Path("/dev/nvme0n1")
-INSTALL_UKI = "nixos"
+INSTALL_DEVICE = ""
+INSTALL_UKI = "default"
 INSTALL_UKI_PATH = pathlib.Path("/mnt/EFI/BOOT/BOOTX64.EFI")
 TEST_DISK_SIZE = 4 * GIB
 RUN_QEMU = True
@@ -677,9 +679,7 @@ def install_nixos(root: pathlib.Path):
     )
 
 
-def bootstrap_initrd(
-    out_file: pathlib.Path, salt: str, install_os: str, mods: list[str]
-):
+def bootstrap_initrd(out_file: pathlib.Path, salt: str, boot_os: str, mods: list[str]):
     with temp_dir() as root:
         mkdirs(root / "usr" / "bin")
         cmd("cp", SCRIPT_DIR / "dracut-emergency", root / "usr" / "bin")
@@ -692,7 +692,7 @@ def bootstrap_initrd(
             env = {
                 "ARGON_ARGS": " ".join(ARGON2_ARGS),
                 "CRYPT_ARGS": " ".join(CRYPT_ARGS),
-                "LATE": install_os,
+                "LATE": boot_os,
             }
             for k, v in env.items():
                 print(f'export {k}="{v}"', file=early_env)
@@ -867,9 +867,9 @@ def hidden_mods(disk_size: int) -> list[str]:
     ]
 
 
-def build_uki(salt: str, install_os: str):
+def build_uki(salt: str, boot_os: str):
     with temp_file(".cpio.xz") as initrd:
-        bootstrap_initrd(initrd, salt, install_os, [])
+        bootstrap_initrd(initrd, salt, boot_os, [])
         cmd(
             "ukify",
             "build",
@@ -886,13 +886,15 @@ def build_uki(salt: str, install_os: str):
 
 def main() -> int:
     shred_key = rand512()
-    salt = rand512().hex()
+    salt = SALT if STATIC_SALT else rand512().hex()
     mods = []
     if INSTALL:
         if INSTALL_UKI:
             build_uki(salt, INSTALL_UKI)
-        setup_device(INSTALL_DEVICE, shred_key, salt)
-        mods = hidden_mods(device_size(INSTALL_DEVICE))
+        if INSTALL_DEVICE:
+            install_device = pathlib.Path(INSTALL_DEVICE)
+            setup_device(install_device, shred_key, salt)
+            mods = hidden_mods(device_size(install_device))
     else:
         with temp_file(".img") as disk_img:
             dd(
