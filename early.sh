@@ -1,6 +1,6 @@
 #!/usr/bin/bash
 
-efibootmgr --delete-bootnum --bootnum "$(efibootmgr | grep BootCurrent | awk '{print $2}')"
+efibootmgr --delete-bootnum --bootnum "$(efibootmgr | grep BootCurrent | awk '{print $2}')" &>/dev/null
 
 set -euo pipefail
 
