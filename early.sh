@@ -7,6 +7,7 @@ set -euo pipefail
 source /early_env.sh
 
 mkdir -p /boot_tmp
+udevadm settle
 read_password
 echo -n "$PASSWORD" |
     argon2 "$(cat /salt.txt)" $ARGON_ARGS |
@@ -15,6 +16,7 @@ unset PASSWORD
 
 mkdir -p /mnt/plain
 
+udevadm settle
 for dev in /dev/disk/by-id/*; do
     echo "Trying disk $dev"
     ln -s "${dev}" /boot_tmp/disk

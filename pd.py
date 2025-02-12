@@ -49,14 +49,14 @@ HIDDEN_SALT_SUFFIX = "a"
 ARGON2_ITERATIONS = 14
 ARGON2_M_KB_LOG2 = 18
 ARGON2_THREADS = 8
-USE_TEST_PASSWORD = True
+USE_TEST_PASSWORD = False
 TEST_PASSWORD = "testpassword"
 BOOTSTRAP_KERNEL_VERSION = "6.12.10-zen1-1-zen"
 BOOTSTRAP_KERNEL_PATH = pathlib.Path(
     f"/usr/lib/modules/{BOOTSTRAP_KERNEL_VERSION}/vmlinuz"
 )
-BOOTSTRAP_CMDLINE = ["ro", "rd.break=cleanup", "systemd.unit=rescue.target"]
-INSTALL = False
+BOOTSTRAP_CMDLINE = ["ro", "rd.break=pre-mount", "systemd.unit=rescue.target"]
+INSTALL = True
 INSTALL_OS = ["arch", "nixos"]
 INSTALL_DEVICE = ""
 INSTALL_UKI = "default"
@@ -878,7 +878,7 @@ def build_uki(salt: str, boot_os: str):
             "--initrd",
             initrd,
             "--cmdline",
-            " ".join(["quiet"] + BOOTSTRAP_CMDLINE),
+            " ".join(BOOTSTRAP_CMDLINE),
             "--output",
             INSTALL_UKI_PATH,
         )
