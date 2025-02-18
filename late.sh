@@ -2,17 +2,22 @@
 
 set -euo pipefail
 
-source "/mnt/plain/late_env_$LATE.sh"
-
-if [ -n "${DEBUG:-}" ]; then
-    exit 0
+if /mnt/plain/detect_shift; then
+    cat <(echo default) <(find /mnt/luks/systems -maxdepth 1 -mindepth 1 | grep -v default | sort) |
+        SYSTEM=$(fzf --border --color=16 --color='border:-1' --layout=reverse --border-label="Boot System")
+else
+    SYSTEM=/mnt/luks/systems/default
 fi
+
+source "/mnt/plain/systems/$SYSTEM/env.sh"
 
 dmsetup create --readonly dm-luks /mnt/plain/table.txt
 cryptsetup open --key-file=/boot_tmp/key.bin --keyfile-offset=64 --header=/mnt/plain/header.dat /dev/mapper/dm-luks luks
 lvm vgchange -ay --ignoremonitoring -qq "$VG"
 mkdir -p /mnt/luks/boot
 mount -t btrfs "/dev/$VG/$LV_ROOT" /mnt/luks/boot -o,defaults,nodiscard,ro,subvol=@boot
+
+source "/mnt/plain/systems/$SYSTEM/extra.sh"
 
 cp "/mnt/luks/$INITRD" /tmp/initrd
 size=$(stat -c%s /tmp/initrd)

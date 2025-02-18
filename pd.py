@@ -102,7 +102,7 @@ INITRD_PATH = {
 }
 CMDLINE = {
     "arch": [f"root=/dev/{VG_NAME}/{LVM_ROOT_NAME['arch']}", "rootflags=subvol=@"],
-    "nixos": ["init=/boot/nixos-init", "loglevel=4"],
+    "nixos": [],
 }
 
 # Config checks
@@ -679,6 +679,7 @@ def install_nixos(root: pathlib.Path):
     )
 
 
+# TODO: remove boot_os
 def bootstrap_initrd(out_file: pathlib.Path, salt: str, boot_os: str, mods: list[str]):
     with temp_dir() as root:
         mkdirs(root / "usr" / "bin")
@@ -692,7 +693,6 @@ def bootstrap_initrd(out_file: pathlib.Path, salt: str, boot_os: str, mods: list
             env = {
                 "ARGON_ARGS": " ".join(ARGON2_ARGS),
                 "CRYPT_ARGS": " ".join(CRYPT_ARGS),
-                "LATE": boot_os,
             }
             for k, v in env.items():
                 print(f'export {k}="{v}"', file=early_env)
@@ -716,9 +716,12 @@ def bootstrap_initrd(out_file: pathlib.Path, salt: str, boot_os: str, mods: list
 
         INSTALL_BINS = [
             "argon2",
+            "bat",
             "cryptsetup",
             "dmeventd",
             "efibootmgr",
+            "fzf",
+            "jq",
             "kexec",
             "lsblk",
             "mount",
@@ -784,7 +787,6 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
                     cmdline = ["rw"]
                     if not INSTALL:
                         cmdline.append("console=ttyS0")
-                    # TODO: Pass boot.kernelParams
                     cmdline += CMDLINE[install_os]
                     print(f"CMDLINE='{' '.join(cmdline)}'", file=late_env)
             with open(f"{btrfs_meta}/table.txt", "w") as table:
