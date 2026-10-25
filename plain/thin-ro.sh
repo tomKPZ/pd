@@ -6,7 +6,7 @@
 
 # lv_table VG LV DEV: dm-linear table for LV's segments on the PV DEV.
 lv_table() {
-    lvm lvs --readonly --noheadings --nosuffix --units s -a \
+    lvm lvs --readonly --devices "$3" --noheadings --nosuffix --units s -a \
         -o seg_start,seg_size,seg_pe_ranges,vg_extent_size "$1/$2" 2>/dev/null |
         awk -v pe_start="$pe_start" -v dev="$3" '{
             split($3, r, ":"); split(r[2], e, "-")
@@ -17,10 +17,11 @@ lv_table() {
 # thin_ro_open VG LV NAME: create /dev/mapper/NAME, a read-only view of VG/LV.
 thin_ro_open() {
     vg=$1 lv=$2 name=$3 pv=/dev/mapper/cryptlvm
-    pe_start=$(lvm pvs --readonly --noheadings --nosuffix --units s -o pe_start "$pv" 2>/dev/null | tr -d ' ')
-    pool=$(lvm lvs --readonly --noheadings -o pool_lv "$vg/$lv" 2>/dev/null | tr -d ' ')
-    id=$(lvm lvs --readonly --noheadings -o thin_id "$vg/$lv" 2>/dev/null | tr -d ' ')
-    size=$(lvm lvs --readonly --noheadings --nosuffix --units s -o lv_size "$vg/$lv" 2>/dev/null | tr -d ' ')
+    l="lvm lvs --readonly --devices $pv --noheadings"
+    pe_start=$(lvm pvs --readonly --devices "$pv" --noheadings --nosuffix --units s -o pe_start "$pv" 2>/dev/null | tr -d ' ')
+    pool=$($l -o pool_lv "$vg/$lv" 2>/dev/null | tr -d ' ')
+    id=$($l -o thin_id "$vg/$lv" 2>/dev/null | tr -d ' ')
+    size=$($l --nosuffix --units s -o lv_size "$vg/$lv" 2>/dev/null | tr -d ' ')
     [ -n "$pe_start" ] && [ -n "$pool" ] && [ -n "$id" ] && [ -n "$size" ] || return 1
 
     lv_table "$vg" "${pool}_tmeta" "$pv" | dmsetup create --readonly ro-tmeta

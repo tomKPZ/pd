@@ -303,8 +303,12 @@ def init_hidden(cfg: Config, decoy_password: bytes, password: bytes, run=None) -
     data_key = os.urandom(64)
     table = hl.data_table()
     with boot_volume(disk, hl.plain_offset, key, create=True) as mnt:
+        # Hidden-only files: never copy these into the decoy.
         write_boot_volume(mnt, cfg, data_key, table,
                           extra={"decoy.key": decoy_key, "decoy.table": decoy_table.encode()})
+        (mnt / "hooks").mkdir()
+        shutil.copy(REPO / "plain" / "hidden" / "frontier.sh", mnt / "hooks" / "frontier.sh")
+        write_file(mnt / "frontier.env", f"MIN_GAP_PERCENT={cfg.min_gap_percent}\n")
     with data_region(disk, table, data_key, readonly=False) as dev:
         create_lvm(dev, cfg, hidden=True, disk_bytes=d)
         with vg_active(cfg.vg):

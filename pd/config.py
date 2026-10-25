@@ -37,6 +37,7 @@ class Config:
     swap_size: int = 64 << 20
     hidden_cap: float = 0.4  # fraction of the disk the hidden thin LVs may use
     memorable_offset: bool = False
+    min_gap_percent: int = 10  # frontier monitor warns below this
     argon2: Argon2Params = dataclasses.field(default_factory=Argon2Params)
     systems: list[System] = dataclasses.field(default_factory=list)
     default: str | None = None

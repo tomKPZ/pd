@@ -38,6 +38,11 @@ if [ -x "$B/systems/$SYSTEM/extra.sh" ]; then
     . "$B/systems/$SYSTEM/extra.sh"
 fi
 
+# Optional per-volume hooks, run before handing over.
+for hook in "$B"/hooks/*.sh; do
+    [ -r "$hook" ] && . "$hook"
+done
+
 # The kernel accepts concatenated initrds; each must start 4-byte aligned.
 cp "$R$INITRD" /run/initrd
 size=$(stat -c %s /run/initrd)
