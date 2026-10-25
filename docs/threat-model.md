@@ -77,6 +77,7 @@ What they see is a complete, ordinary-looking system:
 4. Run setup only in throwaway environments.
 5. Keep the hidden offset in your head.
 6. Use different decoy and hidden passwords (setup enforces this).
-7. Don't enable discards anywhere. pd refuses them at the pool level; don't work around that.
+7. Don't enable discards beyond the shutdown trim: no `discard` mount option, no `fstrim` timer, and
+   never `allow_discards` on dm-crypt.
 8. Remember the boot environment uses the US keyboard layout when you type passwords.
 

@@ -1,0 +1,18 @@
+# Reclaim the space filesystems have freed in pd's thin pool, once, at
+# shutdown.  The pool is created with --discards=nopassdown and dm-crypt has
+# no allow_discards, so nothing reaches the disk.  After the next pool
+# activation, dm-thin allocates from the front again, which keeps each
+# side's footprint near its live data (docs/design.md section 2.3).
+# Install in /etc/systemd/system and enable; keep fstrim.timer disabled.
+
+[Unit]
+Description=Run fstrim on all mounted filesystems before unmounting
+DefaultDependencies=no
+Before=umount.target shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/fstrim --all --quiet
+
+[Install]
+WantedBy=umount.target

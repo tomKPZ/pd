@@ -70,6 +70,39 @@ EOF
         self.assertLess(int(sizes["root"]), int(sizes["thinpool"]))
 
 
+class TrimOnShutdown(unittest.TestCase):
+    """fstrim reaches the thin pool (which reclaims space) but never the
+    disk: dm-crypt has no allow_discards, and the pool is nopassdown."""
+
+    def test_trim_reclaims_pool_space_without_touching_disk(self):
+        fx = fixture.make()
+        self.addCleanup(vm.cleanup, fx.work)
+        allocated = lambda: fx.disk.stat().st_blocks
+        before = allocated()
+        script = f"""
+        printf '%s\\n' '{fixture.DECOY_PW}' | python3 -m pd open --config pd.toml --rw --password-stdin --run '
+            pool() {{ lvm lvs --noheadings -o data_percent sysvg/thinpool | tr -d " "; }}
+            head -c 1G /dev/urandom > $PD_ROOT/fake/home/big; sync
+            echo "POOL-FULL $(pool)"
+            rm $PD_ROOT/fake/home/big; sync
+            echo "POOL-DELETED $(pool)"
+            fstrim -v $PD_ROOT/fake/home
+            echo "POOL-TRIMMED $(pool)"
+            echo "CRYPT-DISCARD $(cat /sys/block/$(basename $(readlink -f /dev/mapper/cryptlvm))/queue/discard_max_bytes)"
+        '
+        """
+        _, out = vm.ToolVM(fx.env, fx.work).run(script, disks=[fx.disk])
+        vals = {k: float(v) for k, v in
+                (l.split()[:2] for l in out.splitlines() if l.startswith("POOL-"))}
+        # Deleting doesn't free pool space; trimming does.
+        self.assertAlmostEqual(vals["POOL-DELETED"], vals["POOL-FULL"], delta=1)
+        self.assertLess(vals["POOL-TRIMMED"], vals["POOL-FULL"] - 5)
+        # dm-crypt advertises no discard support, and the image (attached
+        # with discard=unmap, so any discard would punch holes) is intact.
+        self.assertIn("CRYPT-DISCARD 0", out)
+        self.assertGreaterEqual(allocated(), before)
+
+
 if __name__ == "__main__":
     unittest.main()
 

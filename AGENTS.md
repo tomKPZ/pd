@@ -20,10 +20,11 @@ current code, or [docs/roadmap.md](docs/roadmap.md) for what's being built.
 1. **Nothing on the USB or in the decoy refers to the hidden side.** No hidden-specific code paths,
    strings, files, or comments in anything that ends up on the USB or in the decoy's plain volume or OS.
    The only hidden-specific value is the offset in the user's head.
-2. **No discards at any layer.** Thin pools use `--discards=ignore`, filesystems are mounted
-   `nodiscard`, dm-crypt runs without `allow_discards`. Discards break both deniability and the bounded
-   growth that keeps the two sides apart
-   ([design.md §2.3](docs/design.md#23-no-discards-ever-the-central-safety-invariant)).
+2. **No discard reaches the disk, and the pool sees discards only at shutdown.** dm-crypt runs
+   without `allow_discards`; filesystems are mounted `nodiscard`; pools use `--discards=nopassdown`;
+   the only trim is one `fstrim` at shutdown. Discards on the disk break deniability, and discards
+   during a session break the bounded growth that keeps the two sides apart
+   ([design.md §2.3](docs/design.md#23-discards-never-to-the-disk-and-to-the-pool-only-at-shutdown)).
 3. **The boot environment never writes to the internal disk.** Mappings are read-only; btrfs is mounted
    `ro,rescue=nologreplay`.
 4. **Keys never reach persistent storage.** No temporary files for key material, and never print keys

@@ -94,57 +94,58 @@ Reversal has to happen *below* LVM. Doing it inside LVM, by allocating the hidde
 descending order, doesn't work: the PV label and LVM metadata sit at the low end of the PV. That would
 put them at the collision frontier, where they would be destroyed first.
 
-### 2.3 No discards, ever: the central safety invariant
-Discards are disabled at every layer:
-* filesystems are mounted `nodiscard`;
-* thin pools are created with `--discards=ignore`, so thin LVs don't even advertise discard support.
-  A stray `fstrim`, a distro trim timer, or btrfs's automatic `discard=async` can't turn them on;
-* dm-crypt is opened without `allow_discards`.
+### 2.3 Discards: never to the disk, and to the pool only at shutdown
+This is the central safety invariant. There are three layers:
+* **dm-crypt is opened without `allow_discards`.** No discard ever reaches the disk. This is the
+  deniability barrier: a discarded block reads back as zeros or is tracked by the SSD, which would
+  reveal which blocks hold data.
+* **Filesystems are mounted `nodiscard`,** and nothing trims while the pool is active (no `fstrim`
+  timer, no `discard` mount option).
+* **Thin pools use `--discards=nopassdown`,** and each OS runs `fstrim` once, at shutdown
+  (`pd.trimOnShutdown` in the NixOS module, `target/arch/fstrim-before-umount.service` on Arch). The
+  pool unmaps what the filesystems freed; nothing passes down to dm-crypt.
 
-This serves two purposes.
+**Why not discard continuously.** This part is counterintuitive. dm-thin's cursor is next-fit and
+cyclic, and it's reset to 0 only when the pool is activated. Take a pool of 8 blocks
+(A = allocated, F = free) and a filesystem that keeps allocating and freeing one block, with discards on:
+```
+start:             AAAFFFFF
+allocate a block:  AAAAFFFF
+free block 3:      AAFAFFFF   (the discard unmaps it in the pool)
+allocate again:    AAFAAFFF   (the cursor has moved on; the hole isn't reused)
+```
+Churning a single block walks the cursor to the end of the pool, and from there into the other side's
+data. Without discards, the pool never learns that a block was freed. The filesystem reuses its own
+freed blocks, which are already mapped, so nothing new is allocated.
 
-1. **Deniability.** A discarded block reads back as zeros or is tracked by the SSD, which would reveal
-   which blocks hold data. Without discards, used and unused blocks are all ciphertext or random fill.
-2. **Bounded growth.** This part is counterintuitive. dm-thin's cursor is next-fit and cyclic. Take a
-   pool of 8 blocks (A = allocated, F = free) and a filesystem that keeps allocating and freeing one
-   block, with discards on:
-   ```
-   start:             AAAFFFFF
-   allocate a block:  AAAAFFFF
-   free block 3:      AAFAFFFF   (the discard unmaps it in the pool)
-   allocate again:    AAFAAFFF   (the cursor has moved on; the hole isn't reused)
-   ```
-   Churning a single block walks the cursor to the end of the pool, and from there into the other
-   side's data. Without discards, the pool never learns that a block was freed. The filesystem reuses
-   its own freed blocks, which are already mapped, so nothing new is allocated.
+**Why trim at shutdown.** Without any discards, a side's physical footprint is the number of distinct
+virtual chunks its filesystems have ever written: a high-water mark of the filesystems' *address*
+footprint, which only grows. Trimming once at shutdown unmaps everything the filesystems have freed;
+at the next boot the pool is activated again, the cursor starts at 0, and new allocations fill the
+holes from the front. The footprint then stays near the live data plus one session's new writes. A trim
+in the *middle* of a session is harmful: it frees holes behind the cursor, and new writes go to fresh
+space beyond it.
 
-The invariant: **with no discards and no thin snapshots, a side's physical footprint equals the number
-of distinct virtual chunks its filesystems have ever written.** That is a high-water mark of the
-filesystems' *address* footprint, not of how much they write.
+Measured (`tests/test_churn.py`: 8 GiB volume; each cycle fills to 25%, deletes half at random, and
+writes about 1 GiB; "high-water" is the highest allocated pool block, which is what decides a
+collision):
 
-So safety also depends on each filesystem preferring to reuse low addresses it has already written:
-* **ext4 is unsafe on pd (measured).** It deliberately spreads allocations across block groups (the
-  Orlov allocator). In the churn test (`tests/test_churn.py`: fill to 25%, delete half at random,
-  repeat), an 8 GiB ext4 volume using about 1 GiB had touched 7741 MiB of the pool, essentially all of
-  it, within 15 cycles. v1's `data` LV is ext4, so on v1 installs it can grow to the full disk.
-* **btrfs is much better, but not bounded by its peak usage (measured).** In the same test (about 1 GiB
-  written per cycle on an 8 GiB volume whose usage peaks near 4 GiB), the pool footprint grew in
-  block-group-sized steps: 3.7 GiB after 1 cycle, 5.1 GiB after 50, 5.4 GiB after 100, 6.3 GiB after
-  150, and 6.5 GiB (80% of the volume) after 200 cycles, i.e. after writing 25× the volume size. With
-  `nossd` it was slightly lower (6.1 GiB after 200). The growth slows but doesn't stop, so over a long
-  enough life a btrfs volume's footprint approaches its virtual size. `btrfs balance` allocates new
-  block groups and makes it worse.
-* **So every filesystem on a pd thin LV is btrfs,** and v2 creates no ext4 `data` LV.
-* **Documented limitation:** the only hard bound on a side's footprint is the total virtual size of its
-  thin LVs. The hidden side is capped this way (§6.2). The decoy's thin LVs span the whole pool, so a
-  decoy with heavy, long-term churn can creep toward the hidden side even while storing little; the
-  frontier monitor (§10.2) warns before that happens. Rebooting doesn't help here: resetting dm-thin's
-  allocation cursor only matters when blocks have been freed, which never happens without discards.
-  The footprint is set by how btrfs reuses its own address space. In practice the creep is slow (25×
-  the volume size written to reach 80% in the test), so it matters mainly for small disks or heavy
-  write workloads.
-* **Thin snapshots** break the bound, because copy-on-write allocates new chunks for shared data. btrfs
-  snapshots are fine.
+| Filesystem | No trim | `fstrim` + reactivation every 5 cycles |
+|---|---|---|
+| btrfs | 5.7 GiB after 60 cycles, 6.5 GiB (80% of the volume) after 200, still creeping | 4.2 GiB after the first session, settling at 3.6 GiB; flat for the last 30 of 60 cycles (peak usage ~3.9 GiB) |
+| ext4 | 7.7 GiB (the whole volume) within 15 cycles | 5.0 GiB after the first session, then flat |
+
+* **btrfs** allocates data block groups first-fit from low device offsets and deletes empty block
+  groups; with the shutdown trim its footprint tracks live data. Recommended.
+* **ext4** deliberately spreads allocations and metadata across block groups (the Orlov allocator).
+  With the shutdown trim it's bounded, but by whatever its first session touched (its metadata never
+  moves), not by live data. Without the trim it reaches the whole volume. Use btrfs.
+* **Without the shutdown trim** (or if it's skipped, e.g. after a crash), footprints creep as in the
+  first column. The hidden side's thin LVs are capped (§6.2), so it can't grow past its cap either way;
+  the decoy is bounded only by the disk, and the frontier monitor (§10.2) warns as the gap shrinks.
+* **Thin snapshots** break these bounds, because copy-on-write allocates new chunks for shared data.
+  btrfs snapshots are fine. `btrfs balance` allocates new block groups and raises the high-water mark
+  for the rest of the session.
 
 For users: `df` doesn't show how much of the disk a side occupies. The pool's `data_percent` (from
 `lvs`) does.
@@ -290,12 +291,12 @@ The decoy is created only with stock, ordinary commands:
 pvcreate
 vgcreate
 lvcreate -L … -n swap
-lvcreate --type thin-pool -l 100%FREE --discards ignore -n thinpool
+lvcreate --type thin-pool -l 100%FREE --discards nopassdown -n thinpool
 lvcreate -V … -T …/thinpool -n <root>
 ```
 No explicit extent size, chunk size, or metadata size is given; LVM picks them for the disk size. Thin
-LVs get the full pool size as their virtual size. `--discards ignore` is the one non-default option;
-it's an ordinary, documented setting.
+LVs get the full pool size as their virtual size. `--discards nopassdown` is the one non-default
+option; it's an ordinary, documented setting (reclaim thin pool space without trimming the device).
 
 **Why it matters: LVM metadata records its own history.** The metadata area is a ring buffer that keeps
 many versions, and every version stores:
@@ -556,7 +557,7 @@ it.
 
 | # | Decision | Why | Status |
 |---|---|---|---|
-| D1 | No discards at any layer; pools use `--discards=ignore` | Deniability, and bounded growth (§2.3) | agreed |
+| D1 | No discard reaches the disk (dm-crypt without `allow_discards`); filesystems `nodiscard`; pools `--discards=nopassdown`; one `fstrim` at shutdown | Deniability, and bounded growth (§2.3) | agreed (revised: originally `--discards=ignore`, which made a shutdown trim impossible; measurements show the shutdown trim keeps footprints near live data) |
 | D2 | Hidden data reversed in 256 MiB chunks, from 256 MiB up to the hidden plain volume; fix `reversed_table`'s offset bug (it ignores `start` when `start != 0`) | The hidden side grows from the back and can't destroy the decoy's boot volume | agreed |
 | D3 | Decoy data region is [256 MiB, D) | An ordinary install uses the whole disk | agreed |
 | D4 | First MiB zeroed | No accidental signatures; plain volume starts at sector 2048 | agreed |
@@ -590,10 +591,12 @@ Decisions made while implementing v2 (status "implemented": not yet reviewed by 
 | D27 | NVRAM cleanup writes efivarfs directly from busybox | static efibootmgr doesn't build; one tool fewer on the USB | implemented |
 | D28 | An empty password goes straight to the recovery shell, skipping Argon2 | Faster hidden boot; a mistyped real password still takes the normal path | implemented |
 | D29 | Keys are passed to cryptsetup as files (pipe fds), never on stdin | Plain mode hashes stdin keys; the boot scripts read raw key files | implemented |
-| D30 | Every filesystem on a pd thin LV is btrfs | Measured: ext4 touches the whole pool under churn (§2.3) | implemented |
+| D30 | Filesystems on pd thin LVs should be btrfs | Measured: ext4 touches the whole pool under churn without trim, and stays bounded by its first session with it (§2.3) | agreed |
 | D31 | Hidden-only features use a generic `hooks/` directory in the boot volume | Keeps hidden-specific code out of `late.sh`, which is identical on both sides | implemented |
 | D32 | Kernel modules in the boot initrd are uncompressed; GPU drivers omitted | busybox modprobe can't reliably load compressed modules; GPU firmware is over 1 GB | implemented |
 | D33 | Builds use `path:` flake references | Nix's libgit2 can't read reftable repositories | implemented |
+| D34 | Target OSes trim once at shutdown (NixOS `pd.trimOnShutdown`, default on; Arch unit in `target/arch/`); periodic fstrim disabled | Keeps footprints near live data (§2.3) | implemented |
+| D35 | A RAM-only setup UKI (`setupUki`) for running setup on real hardware | A throwaway environment with nothing to install | implemented |
 
 ---
 
@@ -601,7 +604,7 @@ Decisions made while implementing v2 (status "implemented": not yet reviewed by 
 
 * Memorable offset (§3): adopt it? (Implemented as the `memorable_offset` config option, off by
   default.)
-* Decoy footprint creep (§2.3): kept as a documented limitation rather than capping the decoy's thin
-  LVs. Whether btrfs options or other filesystems behave better is on the roadmap.
+* Decoy footprint creep without the shutdown trim (§2.3): a documented limitation rather than capping
+  the decoy's thin LVs.
 * Argon2 defaults: keep t=14, m=256 MiB, p=8, or raise memory?
 * Project name.

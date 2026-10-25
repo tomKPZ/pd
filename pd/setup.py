@@ -187,11 +187,11 @@ def create_lvm(dev: str, cfg: Config, *, hidden: bool, disk_bytes: int) -> None:
         # Create the pool with one extent, then extend it: this puts tmeta
         # and pmspare at the front of the PV, far from where the two sides
         # can meet.  (Stock placement would put them at the frontier.)
-        lvm("lvcreate", "-qq", "--type", "thin-pool", "-l", "1", "--discards", "ignore",
+        lvm("lvcreate", "-qq", "--type", "thin-pool", "-l", "1", "--discards", "nopassdown",
             "-n", "thinpool", cfg.vg)
         lvm("lvextend", "-qq", "-l", "+100%FREE", f"{cfg.vg}/thinpool")
     else:
-        lvm("lvcreate", "-qq", "--type", "thin-pool", "-l", "100%FREE", "--discards", "ignore",
+        lvm("lvcreate", "-qq", "--type", "thin-pool", "-l", "100%FREE", "--discards", "nopassdown",
             "-n", "thinpool", cfg.vg)
     pool = int(lvm_output("lvs", "--noheadings", "--units", "b", "--nosuffix", "-o", "lv_size",
                           f"{cfg.vg}/thinpool"))
