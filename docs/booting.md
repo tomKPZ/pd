@@ -47,7 +47,8 @@ The edits only change the in-RAM copy of the boot environment. The USB is never 
 * If the right password doesn't work, check that:
   * the right disk is attached;
   * the offset was typed correctly (hidden boot only);
-  * you typed the password for the US keyboard layout, which the boot environment uses.
+  * you typed the password for the boot environment's keyboard layout: US unless `keymap` was set
+    when the USB was built.
 * **After an unclean shutdown**, v2's boot environment mounts btrfs with `rescue=nologreplay`, and the OS
   replays its own log once it's running. (v1 lacks this; because it activates its LVs read-write, its
   `ro` mount replays the log and writes to the disk; see [design.md §7.3](design.md#73-latesh-in-the-plain-volume).)

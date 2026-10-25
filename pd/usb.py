@@ -36,10 +36,18 @@ def _cpio_entry(name: str, data: bytes, mode: int, ino: int) -> bytes:
     return out
 
 
-def install_cpio(cfg: Config) -> bytes:
-    """newc cpio with the per-install files: salt.txt and early_env.sh."""
+def install_cpio(cfg: Config, env: pathlib.Path | None = None) -> bytes:
+    """newc cpio with the per-install files: salt.txt, early_env.sh, and the
+    keymap (from env/keymaps) if one is configured."""
     buf = io.BytesIO()
     files = [("salt.txt", cfg.salt.encode()), ("early_env.sh", early_env(cfg).encode())]
+    if cfg.keymap:
+        if env is None:
+            raise ValueError("a keymap needs --env (the built testenv) to find keymaps/")
+        bmap = pathlib.Path(env) / "keymaps" / f"{cfg.keymap}.bmap"
+        if not bmap.exists():
+            raise ValueError(f"unknown keymap {cfg.keymap!r} (see {bmap.parent})")
+        files.append(("keymap.bmap", bmap.read_bytes()))
     for i, (name, data) in enumerate(files, start=1):
         buf.write(_cpio_entry(name, data, stat.S_IFREG | 0o644, i))
     buf.write(_cpio_entry("TRAILER!!!", b"", 0, 0))
@@ -66,7 +74,7 @@ def read_salt(uki: pathlib.Path) -> str:
 def build_uki(cfg: Config, env: pathlib.Path, out: pathlib.Path, cmdline: str = BOOT_CMDLINE) -> None:
     from pd.util import cmd
     cpio = out.with_suffix(".install.cpio")
-    cpio.write_bytes(install_cpio(cfg))
+    cpio.write_bytes(install_cpio(cfg, env))
     try:
         cmd(env / "ukify" / "bin" / "ukify", "build",
             "--linux", env / "bzImage",

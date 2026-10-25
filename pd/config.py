@@ -46,6 +46,7 @@ class Config:
     salt: str = ""
     vg: str = "sysvg"
     hostname: str | None = None  # set during setup, since LVM records it
+    keymap: str | None = None  # console keymap for the password prompt (kbd name, e.g. "de")
     swap_size: int = 64 << 20
     hidden_cap: float = 0.4  # fraction of the disk the hidden thin LVs may use
     memorable_offset: bool = True

@@ -100,7 +100,8 @@ class BootVM:
 
     def __init__(self, env: pathlib.Path, initrds: list[pathlib.Path], disks, cmdline: str = "",
                  memory: str = "2G", interface: str = "virtio", log=None, uefi: dict | None = None,
-                 readonly_disks: bool = False, network: bool = False):
+                 readonly_disks: bool = False, network: bool = False,
+                 extra_args: list[str] | None = None, qmp: pathlib.Path | None = None):
         self.env = env
         if uefi:
             args = _qemu_base(memory) + [
@@ -117,6 +118,10 @@ class BootVM:
             ] + _disk_args(disks, interface, readonly_disks)
         if network:
             args += ["-nic", "user,model=virtio-net-pci"]
+        if qmp:
+            args += ["-qmp", f"unix:{qmp},server=on,wait=off"]
+        args += extra_args or []
+        self.qmp_path = qmp
         self.child = pexpect.spawn(args[0], args[1:], timeout=180, encoding="utf-8",
                                    codec_errors="replace")
         # Log only what the guest prints, not what the test types.
@@ -142,6 +147,24 @@ class BootVM:
 
     def sendline(self, s: str):
         self.child.sendline(s)
+
+    def qmp(self, command: str, **arguments):
+        """Run a QMP command (e.g. device_add) and return its reply."""
+        import json
+        import socket
+        with socket.socket(socket.AF_UNIX) as s:
+            s.connect(str(self.qmp_path))
+            f = s.makefile("rw")
+            f.readline()  # greeting
+            for msg in ({"execute": "qmp_capabilities"},
+                        {"execute": command, "arguments": arguments}):
+                f.write(json.dumps(msg) + "\n")
+                f.flush()
+                while True:
+                    reply = json.loads(f.readline())
+                    if "return" in reply or "error" in reply:
+                        break
+            return reply
 
     def close(self):
         if self.child.isalive():

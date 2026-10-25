@@ -121,6 +121,17 @@ let
     install -m644 ${src}/plain/thin-ro.sh $out/thin-ro.sh
     cp -r ${src}/plain/systems $out/systems
   '';
+  # Console keymaps in the binary format busybox loadkmap reads, one per
+  # kbd keymap (`pd usb` puts the configured one on the USB).
+  keymaps = pkgs.runCommand "pd-keymaps" { nativeBuildInputs = [ pkgs.kbd ]; } ''
+    mkdir -p $out
+    for f in ${pkgs.kbd}/share/keymaps/i386/*/*.map.gz; do
+      name=$(basename "$f" .map.gz)
+      loadkeys -b "$f" > "$out/$name.bmap" 2>/dev/null </dev/null || rm -f "$out/$name.bmap"
+    done
+    test -s $out/de.bmap
+  '';
+
   toolvm = import ./toolvm.nix { inherit pkgs kernel modulesClosure plainTree bootTools; };
 
   setupEnv = import ./setup-env.nix { inherit pkgs kernel modulesClosure plainTree src; };
@@ -141,6 +152,7 @@ let
     { name = "busybox"; path = pkgs.pkgsStatic.busybox; }
     { name = "faketarget-initrd.cpio.zst"; path = faketarget; }
     { name = "setup-initrd.cpio.zst"; path = setupEnv.initrd; }
+    { name = "keymaps"; path = keymaps; }
   ];
 in
 {

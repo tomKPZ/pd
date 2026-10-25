@@ -56,6 +56,44 @@ class EndToEnd(unittest.TestCase):
         b.expect("recovery shell")
         self.assertNotIn("secret-canary-123", b.child.before)
 
+    def test_late_keyboard_gets_its_driver(self):
+        # A USB keyboard plugged in after boot (as behind a slow hub or dock)
+        # gets its driver from mdev's uevent handling.
+        qmp = self.fx.work / "qmp.sock"
+        b = self.boot("hotplug", extra_args=["-device", "qemu-xhci,id=xhci"], qmp=qmp)
+        b.expect("Password: ")
+        b.sendline("")
+        b.expect("~ # ")
+        b.sendline("grep -c usbhid /proc/modules")
+        b.expect("~ # ")
+        reply = b.qmp("device_add", driver="usb-kbd", bus="xhci.0", id="kbd")
+        self.assertIn("return", reply, reply)
+        b.sendline('for i in 1 2 3 4 5 6 7 8 9 10; do grep -q usbhid /proc/modules && break; sleep 0.5; done; '
+                   'm=usbhid; grep -q $m /proc/modules && echo "LOADED-$m"')
+        b.expect("LOADED-usbhid", timeout=30)
+
+    def test_keymap(self):
+        from pd import usb
+        import dataclasses
+        cfg = dataclasses.replace(self.fx.cfg, keymap="de")
+        cpio = self.fx.work / "install-de.cpio"
+        cpio.write_bytes(usb.install_cpio(cfg, self.fx.env))
+        dumps = {}
+        for name, initrd in [("us", self.fx.work / "install.cpio"), ("de", cpio)]:
+            log = open(self.fx.work / f"boot-keymap-{name}.log", "w")
+            self.addCleanup(log.close)
+            b = vm.BootVM(self.fx.env, [self.fx.env / "boot-initrd.cpio.zst", initrd],
+                          [self.fx.disk], log=log)
+            self.addCleanup(b.close)
+            b.expect("Password: ")
+            b.sendline("")
+            b.expect("~ # ")
+            b.sendline('s=$(dumpkmap | md5sum | cut -c1-32); echo "KMAP<$s>"')
+            b.expect(r"KMAP<([0-9a-f]{32})>")
+            dumps[name] = b.child.match.group(1)
+            b.close()
+        self.assertNotEqual(dumps["us"], dumps["de"])
+
     def test_boot_environment_is_read_only(self):
         # With the disk attached read-only, the boot environment must still
         # get all the way to kexec: it never needs to write.

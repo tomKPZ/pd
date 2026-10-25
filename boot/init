@@ -13,21 +13,26 @@ mount -t tmpfs tmpfs /tmp -o mode=1777,nosuid,nodev
 [ -d /sys/firmware/efi/efivars ] &&
     mount -t efivarfs efivarfs /sys/firmware/efi/efivars -o nosuid,noexec,nodev 2>/dev/null
 
-# Load drivers for the hardware present.  USB devices appear asynchronously,
-# so repeat until no new modules get loaded.
-coldplug() {
-    prev=-1
-    for _ in 1 2 3 4 5 6 7 8 9 10; do
-        find /sys/devices -name modalias -exec cat {} + 2>/dev/null |
-            sort -u | xargs -r modprobe -a -q -b 2>/dev/null
-        count=$(wc -l </proc/modules)
-        [ "$count" -eq "$prev" ] && break
-        prev=$count
-        sleep 0.5
-    done
-}
+# Load drivers.  mdev listens for kernel uevents and loads the driver for
+# every device that appears, including ones that show up late (keyboards
+# behind USB hubs or docks).  Then one pass over the devices already present,
+# repeated while it keeps finding new ones (each driver can expose more
+# devices, e.g. a USB controller its hubs and keyboards).
+echo '$MODALIAS=.* 0:0 660 @modprobe -b -q "$MODALIAS"' >/etc/mdev.conf
+mdev -d
 modprobe -a -q dm-mod dm-crypt dm-zero btrfs 2>/dev/null
-coldplug
+prev=-1
+for _ in 1 2 3 4 5 6; do
+    find /sys/devices -name modalias -exec cat {} + 2>/dev/null |
+        sort -u | xargs -r modprobe -a -q -b 2>/dev/null
+    count=$(wc -l </proc/modules)
+    [ "$count" -eq "$prev" ] && break
+    prev=$count
+    sleep 0.25
+done
+
+# The configured console keymap, for typing the password (local console only).
+[ -r /keymap.bmap ] && loadkmap </keymap.bmap 2>/dev/null
 
 # One session for both, so output isn't lost when a session leader exits.
 setsid cttyhack sh -c '/early.sh; echo "Starting recovery shell. Exit to power off."; exec sh -l'

@@ -43,6 +43,7 @@ swap_size = "8G"               # linear swap LV on each side
 hidden_cap = 0.4               # hidden thin LVs may use at most this fraction of the disk, in total
 min_gap_percent = 10           # frontier monitor warns below this much free space between the sides
 memorable_offset = true        # round the hidden offset to a multiple of 10^6 sectors (default)
+keymap = "de"                  # optional console keymap for the password prompt (kbd names; default US)
 
 [argon2]                       # tune so a boot takes a few seconds on the target machine
 t = 14

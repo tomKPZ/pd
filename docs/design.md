@@ -359,7 +359,8 @@ no NVRAM entry is needed. It contains:
   so hardware coverage matters more than size.
 * **initrd** (about 10 MB): static busybox, cryptsetup, argon2, and the kernel modules (stored
   uncompressed, because busybox `modprobe` can't reliably load compressed ones), plus `/init`,
-  `early.sh`, and a second, per-install cpio with `early_env.sh` and `salt.txt`. GPU drivers are left
+  `early.sh`, and a second, per-install cpio with `early_env.sh`, `salt.txt` and optionally
+  `keymap.bmap`. GPU drivers are left
   out (their firmware is over a gigabyte); the firmware framebuffer is enough for a text console.
   `/sbin` links to `/bin`, because the kernel runs `/sbin/modprobe` to load crypto modules on demand.
 * **Command line:** includes `init_on_free=1`. Pages the boot environment frees (password buffers,
@@ -375,9 +376,12 @@ v1 differs: the UKI is built by the host's dracut from the host's kernel, with u
 tools.
 
 ### 7.2 early.sh (on the USB)
-`/init` mounts the pseudo-filesystems, loads drivers by modalias until no new ones appear, then runs
-`early.sh` and, if it returns, the recovery shell, in a single session (so no console output is lost
-when a session leader exits).
+`/init` mounts the pseudo-filesystems and starts busybox `mdev -d`, which loads the driver for every
+device that appears (via its `MODALIAS` uevent), including keyboards that enumerate late behind hubs or
+docks. It also makes a pass over the devices already present, repeated while new drivers keep exposing
+new devices. It loads the configured console keymap (`keymap.bmap`, built from kbd's keymaps, with
+busybox `loadkmap`), then runs `early.sh` and, if it returns, the recovery shell, in a single session
+(so no console output is lost when a session leader exits).
 1. Delete the `BootCurrent` NVRAM entry and remove it from `BootOrder`. This is done directly through
    efivarfs with busybox, since efibootmgr doesn't build statically; one tool fewer on the USB.
 2. Prompt `Password:` with echo off (`stty -echo`). An empty password goes straight to the recovery
@@ -550,7 +554,7 @@ go to another pd setup; never `dd` the disk.
   |---|---|
   | `test_layout`, `test_placement`, `test_usb`, `test_monitor_awk` | unit tests: layout arithmetic, reversed tables, hidden placement and overlap checks, salt read-back, the monitor's overlap detection |
   | `test_smoke` | the tool VM |
-  | `test_e2e` | decoy boot, hidden boot via the recovery-shell `sed`, wrong password, password not echoed, read-only disk |
+  | `test_e2e` | decoy boot, hidden boot via the recovery-shell `sed`, wrong password, password not echoed, read-only disk, keyboard plugged in after boot, keymap |
   | `test_safety` | boot after a crash with a dirty btrfs log; hidden cap over roots and volumes; fstrim shrinks the pool but never reaches the disk |
   | `test_growth` | on an unrandomized disk, decoy writes at the front, hidden at the back, untouched gap between |
   | `test_uefi` | the real UKI from a USB stick under OVMF; NVRAM entry and `BootOrder` cleanup; no build-host os-release |

@@ -99,6 +99,7 @@ def main(argv=None) -> int:
 
     c = sub.add_parser("install-cpio", help="write the per-install initrd cpio")
     c.add_argument("--config", required=True)
+    c.add_argument("--env", default=None, help="the built testenv (for keymaps)")
     c.add_argument("--output", required=True)
 
     args = p.parse_args(argv)
@@ -171,7 +172,8 @@ def main(argv=None) -> int:
                       args.cmdline or usb.BOOT_CMDLINE)
     elif args.command == "install-cpio":
         from pd import usb
-        pathlib.Path(args.output).write_bytes(usb.install_cpio(cfg))
+        pathlib.Path(args.output).write_bytes(
+            usb.install_cpio(cfg, pathlib.Path(args.env) if args.env else None))
     return 0
 
 

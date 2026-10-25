@@ -86,5 +86,6 @@ there.
 6. Use different decoy and hidden passwords (setup enforces this).
 7. Don't enable discards beyond the shutdown trim: no `discard` mount option, no `fstrim` timer, and
    never `allow_discards` on dm-crypt.
-8. Remember the boot environment uses the US keyboard layout when you type passwords.
+8. Remember the boot environment's keyboard layout when you type passwords: US unless `keymap` is set
+   in the config. (The keymap on the USB reveals only your layout.)
 
