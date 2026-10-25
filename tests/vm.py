@@ -36,13 +36,14 @@ def _qemu_base(memory: str = "4G", smp: int = 4) -> list[str]:
     ]
 
 
-def _disk_args(disks, interface: str = "virtio") -> list[str]:
+def _disk_args(disks, interface: str = "virtio", readonly: bool = False) -> list[str]:
+    ro = ",readonly=on" if readonly else ""
     args = []
     for i, d in enumerate(disks):
         if interface == "virtio":
-            args += ["-drive", f"file={d},if=virtio,format=raw,cache=unsafe,discard=unmap"]
+            args += ["-drive", f"file={d},if=virtio,format=raw,cache=unsafe,discard=unmap{ro}"]
         else:
-            args += ["-drive", f"file={d},if=none,id=d{i},format=raw,cache=unsafe,discard=unmap",
+            args += ["-drive", f"file={d},if=none,id=d{i},format=raw,cache=unsafe,discard=unmap{ro}",
                      "-device", f"nvme,drive=d{i},serial=pd{i}"]
     return args
 
@@ -90,7 +91,8 @@ class BootVM:
     """Boots the pd boot environment (kernel + initrds) interactively."""
 
     def __init__(self, env: pathlib.Path, initrds: list[pathlib.Path], disks, cmdline: str = "",
-                 memory: str = "2G", interface: str = "virtio", log=None, uefi: dict | None = None):
+                 memory: str = "2G", interface: str = "virtio", log=None, uefi: dict | None = None,
+                 readonly_disks: bool = False):
         self.env = env
         if uefi:
             args = _qemu_base(memory) + [
@@ -98,13 +100,13 @@ class BootVM:
                 "-drive", f"if=pflash,format=raw,unit=1,file={uefi['vars']}",
                 "-drive", f"file={uefi['esp']},if=none,id=usb,format=raw",
                 "-device", "qemu-xhci", "-device", "usb-storage,drive=usb,bootindex=0",
-            ] + _disk_args(disks, interface)
+            ] + _disk_args(disks, interface, readonly_disks)
         else:
             initrd = self._concat_initrds(initrds)
             args = _qemu_base(memory) + [
                 "-kernel", str(env / "bzImage"), "-initrd", str(initrd),
-                "-append", f"console=ttyS0 panic=-1 {cmdline}".strip(),
-            ] + _disk_args(disks, interface)
+                "-append", f"console=ttyS0 panic=-1 init_on_free=1 {cmdline}".strip(),
+            ] + _disk_args(disks, interface, readonly_disks)
         self.child = pexpect.spawn(args[0], args[1:], timeout=180, encoding="utf-8",
                                    codec_errors="replace")
         # Log only what the guest prints, not what the test types.

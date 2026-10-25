@@ -50,6 +50,10 @@ forget_boot_entry
 mkdir -p /run/pd /mnt/boot
 chmod 700 /run/pd
 read_password
+if [ -z "$PASSWORD" ]; then
+    echo "No bootable disk found."
+    exit 1
+fi
 printf %s "$PASSWORD" | argon2 "$(cat /salt.txt)" $ARGON2_ARGS | xxd -r -p >/run/pd/boot.key
 PASSWORD=
 unset PASSWORD
