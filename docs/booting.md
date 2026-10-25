@@ -27,8 +27,10 @@ several seconds. That pause is expected.
    prints `Free space between the two sides: N MiB.`; if it warns (little space left, or a decoy volume
    inside the hidden region), it waits for Enter.
 
-`<offset>` is the start sector of the hidden plain volume. Setup prints it once. Memorize it, and never
-write it on the USB or anywhere in the decoy.
+`<offset>` is the start sector of the hidden plain volume. Setup prints it once; by default it's a
+multiple of 1,000,000 (e.g. `1945000000`). Remember it, and never write it on the USB or anywhere in the
+decoy. It isn't secret ([threat-model.md](threat-model.md#a2-coercer-in-scope-the-main-design-target)),
+but a written note of it is a pointer to the hidden side.
 
 **v1** uses different commands. They also apply the hidden salt suffix, which v2 removes:
 ```sh

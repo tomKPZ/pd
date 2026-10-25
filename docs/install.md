@@ -42,7 +42,7 @@ hostname = "laptop"            # optional: set during setup, since LVM records i
 swap_size = "8G"               # linear swap LV on each side
 hidden_cap = 0.4               # hidden thin LVs may use at most this fraction of the disk, in total
 min_gap_percent = 10           # frontier monitor warns below this much free space between the sides
-memorable_offset = false       # round the hidden offset to a multiple of 10^6 sectors
+memorable_offset = true        # round the hidden offset to a multiple of 10^6 sectors (default)
 
 [argon2]                       # tune so a boot takes a few seconds on the target machine
 t = 14
@@ -102,12 +102,17 @@ pd init-hidden --config /m/pd.toml --run
 ```
 `init-hidden` asks for the decoy password (to read the decoy's layout and store its data key for the
 frontier monitor) and the hidden password, creates the hidden side, and prints the hidden-boot command,
-e.g. `sed -i s/2048/1945600000/ /early_env.sh`. **Memorize the number; don't write it down.** Install
+e.g. `sed -i s/2048/1945000000/ /early_env.sh`. **Remember the number; don't write it down.** Install
 the hidden OSes, `exit`, and power off (`poweroff -f`).
 *(tested: `test_setup_env` runs randomize and init-decoy from the setup environment.)*
 
-Later maintenance from the setup environment: `pd open --config pd.toml --rw [--offset N] --run`
-opens a side (the hidden side with `--offset` set to its start sector) and mounts its roots.
+Later maintenance from the setup environment:
+* `pd open --config pd.toml --rw [--offset N] --run` opens a side (the hidden side with `--offset` set
+  to its start sector) and mounts its roots.
+* `pd rekey --config pd.toml [--offset N] [--new-salt S]` changes a side's password and/or the salt.
+  With a new salt, rekey both sides, put the salt in `pd.toml`, and build a new boot USB.
+* `pd init-decoy --force --hidden-offset N` re-creates the decoy (its data is lost) while keeping the
+  hidden side; `--force --no-hidden` if there is none.
 
 ## 5. Install the OSes
 

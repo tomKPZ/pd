@@ -20,7 +20,8 @@ order: [README.md](README.md) → [docs/design.md](docs/design.md) →
 
 1. **Nothing on the USB or in the decoy refers to the hidden side.** No hidden-specific code paths,
    strings, files, or comments in anything that ends up on the USB or in the decoy's plain volume or OS.
-   The only hidden-specific value is the offset in the user's head.
+   The only hidden-specific value is the offset the user remembers (computable from the decoy's layout,
+   so not secret; it just mustn't be written down anywhere pd puts files).
 2. **No discard reaches the disk, and the pool sees discards only at shutdown.** dm-crypt runs
    without `allow_discards`; filesystems are mounted `nodiscard`; pools use `--discards=nopassdown`;
    the only trim is one `fstrim` at shutdown. Discards on the disk break deniability, and discards

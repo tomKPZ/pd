@@ -205,9 +205,11 @@ could map out every block written since setup.)
 * **The hidden data region never covers the decoy's plain volume or the zero header.** Even if the
   hidden side overflows, it can't break the decoy's ability to boot. A decoy that fails to boot would be
   suspicious in itself.
-* **Memorable offset** (`memorable_offset = true`, off by default). Round the hidden plain volume's start
-  down to a multiple of 10⁶ sectors (at most about 488 MiB of slack). Then you memorize "1953 million"
-  instead of a random 10-digit number.
+* **Memorable offset** (`memorable_offset`, on by default). The hidden plain volume's start is rounded
+  down to a multiple of 10⁶ sectors (at most about 488 MiB of slack), so you remember "1945 million"
+  instead of a random 10-digit number. This costs nothing in security: the offset is computable from
+  the decoy's layout anyway, and what hides the hidden side is that it's indistinguishable from the
+  random fill ([threat-model.md](threat-model.md#a2-coercer-in-scope-the-main-design-target)).
 
 v1 differs: the hidden plain volume is at [D − 256 MiB, D − 1 MiB), and the hidden data region is
 [0, D − 256 MiB), which covers the decoy's plain volume. The decoy pool's metadata sits at the front,
@@ -230,8 +232,10 @@ because v1 creates the pool with one data extent and then extends it.
 * **Passwords must differ.** Setup enforces this, and checks that the two passwords don't derive the
   same key. (v1 instead appended a fixed suffix `a` to the salt for the hidden side. The
   suffix is public, so it added nothing.)
-* **Changing a password** means re-creating that side's 255 MiB plain volume under the new key and
-  copying its contents back. `data.key` and the data region stay as they are.
+* **Changing a password** (`pd rekey`) re-creates that side's 255 MiB plain volume under the new key
+  with the same contents (held in RAM, then compared after writing). `data.key` and the data region
+  stay as they are. `pd rekey --new-salt` changes the salt the same way; both sides and the USB then
+  need it.
 * **Why not LUKS.** v1 kept a detached LUKS2 header in the plain volume, using Argon2 output bytes
   64–511 as the keyslot passphrase. The motivation was reencryption and FIDO2, but neither was ever used.
   A coerced examiner walks the whole boot chain, so every layer has to be explainable, and a raw key file
@@ -477,7 +481,12 @@ Each side can hold several OSes in the same VG (e.g. Arch and NixOS).
   shell with each system's root at `$PD_ROOT/<system>`; the OS is installed with the distro's own tools
   ([install.md](install.md)).
 * **Commands:** `pd salt`, `pd randomize`, `pd init-decoy`, `pd init-hidden`, `pd open --rw`,
-  `pd usb`, `pd install-cpio`, `pd migrate-v1` (`python3 -m pd --help`).
+  `pd rekey`, `pd usb`, `pd install-cpio`, `pd migrate-v1` (`python3 -m pd --help`).
+* **Re-initializing a decoy** is refused if the decoy password already opens a boot volume. With
+  `--force`, `init-decoy` needs `--no-hidden` or `--hidden-offset` (and the hidden password); with a
+  hidden side, the new decoy pool's metadata goes at the front instead of stock placement (which would
+  put `tmeta` at the end, possibly on a v1 hidden boot volume), and the layout is checked against the
+  hidden side before the data region is written. The disk is never re-randomized.
 * **The UKI records nothing about the build host:** `pd usb` passes a neutral `--os-release`
   (ukify otherwise embeds the host's `/usr/lib/os-release`).
 * **Building the USB.** `pd usb` combines the Nix-built UKI template with a small per-install cpio (salt
@@ -552,6 +561,8 @@ go to another pd setup; never `dd` the disk.
   | `test_churn` | btrfs and ext4 pool footprint under churn, with and without a shutdown trim |
   | `test_luks_equiv` | a v1 LUKS2 data region reads identically through plain dm-crypt with its volume key |
   | `test_migrate` | a v1-format disk migrated with `pd migrate-v1` boots both sides with v2 |
+  | `test_rekey` | new passwords and a new salt on both sides; both boot with a new USB, the old password fails |
+  | `test_reinit` | re-initializing the decoy is refused without `--force`; with the hidden offset, both sides still boot |
 
 ---
 
@@ -629,7 +640,6 @@ Decisions made while implementing v2:
 
 ## 14. Open questions
 
-* Memorable offset (§3): make it the default?
 * Decoy footprint creep without the shutdown trim (§2.3): a documented limitation rather than capping
   the decoy's thin LVs.
 * Argon2 defaults: keep t=14, m=256 MiB, p=8, or raise memory?

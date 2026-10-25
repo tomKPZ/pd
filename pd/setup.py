@@ -187,20 +187,23 @@ def roots_mounted(cfg: Config, base: pathlib.Path):
         yield base
 
 
-def create_lvm(dev: str, cfg: Config, *, hidden: bool, disk_bytes: int) -> None:
+def create_lvm(dev: str, cfg: Config, *, hidden: bool, disk_bytes: int,
+               front_metadata: bool | None = None) -> None:
     try:
-        _create_lvm(dev, cfg, hidden=hidden, disk_bytes=disk_bytes)
+        _create_lvm(dev, cfg, hidden=hidden, disk_bytes=disk_bytes,
+                    front_metadata=hidden if front_metadata is None else front_metadata)
     except BaseException:
         # Deactivate whatever was created, so the crypt mapping can close.
         lvm("vgchange", "-an", cfg.vg, check=False)
         raise
 
 
-def _create_lvm(dev: str, cfg: Config, *, hidden: bool, disk_bytes: int) -> None:
+def _create_lvm(dev: str, cfg: Config, *, hidden: bool, disk_bytes: int,
+                front_metadata: bool) -> None:
     lvm("pvcreate", "-qq", dev)
     lvm("vgcreate", "-qq", cfg.vg, dev)
     lvm("lvcreate", "-qq", "-L", f"{cfg.swap_size}b", "-n", "swap", cfg.vg)
-    if hidden:
+    if front_metadata:
         # Create the pool with one extent, then extend it: this puts tmeta
         # and pmspare at the front of the PV, far from where the two sides
         # can meet.  (Stock placement would put them at the frontier.)
@@ -318,17 +321,62 @@ def set_hostname(cfg: Config) -> None:
         cmd("hostname", cfg.hostname)
 
 
-def init_decoy(cfg: Config, password: bytes, run=None) -> None:
+def boot_volume_exists(disk: str, offset: int, key: bytes) -> bool:
+    try:
+        with boot_volume(disk, offset, key, create=False) as mnt:
+            return (mnt / "data.key").exists()
+    except subprocess.CalledProcessError:
+        return False
+
+
+def read_hidden_layout(cfg: Config, offset: int, password: bytes) -> L.HiddenLayout:
+    """The layout of an existing hidden side, from its boot volume."""
+    key = argon2(password, cfg.salt, cfg.argon2)
+    try:
+        with boot_volume(cfg.disk, offset, key, create=False) as mnt:
+            table = (mnt / "table.txt").read_text()
+    except subprocess.CalledProcessError:
+        raise RuntimeError("the hidden password doesn't open a boot volume at that offset")
+    lo, hi = L.table_physical_range(table)
+    return L.HiddenLayout(plain_offset=offset, data_start=lo, data_end=hi)
+
+
+def init_decoy(cfg: Config, password: bytes, run=None, *, force: bool = False,
+               hidden: tuple[int, bytes] | str | None = None) -> None:
+    """Create the decoy side.
+
+    Re-initializing a decoy (its password already opens a boot volume)
+    requires `force`, and then `hidden` must say whether a hidden side exists:
+    "none", or (offset in bytes, hidden password).  With a hidden side, the
+    decoy pool's metadata goes at the front (not stock placement, which puts
+    tmeta at the end of the disk, possibly on the hidden boot volume), and
+    the new layout is checked against the hidden side before anything is
+    written to the data region.  The disk is never re-randomized.
+    """
     set_hostname(cfg)
     disk = cfg.disk
     d = check_disk(disk)
     key = argon2(password, cfg.salt, cfg.argon2)
+    if not force and boot_volume_exists(disk, L.DECOY_PLAIN_OFFSET, key):
+        raise RuntimeError(
+            "this disk already has a decoy side with that password.  To re-create it, pass --force "
+            "and either --no-hidden or --hidden-offset (the hidden password is then checked).")
+    if force and hidden is None:
+        raise RuntimeError("--force needs --no-hidden or --hidden-offset")
+    hl = None
+    if isinstance(hidden, tuple):
+        offset, hidden_password = hidden
+        if hidden_password == password:
+            raise RuntimeError("the decoy password must differ from the hidden password")
+        hl = read_hidden_layout(cfg, offset, hidden_password)
     data_key = os.urandom(64)
     table = L.linear_table(L.DATA_START, d)
     with boot_volume(disk, L.DECOY_PLAIN_OFFSET, key, create=True) as mnt:
         write_boot_volume(mnt, cfg, data_key, table)
     with data_region(disk, table, data_key, readonly=False) as dev:
-        create_lvm(dev, cfg, hidden=False, disk_bytes=d)
+        create_lvm(dev, cfg, hidden=False, disk_bytes=d, front_metadata=hl is not None)
+        if hl is not None:
+            check_no_overlap(lvm_segments(cfg.vg), pv_data_offset(dev), hl)
         with vg_active(cfg.vg):
             if run:
                 with mountpoint("mnt-") as base, roots_mounted(cfg, base):

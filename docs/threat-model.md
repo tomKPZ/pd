@@ -32,8 +32,14 @@ What they see is a complete, ordinary-looking system:
 * The random data in free space is explained by the pre-randomization careful users do before
   encrypting a disk.
 * No file, script, log, or metadata in the decoy or on the USB refers to a hidden system. The hidden
-  system's boot logic lives only in the hidden plain volume. The only hidden-specific value, the offset,
-  lives in the user's head.
+  system's boot logic lives only in the hidden plain volume.
+
+**The hidden offset is not a secret.** Someone holding the decoy can compute where a hidden boot volume
+would sit: just below the decoy pool's `tmeta` (v1: at D − 256 MiB). The offset is kept off the USB so
+that nothing there *points* at a hidden side, not because it's hard to guess. What protects the hidden
+side is that, without the hidden password, its boot volume and data are indistinguishable from the
+random fill around them. An adversary who suspects pd can find the spot, but can't show anything is
+there.
 
 > [!WARNING]
 > **This repository is public.** An adversary who recognizes the USB's scripts as pd knows a hidden
@@ -67,7 +73,7 @@ What they see is a complete, ordinary-looking system:
 | Leftover traces on the machine that ran setup | Run setup only from the RAM-only setup UKI ([install.md](install.md)). Wipe the setup stick afterwards: it holds `pd.toml`. |
 | LVM metadata history in the decoy | v2 creates the decoy with stock commands and names ([design.md §6.1](design.md#61-decoy-stock-lvm)). A v1 decoy's history shows pd's unusual commands. |
 | Filesystem errors in the decoy | If the hidden side ever overwrote decoy blocks, the decoy would show checksum errors. Prevented by the hidden cap and the frontier monitor. |
-| A written-down hidden offset | Never write it down near the machine, on the USB, or in the decoy. |
+| A written-down hidden offset | Not a secret in itself, but a note of it next to the machine is a pointer saying "there is a hidden side". Keep it out of the decoy, off the USB, and away from the machine. |
 
 ## Operational rules
 
@@ -76,7 +82,7 @@ What they see is a complete, ordinary-looking system:
 3. Watch the space. The pool's usage (`lvs`) is what counts, not `df`; the frontier monitor reports the
    gap on every hidden boot. Keep it wide.
 4. Run setup only in throwaway environments.
-5. Keep the hidden offset in your head.
+5. Remember the hidden offset rather than writing it near the machine (by default it's a round number).
 6. Use different decoy and hidden passwords (setup enforces this).
 7. Don't enable discards beyond the shutdown trim: no `discard` mount option, no `fstrim` timer, and
    never `allow_discards` on dm-crypt.

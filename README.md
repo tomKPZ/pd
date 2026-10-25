@@ -36,8 +36,8 @@ goal is to avoid that question altogether.
 * **Booting the decoy:** boot the USB and type the decoy password.
 * **Booting the hidden system:** press Enter at the password prompt to fall into the "recovery" shell,
   change one number with a one-line `sed`, re-run the boot script, and type the hidden password.
-  Nothing on the USB refers to the hidden system. The only hidden-specific information is the one number
-  you keep in your head.
+  Nothing on the USB refers to the hidden system; you remember the number. (It isn't a secret: what hides
+  the hidden system is that, without its password, it's indistinguishable from the random fill.)
 * The boot USB runs a small Linux environment that unlocks the chosen side and `kexec`s into that
   side's own kernel. The decoy and hidden systems are separated by a full OS boundary, so shell
   history, caches, and logs on one side never contain anything from the other.

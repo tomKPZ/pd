@@ -64,6 +64,14 @@ def main(argv=None) -> int:
     o.add_argument("--password-stdin", action="store_true")
     o.add_argument("--run", nargs="?", const="")
 
+    k = sub.add_parser("rekey", help="change a side's password and/or the salt")
+    k.add_argument("--config", required=True)
+    k.add_argument("--offset", type=int, default=None,
+                   help="boot volume start sector (default: the decoy's)")
+    k.add_argument("--new-salt", default=None,
+                   help="re-key under this salt (rekey both sides, then build a new USB)")
+    k.add_argument("--password-stdin", action="store_true")
+
     m = sub.add_parser("migrate-v1", help="convert a v1 install to v2 in place")
     m.add_argument("--config", required=True, help="v2 config (new salt)")
     m.add_argument("--v1-salt", required=True)
@@ -72,6 +80,14 @@ def main(argv=None) -> int:
     m.add_argument("--v1-argon2", default=None,
                    help="v1 Argon2 parameters t,m_log2,p (default 14,18,8)")
     m.add_argument("--password-stdin", action="store_true")
+
+    d = sub.choices["init-decoy"]
+    d.add_argument("--force", action="store_true",
+                   help="re-create an existing decoy (never re-randomizes the disk)")
+    g = d.add_mutually_exclusive_group()
+    g.add_argument("--no-hidden", action="store_true", help="with --force: there is no hidden side")
+    g.add_argument("--hidden-offset", type=int, default=None,
+                   help="with --force: the hidden boot volume's start sector (asks for its password)")
 
     u = sub.add_parser("usb", help="build the boot UKI")
     u.add_argument("--config", required=True)
@@ -103,6 +119,16 @@ def main(argv=None) -> int:
         setup.randomize(cfg.disk)
     elif args.command in ("init-decoy", "init-hidden") and not cfg.systems:
         raise SystemExit("config needs at least one [[systems]] entry")
+    elif args.command == "rekey":
+        from pd import rekey
+        if args.new_salt:
+            Config(disk=cfg.disk, salt=args.new_salt).check_salt()
+        old, new = read_passwords(args, ["Current", "New"])
+        rekey.rekey(cfg, rekey.default_offset(cfg, args.offset), old, new, args.new_salt)
+        print("Re-keyed.")
+        if args.new_salt:
+            print("Re-key the other side with the same --new-salt, put the new salt in the config,")
+            print("and build a new boot USB.")
     elif args.command == "migrate-v1":
         from pd import migrate
         from pd.util import Argon2Params
@@ -117,8 +143,13 @@ def main(argv=None) -> int:
         print("Migrated.  Install the v2 target hook in every OS, then boot with a v2 USB.")
     if args.command == "init-decoy":
         from pd import setup
-        (pw,) = read_passwords(args, ["Decoy"])
-        setup.init_decoy(cfg, pw, runner(args))
+        if args.hidden_offset is not None:
+            pw, hpw = read_passwords(args, ["Decoy", "Hidden"])
+            hidden = (args.hidden_offset * L.SECTOR, hpw)
+        else:
+            (pw,) = read_passwords(args, ["Decoy"])
+            hidden = "none" if args.no_hidden else None
+        setup.init_decoy(cfg, pw, runner(args), force=args.force, hidden=hidden)
     elif args.command == "init-hidden":
         from pd import setup
         decoy, hidden = read_passwords(args, ["Decoy", "Hidden"])
