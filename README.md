@@ -24,8 +24,8 @@ goal is to avoid that question altogether.
  |000| decoy plain  | decoy data: grows →        (random-looking free space)   ← grows: hidden data | hidden plain | decoy pool metadata |
 ```
 
-* The whole disk is first filled with random data. Discards (TRIM) are never passed down, so
-  regions that hold data look the same as regions that never did.
+* The whole disk is first filled with random data. Discards (TRIM) never reach the disk, so regions
+  that hold data look the same as regions that never did.
 * **dm-thin allocates physical blocks sequentially.** The decoy's thin pool sits on the disk normally,
   so it fills from the front. The hidden system's thin pool sits on a *reversed* view of the disk
   (built with a dm-linear table), so it fills from the back. Each side looks like an encrypted volume
@@ -49,7 +49,7 @@ The details are in [docs/design.md](docs/design.md).
 | | |
 |---|---|
 | **v1** (the current code: `pd.py`, `early.sh`, `late.sh`, …) | Works, including dual-booting Arch and NixOS on one side. Needs root, has hard-coded config, and builds with the host's dracut and kernel. Documented as-built in [docs/v1.md](docs/v1.md). |
-| **v2** (in progress on branch `v2`) | Nix-pinned static build, minimal boot USB, LUKS dropped, rootless QEMU test suite, setup in throwaway environments. Specified in [docs/design.md](docs/design.md); progress tracked in [docs/roadmap.md](docs/roadmap.md). |
+| **v2** (branch `v2`) | Complete and tested end to end in QEMU; not yet used on real hardware. Nix-pinned static build, minimal boot USB, LUKS dropped, read-only boot environment, frontier monitor, RAM-only setup environment, NixOS module and Arch hook, migration from v1, rootless QEMU test suite. See [docs/design.md](docs/design.md) and [docs/roadmap.md](docs/roadmap.md). |
 
 > [!WARNING]
 > This is a research project. **The repository is public**, so its boot scripts are recognizable. An
@@ -61,6 +61,7 @@ The details are in [docs/design.md](docs/design.md).
 | Doc | Contents |
 |---|---|
 | [docs/design.md](docs/design.md) | v2 design, the reasoning behind every decision, decision log |
+| [docs/install.md](docs/install.md) | Building, configuring, setting up a disk, installing Arch and NixOS |
 | [docs/threat-model.md](docs/threat-model.md) | Adversaries, guarantees, what is out of scope, operational rules |
 | [docs/booting.md](docs/booting.md) | Decoy boot, hidden boot, boot menus, recovery |
 | [docs/v1.md](docs/v1.md) | Exact as-built description of v1 (what deployed installs run) |
@@ -71,32 +72,16 @@ The details are in [docs/design.md](docs/design.md).
 
 ## Quick start
 
-v2 works end to end in QEMU, but hasn't been used on real hardware yet. The workflow:
+[docs/install.md](docs/install.md) has the full procedure. In short:
 
-1. Build: `nix build "path:$PWD#testenv"` (pinned kernel, static tools, boot initrd, UKI pieces).
-2. Write a config (`pd salt` prints a random salt):
-   ```toml
-   disk = "/dev/nvme0n1"
-   salt = "<from pd salt>"
-   vg = "sysvg"
-   [[systems]]
-   name = "nixos"
-   lv = "root"
-   kernel = "/boot/default/kernel"
-   initrd = "/boot/default/initrd"
-   cmdline = ""
+1. Build: `nix build "path:$PWD#setupUki" --out-link setup.efi` (RAM-only setup environment) and
+   `nix build "path:$PWD#testenv" --out-link env` (boot environment pieces).
+2. Write a `pd.toml` (disk, salt from `pd salt`, systems, optional volumes).
+3. Build the boot USB: `python3 -m pd usb --config pd.toml --env env --output BOOTX64.EFI`.
+4. Boot the target machine from the setup UKI and run `pd randomize`, `pd init-decoy --run` (install the
+   decoy OSes), and `pd init-hidden --run` (install the hidden OSes; memorize the printed offset).
+5. Boot from the boot USB ([docs/booting.md](docs/booting.md)).
 
-   [[volumes]]          # optional extra thin LVs
-   name = "data"
-   fs = "ext4"          # or "btrfs" (default)
-   ```
-3. In a throwaway environment (live ISO) with pd and its tools:
-   `pd randomize --config pd.toml`, then `pd init-decoy --config pd.toml --run` and install the decoy
-   OS into the mounted roots, then `pd init-hidden --config pd.toml --run` and install the hidden OS.
-   Memorize the printed hidden-boot command.
-4. `pd usb --config pd.toml --env .testenv --output BOOTX64.EFI`, and copy it to `EFI/BOOT/` on the
-   USB stick's ESP.
-
-NixOS systems import `target/nixos/pd.nix` and set `pd.enable = true`. See
-[docs/booting.md](docs/booting.md) for booting. v1 is configured by editing the constants at the top of
-`v1/pd.py` and must be run as root ([docs/v1.md](docs/v1.md)).
+Tests: `python3 -m unittest discover -s tests -t .` (about 15 minutes, needs KVM; see
+[AGENTS.md](AGENTS.md)). v1 is configured by editing the constants at the top of `v1/pd.py` and must be
+run as root ([docs/v1.md](docs/v1.md)).

@@ -18,6 +18,8 @@ let
       lvm2.bin
       thin-provisioning-tools
       btrfs-progs
+      e2fsprogs
+      dosfstools
       util-linux
       coreutils
       findutils
@@ -31,6 +33,25 @@ let
       procps
       less
       pciutils
+      # Installing the OSes (both need a wired network; see pd-net).
+      pacman
+      arch-install-scripts
+      nix
+      nixos-install-tools
+      gnutar
+      iproute2
+      (writeShellScriptBin "pd-net" ''
+        # Bring up wired networking with DHCP (QEMU, most wired NICs).
+        modprobe -q af_packet 2>/dev/null
+        for dev in /sys/class/net/*; do
+          dev=''${dev##*/}
+          [ "$dev" = lo ] && continue
+          ip link set "$dev" up
+          /bin/udhcpc -q -n -i "$dev" -s ${udhcpcScript} && exit 0
+        done
+        echo "no DHCP lease on any interface" >&2
+        exit 1
+      '')
       (writeShellScriptBin "pd" ''
         export PYTHONPATH=${pdSrc} PD_PLAIN_TREE=${plainTree}
         exec ${python3Minimal}/bin/python3 -m pd "$@"
@@ -38,6 +59,19 @@ let
     ];
     pathsToLink = [ "/bin" "/sbin" "/share" ];
   };
+
+  udhcpcScript = pkgs.writeScript "udhcpc.script" ''
+    #!/bin/sh
+    case "$1" in
+    bound|renew)
+      /bin/ip addr flush dev "$interface"
+      /bin/ip addr add "$ip/''${mask:-24}" dev "$interface"
+      for r in $router; do /bin/ip route add default via "$r" dev "$interface"; break; done
+      : > /etc/resolv.conf
+      for d in $dns; do echo "nameserver $d" >> /etc/resolv.conf; done
+      ;;
+    esac
+  '';
 
   lvmConf = pkgs.writeText "lvm.conf" ''
     devices {
@@ -67,7 +101,8 @@ let
     mount -t sysfs sysfs /sys
     mount -t devtmpfs devtmpfs /dev
     ln -s /proc/self/fd /dev/fd
-    mkdir -p /dev/pts /run /tmp /etc/lvm /mnt
+    ln -s /proc/self/fd/0 /dev/stdin; ln -s /proc/self/fd/1 /dev/stdout; ln -s /proc/self/fd/2 /dev/stderr
+    mkdir -p /dev/pts /dev/shm /run /tmp /etc/lvm /mnt
     mount -t devpts devpts /dev/pts
     mount -t tmpfs tmpfs /run
     mount -t tmpfs tmpfs /tmp
@@ -82,7 +117,14 @@ let
       sleep 0.5
     done
     hostname localhost
+    # Register the store paths shipped in this initrd, for nix and nixos-install.
+    ${pkgs.nix}/bin/nix-store --load-db < /etc/nix-registration
     export PATH=${env}/bin:${env}/sbin:/bin HOME=/root TERM=linux LVM_SUPPRESS_FD_WARNINGS=1
+    export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
+    export PD_SRC=${pdSrc}   # pd's target/ files, for installing OSes
+    export NIX_CONFIG="experimental-features = nix-command flakes
+    build-users-group =
+    sandbox = false"
     mkdir -p /root
     cat <<'EOF'
 
@@ -92,8 +134,9 @@ let
       pd randomize   --config pd.toml      fill the disk with random data
       pd init-decoy  --config pd.toml --run
       pd init-hidden --config pd.toml --run
+      pd-net                               wired network (DHCP), for installing OSes
 
-    See docs/design.md section 9.  Power off when done (poweroff -f).
+    See docs/install.md.  Power off when done (poweroff -f).
 
     EOF
     cd /root
@@ -101,7 +144,7 @@ let
     poweroff -f
   '';
 
-  closure = pkgs.closureInfo { rootPaths = [ env ]; };
+  closure = pkgs.closureInfo { rootPaths = [ env pkgs.cacert udhcpcScript ]; };
 
   initrd = pkgs.runCommand "pd-setup-initrd.cpio.zst" {
     nativeBuildInputs = [ pkgs.cpio pkgs.zstd ];
@@ -119,6 +162,7 @@ let
     done
     install -m755 ${init} $root/init
     install -Dm644 ${lvmConf} $root/etc/lvm/lvm.conf
+    install -Dm644 ${closure}/registration $root/etc/nix-registration
     chmod -R u+w $root
     (cd $root && find . -print0 | sort -z |
       cpio --null -o -H newc --reproducible --owner=0:0 --quiet) | zstd -10 -T0 -q >$out

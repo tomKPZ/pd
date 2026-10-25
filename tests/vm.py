@@ -100,7 +100,7 @@ class BootVM:
 
     def __init__(self, env: pathlib.Path, initrds: list[pathlib.Path], disks, cmdline: str = "",
                  memory: str = "2G", interface: str = "virtio", log=None, uefi: dict | None = None,
-                 readonly_disks: bool = False):
+                 readonly_disks: bool = False, network: bool = False):
         self.env = env
         if uefi:
             args = _qemu_base(memory) + [
@@ -115,6 +115,8 @@ class BootVM:
                 "-kernel", str(env / "bzImage"), "-initrd", str(initrd),
                 "-append", f"console=ttyS0 panic=-1 init_on_free=1 {cmdline}".strip(),
             ] + _disk_args(disks, interface, readonly_disks)
+        if network:
+            args += ["-nic", "user,model=virtio-net-pci"]
         self.child = pexpect.spawn(args[0], args[1:], timeout=180, encoding="utf-8",
                                    codec_errors="replace")
         # Log only what the guest prints, not what the test types.

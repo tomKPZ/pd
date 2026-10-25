@@ -188,6 +188,15 @@ def roots_mounted(cfg: Config, base: pathlib.Path):
 
 
 def create_lvm(dev: str, cfg: Config, *, hidden: bool, disk_bytes: int) -> None:
+    try:
+        _create_lvm(dev, cfg, hidden=hidden, disk_bytes=disk_bytes)
+    except BaseException:
+        # Deactivate whatever was created, so the crypt mapping can close.
+        lvm("vgchange", "-an", cfg.vg, check=False)
+        raise
+
+
+def _create_lvm(dev: str, cfg: Config, *, hidden: bool, disk_bytes: int) -> None:
     lvm("pvcreate", "-qq", dev)
     lvm("vgcreate", "-qq", cfg.vg, dev)
     lvm("lvcreate", "-qq", "-L", f"{cfg.swap_size}b", "-n", "swap", cfg.vg)

@@ -60,10 +60,11 @@ What they see is a complete, ordinary-looking system:
 |---|---|
 | pd's scripts on the USB | Recognizable now that the repo is public (see A2). |
 | No TRIM on an SSD | Common advice for encrypted SSDs; dm-crypt disables discards by default because they leak which blocks are in use. |
+| A shutdown `fstrim` unit in the decoy | An ordinary way to reclaim thin pool space; the pool's `nopassdown` mode is a documented LVM setting. |
 | A barely used decoy | Use the decoy regularly, with realistic data. A decoy with no activity for months, on a machine that is clearly used, is suspicious. |
 | SMART counters (power-on hours, power cycles, data written) exceed what the decoy's logs explain | "I reinstalled the OS" explains totals from before the decoy's install date. Keep that date plausible. |
 | Network-side evidence (DHCP leases, Wi-Fi logs, account activity) from times the decoy says the machine was off | Outside pd's control; be aware of it. |
-| Leftover traces on the machine that ran setup | Run setup only in throwaway environments ([design.md §9](design.md#9-setup)). |
+| Leftover traces on the machine that ran setup | Run setup only from the RAM-only setup UKI ([install.md](install.md)). Wipe the setup stick afterwards: it holds `pd.toml`. |
 | LVM metadata history in the decoy | v2 creates the decoy with stock commands and names ([design.md §6.1](design.md#61-decoy-stock-lvm)). A v1 decoy's history shows pd's unusual commands. |
 | Filesystem errors in the decoy | If the hidden side ever overwrote decoy blocks, the decoy would show checksum errors. Prevented by the hidden cap and the frontier monitor. |
 | A written-down hidden offset | Never write it down near the machine, on the USB, or in the decoy. |
@@ -72,8 +73,8 @@ What they see is a complete, ordinary-looking system:
 
 1. Use the decoy regularly.
 2. Never image or clone the disk, and never use LVM thin snapshots. (btrfs snapshots are fine.)
-3. Watch the space. The pool's usage (`lvs`) is what counts, not `df`. Keep a wide gap between the two
-   sides.
+3. Watch the space. The pool's usage (`lvs`) is what counts, not `df`; the frontier monitor reports the
+   gap on every hidden boot. Keep it wide.
 4. Run setup only in throwaway environments.
 5. Keep the hidden offset in your head.
 6. Use different decoy and hidden passwords (setup enforces this).

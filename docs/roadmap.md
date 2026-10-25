@@ -14,7 +14,7 @@ Status values: ☐ not started · ◐ in progress · ☑ done.
 | ☑ | **M5 Layout and safety tests**: decoy stock-layout read-back, hidden placement, no overlaps, hidden caps, read-only boot environment, `nologreplay` after a simulated crash, NVRAM entry deletion, LUKS→plain equivalence | tests pass |
 | ☑ | **M6 Target integrations**: shared `hook.sh`, NixOS module (from `patches/`), Arch mkinitcpio hook; optional real NixOS/Arch installs in tests | NixOS end-to-end in QEMU, at least |
 | ☑ | **M7 Frontier monitor** (D15) | warns in a test where the decoy grows toward the hidden region |
-| ◐ | **M8 Docs pass**: bring all docs in line with what was built | — |
+| ☑ | **M8 Docs pass**: bring all docs in line with what was built; installation guide ([install.md](install.md)) | — |
 | ☑ | **M9 Migration tool** and guide for v1 installs ([migration.md](migration.md)) | migration test on a v1 image passes |
 
 Notes on status:
@@ -23,7 +23,8 @@ Notes on status:
   (`tests/visualize.py`, used by `tests/test_growth.py`).
 * D22: `pd usb --salt-from OLD.EFI` reads the salt back from an existing UKI.
 * M6: NixOS module tested with a real NixOS initrd; Arch hook tested with a real Arch install
-  (`PD_TEST_ARCH=1`, needs network).
+  (`PD_TEST_ARCH=1`, needs network). The setup UKI carries `pacstrap`, `nixos-install` and `pd-net`
+  for installing OSes; a full NixOS install isn't tested.
 * M7: the monitor also warns about decoy LVs inside the hidden region.
 
 Not done autonomously: anything involving real disks or USB sticks, pushing to the remote, external NixOS

@@ -132,15 +132,17 @@ collision):
 
 | Filesystem | No trim | `fstrim` + reactivation every 5 cycles |
 |---|---|---|
-| btrfs | 5.7 GiB after 60 cycles, 6.5 GiB (80% of the volume) after 200, still creeping | 4.2 GiB after the first session, settling at 3.6 GiB; flat for the last 30 of 60 cycles (peak usage ~3.9 GiB) |
-| ext4 | 7.7 GiB (the whole volume) within 15 cycles | 5.0 GiB after the first session, then flat |
+| btrfs | 5.7 GiB after 60 cycles, 6.5 GiB (80% of the volume) after 200, still creeping | 4.2 GiB after the first session, settling at 3.6–3.8 GiB, below peak usage (~4 GiB) |
+| ext4 | 7.7 GiB (the whole volume) within 15 cycles | 4.8–5.0 GiB after the first session, then flat |
+
+(Ranges are from separate runs.)
 
 * **btrfs** allocates data block groups first-fit from low device offsets and deletes empty block
   groups; with the shutdown trim its footprint tracks live data. It's the default, and root volumes
   must be btrfs (the boot path mounts their `@boot` and `@nix` subvolumes).
 * **ext4** deliberately spreads allocations and metadata across block groups (the Orlov allocator).
   With the shutdown trim it's bounded by live data plus each session's new writes, like btrfs; the
-  4.8 GiB above comes from writing about 5 GiB in a single session on an 8 GiB volume. Its metadata
+  ~5 GiB above comes from writing about 5 GiB in a single session on an 8 GiB volume. Its metadata
   stays wherever the first session put it. ext4 is a reasonable choice for data volumes holding large
   files that are rewritten in place: an in-place overwrite reuses mapped blocks, while btrfs
   copy-on-write allocates new ones (`chattr +C` gives btrfs the same behavior for chosen directories,
@@ -203,9 +205,9 @@ could map out every block written since setup.)
 * **The hidden data region never covers the decoy's plain volume or the zero header.** Even if the
   hidden side overflows, it can't break the decoy's ability to boot. A decoy that fails to boot would be
   suspicious in itself.
-* *(Proposed)* **Memorable offset.** Round the hidden plain volume's start down to a multiple of 10⁶
-  sectors (at most about 488 MiB of slack). Then you memorize "1953 million" instead of a random
-  10-digit number.
+* **Memorable offset** (`memorable_offset = true`, off by default). Round the hidden plain volume's start
+  down to a multiple of 10⁶ sectors (at most about 488 MiB of slack). Then you memorize "1953 million"
+  instead of a random 10-digit number.
 
 v1 differs: the hidden plain volume is at [D − 256 MiB, D − 1 MiB), and the hidden data region is
 [0, D − 256 MiB), which covers the decoy's plain volume. The decoy pool's metadata sits at the front,
@@ -291,7 +293,9 @@ Under the plain dm-crypt layer, each side has one LVM PV and one VG containing:
   ext4 `data` LV (§2.3 on choosing the filesystem). During setup they're mounted at
   `$PD_ROOT/volumes/<name>`.
 
-Mount options are `noatime,lazytime,nodiscard`; btrfs adds `ssd,autodefrag,compress=zstd:12`.
+The installed OSes' mount options are their own, except that every filesystem needs `nodiscard`
+(§2.3); [install.md](install.md) has examples. During setup, pd mounts the roots with
+`noatime,lazytime,nodiscard,compress=zstd:3`.
 
 ### 6.1 Decoy: stock LVM
 The decoy is created only with stock, ordinary commands:
@@ -325,8 +329,9 @@ Nobody sees the hidden VG, so its layout only has to be safe.
   the two sides could meet. Stock placement would put the hidden pool's metadata exactly at the collision
   frontier.
 * **Capped thin LVs.** Thin LVs are created with capped virtual sizes, e.g. 40% of the disk in total.
-  Given the no-discard invariant, the hidden side can then never occupy more than the sum of its virtual
-  sizes plus swap and metadata. That is a hard guarantee that it never reaches the decoy.
+  A thin LV never maps more than its virtual size, so the hidden side can never occupy more than the sum
+  of its virtual sizes plus swap and metadata, whatever its filesystems do. That is a hard guarantee
+  that it never reaches the decoy (the cap covers extra volumes too, rounded down to whole extents).
   * Growing is an occasional, manual, online step (`lvextend` + `btrfs filesystem resize`), ideally
     after checking the frontier monitor. Nothing happens at boot.
   * The cap is on the thin LVs, not the pool, so a full hidden filesystem gets a clean ENOSPC. A full
@@ -429,8 +434,9 @@ v1 differs: it has no `nologreplay`, and it activates LVs read-write on top of a
 
 ### 7.4 Target initrd hook
 One script, `target/hook.sh`, is shared by every target OS. NixOS runs it as a systemd initrd service
-(`target/nixos/pd.nix`, tested with a real NixOS initrd); Arch as a mkinitcpio hook (`target/arch/`,
-untested).
+(`target/nixos/pd.nix`, tested with a real NixOS initrd); Arch as a mkinitcpio hook for the busybox
+initramfs (`target/arch/`, tested with a real Arch install). Both integrations also install the
+shutdown trim (§2.3); the NixOS module has `pd.v1Compat` for migrating v1 installs.
 1. Wait for devices to settle.
 2. **Find the disk by trial.** For each disk, create the `table.txt` mapping on it and open plain
    dm-crypt with `data.key`. Keep the disk whose decrypted data region starts with an LVM label
@@ -456,8 +462,10 @@ Each side can hold several OSes in the same VG (e.g. Arch and NixOS).
 
 ## 9. Setup
 
-* **Throwaway environments only:** a Nix-built VM for tests, a live ISO for real installs. Running setup
-  on a daily-driver machine leaves traces of **both** sides:
+* **Throwaway environments only:** the tool VM for tests, and for real installs the RAM-only setup
+  UKI (`setupUki`: pd, LVM, cryptsetup, btrfs and ext4 tools, plus `pacstrap`, `nixos-install` and
+  `pd-net` for installing the OSes). Running setup on a daily-driver machine leaves traces of **both**
+  sides:
   * LVM writes copies of every VG it touches to `/etc/lvm/archive/` and `/etc/lvm/backup/`;
   * the journal records every filesystem UUID that gets mounted.
 
@@ -465,8 +473,11 @@ Each side can hold several OSes in the same VG (e.g. Arch and NixOS).
 * **Keys only travel through pipes or memory**, never temporary files.
 * **Order:** randomize the disk → zero the first MiB → create the decoy → read back the decoy's layout
   to find H → create the hidden side.
-* **pd's core stops at "this side's root is mounted at `/mnt`".** The OS is installed with the distro's
-  own tools, helped by optional recipes (`recipes/arch`, `recipes/nixos`).
+* **pd's core stops at "this side's roots are mounted".** `pd init-decoy/init-hidden --run` opens a
+  shell with each system's root at `$PD_ROOT/<system>`; the OS is installed with the distro's own tools
+  ([install.md](install.md)).
+* **Commands:** `pd salt`, `pd randomize`, `pd init-decoy`, `pd init-hidden`, `pd open --rw`,
+  `pd usb`, `pd install-cpio`, `pd migrate-v1` (`python3 -m pd --help`).
 * **The UKI records nothing about the build host:** `pd usb` passes a neutral `--os-release`
   (ukify otherwise embeds the host's `/usr/lib/os-release`).
 * **Building the USB.** `pd usb` combines the Nix-built UKI template with a small per-install cpio (salt
@@ -485,7 +496,8 @@ Nothing stops one side from overwriting the other if the two footprints together
 * **The decoy can't be capped.** It has to look like a whole-disk volume, and an ordinary setup wouldn't
   stop at an arbitrary point.
 * **The hidden side is capped** (§6.2).
-* **Footprints are high-water marks** (§2.3), not current usage.
+* **Footprints are high-water marks** (§2.3): with the shutdown trim they stay near live data plus
+  one session's writes; without it they only grow.
 * **An overwrite is visible.** If the hidden side ever overwrote decoy data, the decoy would show btrfs
   checksum errors, which is both damaging and suspicious.
 
@@ -515,9 +527,10 @@ go to another pd setup; never `dd` the disk.
   * the kernel and its module closure, the boot initrd, and the UKI pieces;
   * the tool VM (kernel + tiny initrd that mounts the host's `/nix/store` read-only over 9p, so tools
     aren't copied) and a fake target OS;
-  * a minimal NixOS system using `target/nixos/pd.nix`, for integration tests.
+  * a minimal NixOS system using `target/nixos/pd.nix`, for integration tests;
+  * the RAM-only setup UKI (`setupUki`).
 
-  Build with `nix build "path:$PWD#testenv"`. The `path:` form is needed because Nix's libgit2 can't
+  Build with `nix build "path:$PWD#testenv"` (and `#setupUki`). The `path:` form is needed because Nix's libgit2 can't
   read repositories using the reftable ref format.
 * **Test.** Tests run QEMU (KVM, OVMF) as an ordinary user against sparse image files. Setup runs as
   root inside the tool VM; nothing needs root on the host, and no device-mapper state is created there.
@@ -526,15 +539,19 @@ go to another pd setup; never `dd` the disk.
 
   | Test | Covers |
   |---|---|
-  | `test_layout`, `test_placement` | layout arithmetic, reversed tables, hidden placement and overlap checks (unit tests) |
+  | `test_layout`, `test_placement`, `test_usb`, `test_monitor_awk` | unit tests: layout arithmetic, reversed tables, hidden placement and overlap checks, salt read-back, the monitor's overlap detection |
   | `test_smoke` | the tool VM |
   | `test_e2e` | decoy boot, hidden boot via the recovery-shell `sed`, wrong password, password not echoed, read-only disk |
-  | `test_safety` | boot after a crash with a dirty btrfs log; hidden thin LV cap |
-  | `test_uefi` | the real UKI from a USB stick under OVMF; NVRAM entry and `BootOrder` cleanup |
+  | `test_safety` | boot after a crash with a dirty btrfs log; hidden cap over roots and volumes; fstrim shrinks the pool but never reaches the disk |
+  | `test_growth` | on an unrandomized disk, decoy writes at the front, hidden at the back, untouched gap between |
+  | `test_uefi` | the real UKI from a USB stick under OVMF; NVRAM entry and `BootOrder` cleanup; no build-host os-release |
+  | `test_setup_env` | setup run from the RAM-only setup environment, then a boot; with `PD_TEST_NET=1`, its networking |
   | `test_nixos` | a real NixOS initrd with `pd.nix` unlocks the disk and mounts `/sysroot` |
+  | `test_arch` | a real Arch install (pacstrap, `pd` mkinitcpio hook) boots through pd (`PD_TEST_ARCH=1`, needs network) |
   | `test_monitor` | frontier monitor report and warning; no hidden-only files in the decoy |
-  | `test_churn` | refusal of discards; btrfs and ext4 pool footprint under churn |
+  | `test_churn` | btrfs and ext4 pool footprint under churn, with and without a shutdown trim |
   | `test_luks_equiv` | a v1 LUKS2 data region reads identically through plain dm-crypt with its volume key |
+  | `test_migrate` | a v1-format disk migrated with `pd migrate-v1` boots both sides with v2 |
 
 ---
 
@@ -581,14 +598,14 @@ it.
 | D12 | early.sh uses `cryptsetup --offset/--size`; the hidden `sed` edits `PLAIN_OFFSET` | No dmsetup on the USB; shorter manual path | agreed |
 | D13 | Minimal USB: kernel, modules, busybox, argon2, cryptsetup | Reveals little without a password | agreed |
 | D14 | Delete `MOVE_PES` | Cosmetic; superseded by D19 | agreed |
-| D15 | Hidden-side frontier monitor | Prevents overwrites | agreed (roadmap) |
+| D15 | Hidden-side frontier monitor | Prevents overwrites | agreed |
 | D16 | Hidden thin LVs capped by virtual size | Hard bound on the hidden footprint | agreed |
 | D17 | Nix-pinned build; rootless QEMU tests | Reproducible; no host root or host dm state | agreed |
-| D18 | A churn test decides the `data` LV's filesystem | ext4 may not reuse addresses | agreed; result: ext4 is unsafe, v2 has no ext4 LV (D30) |
+| D18 | A churn test decides the `data` LV's filesystem | ext4 may not reuse addresses | agreed; result in §2.3 and D30 |
 | D19 | Decoy LVM is stock; the hidden side sits below the decoy's end-of-disk metadata, read back rather than assumed | Stock layout and stock history | agreed |
-| D20 | Decoy LVM history looks ordinary (stock commands, boot-time names, decoy hostname); no LVM archive or backup during setup | LVM metadata records commands, host, and device names | proposed |
+| D20 | Decoy LVM history looks ordinary (stock commands, boot-time names, decoy hostname); no LVM archive or backup during setup | LVM metadata records commands, host, and device names | agreed |
 | D21 | Boot-environment btrfs mounts use `rescue=nologreplay` | Booting after an unclean shutdown | agreed |
-| D22 | Per-install config outside the repo; salt read back from the USB | Keeps install values out of git and `/nix/store` | proposed |
+| D22 | Per-install config outside the repo; salt read back from the USB (`pd usb --salt-from`) | Keeps install values out of git and `/nix/store` | agreed |
 | D23 | Setup only in throwaway environments | The setup host would otherwise keep traces of both sides | agreed |
 | D24 | OS installation through optional recipes | Separation of concerns | agreed |
 | D25 | The target hook finds the disk by trial | There's no udev on the USB | agreed |
@@ -612,8 +629,7 @@ Decisions made while implementing v2:
 
 ## 14. Open questions
 
-* Memorable offset (§3): adopt it? (Implemented as the `memorable_offset` config option, off by
-  default.)
+* Memorable offset (§3): make it the default?
 * Decoy footprint creep without the shutdown trim (§2.3): a documented limitation rather than capping
   the decoy's thin LVs.
 * Argon2 defaults: keep t=14, m=256 MiB, p=8, or raise memory?

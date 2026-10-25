@@ -70,3 +70,13 @@ the information. Every decision was made by hand; none of it is accidental.
 * **"sync changes":** the working `late.sh` and `systems/` from a deployed decoy plain volume, plus a
   NixOS unlock hook migrated from `preLVMCommands` to a systemd initrd service (`patches/`).
 * **A design review produced the v2 design** ([design.md](design.md), decision log in §13).
+* **v2 was implemented on branch `v2` the same month**, test-first in QEMU. Things learned along the
+  way are in the decision log (D26–D35), notably:
+  * dm-thin can't run in a read-only table, so the boot environment maps thin LVs from `thin_dump`
+    output instead of activating the pool;
+  * a plain `ro` btrfs mount on a writable device still replays a dirty log, so v1's boot environment
+    writes to the disk after a crash;
+  * without discards, ext4 touches a whole thin volume and btrfs creeps slowly; a single `fstrim` at
+    shutdown (which v1 installs already used) keeps both near their live data;
+  * stock `lvcreate` puts the thin pool's `tmeta` at the end of the PV, which decides where the hidden
+    side goes.

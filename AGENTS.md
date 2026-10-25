@@ -3,14 +3,15 @@
 pd builds a plausible-deniability boot setup: one disk holding a decoy system and a hidden system, built
 from stock Linux pieces (dm-crypt, dm-thin, LVM, btrfs, a UKI that `kexec`s the chosen OS). Read in this
 order: [README.md](README.md) → [docs/design.md](docs/design.md) →
-[docs/threat-model.md](docs/threat-model.md). Then read [docs/v1.md](docs/v1.md) if you're touching the
-current code, or [docs/roadmap.md](docs/roadmap.md) for what's being built.
+[docs/threat-model.md](docs/threat-model.md) → [docs/install.md](docs/install.md). Read
+[docs/v1.md](docs/v1.md) before touching anything that deployed v1 installs depend on, and
+[docs/roadmap.md](docs/roadmap.md) for what's left.
 
 ## State of the repo
 
 * `main` holds v1. It works and is deployed. Its files are described in [docs/v1.md](docs/v1.md).
-* `v2` is the rewrite in progress. The target design is [docs/design.md](docs/design.md); progress is
-  tracked in [docs/roadmap.md](docs/roadmap.md).
+* `v2` holds the rewrite: complete and tested in QEMU, not yet used on real hardware. Its design is
+  [docs/design.md](docs/design.md); remaining ideas are in [docs/roadmap.md](docs/roadmap.md).
 * Deployed v1 systems depend on scripts stored on their disk, not in the repo, so changing repo files
   doesn't break them. Migrating it is a separate, deliberate step
   ([docs/migration.md](docs/migration.md)).
@@ -50,8 +51,11 @@ current code, or [docs/roadmap.md](docs/roadmap.md) for what's being built.
   `PD_TEST_DIR=/tmp/x PD_KEEP_TEST_DIR=1` (keep disk images and serial logs). `tests/debug_boot.py
   WORKDIR` boots a kept disk into the recovery shell and runs commands from stdin.
 * **Layout:** `boot/` (USB initrd scripts), `plain/` (boot-volume scripts; `plain/hidden/` is installed
-  only on the hidden side), `target/` (hooks for installed OSes), `pd/` (setup CLI), `nix/`, `tests/`,
-  `v1/` (the v1 code, for reference).
+  only on the hidden side), `target/` (hook, NixOS module, Arch hook and trim unit for installed OSes),
+  `pd/` (setup CLI), `nix/` (static tools, kernel modules, boot initrd, tool VM, setup UKI, fake target,
+  NixOS test system), `tests/`, `tools/` (`detect_shift.c`), `v1/` (the v1 code, for reference).
+* **Opt-in tests:** `PD_TEST_ARCH=1` (Arch install, downloads packages into `~/.cache/pd-tests`) and
+  `PD_TEST_NET=1` (setup environment networking) need internet access.
 * **Any design change** updates the decision log in [docs/design.md §13](docs/design.md#13-decision-log).
   Update milestone status in [docs/roadmap.md](docs/roadmap.md).
 * **Style:** 4-space indent ([.editorconfig](.editorconfig)). Shell scripts use `set -euo pipefail`.

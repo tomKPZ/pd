@@ -2,6 +2,7 @@
 environment with the target disk attached, run pd in its shell, then boot
 the disk through pd."""
 
+import os
 import secrets
 import subprocess
 import tarfile
@@ -34,7 +35,8 @@ class SetupEnv(unittest.TestCase):
 
         log = open(work / "setup-env.log", "w")
         self.addCleanup(log.close)
-        b = vm.BootVM(env, [env / "setup-initrd.cpio.zst"], [disk, payload], memory="4G", log=log)
+        b = vm.BootVM(env, [env / "setup-initrd.cpio.zst"], [disk, payload], memory="4G", log=log,
+                      network=bool(os.environ.get("PD_TEST_NET")))
         self.addCleanup(b.close)
         b.expect("pd setup environment", timeout=240)
         prompt = r"[#$] $"
@@ -47,6 +49,14 @@ class SetupEnv(unittest.TestCase):
             b.expect(prompt)
 
         run("mkdir payload && cd payload && tar -xf /dev/vdb && cd ..")
+        # The installers are present; nix knows its own store.
+        run("command -v pacstrap nixos-install nix && nix-store --verify-path $(readlink -f $(command -v pd))")
+        if os.environ.get("PD_TEST_NET"):
+            # Networking for installing OSes: DHCP, DNS, and TLS to an Arch mirror.
+            run("pd-net")
+            run("printf '[options]\\nArchitecture=x86_64\\nSigLevel=Never\\nDBPath=/tmp/pacdb\\n"
+                "[core]\\nServer=https://archive.archlinux.org/repos/2026/10/20/$repo/os/$arch\\n' "
+                "> /tmp/p.conf && mkdir -p /tmp/pacdb && pacman --config /tmp/p.conf -Sy", timeout=300)
         run("pd randomize --config payload/pd.toml")
         install = ("mkdir -p $PD_ROOT/fake/etc && cp /root/payload/vmlinuz $PD_ROOT/fake/boot/vmlinuz && "
                    "cp /root/payload/initrd $PD_ROOT/fake/boot/initrd && "

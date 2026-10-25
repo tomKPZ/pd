@@ -23,7 +23,9 @@ several seconds. That pause is expected.
    sed -i s/2048/<offset>/ /early_env.sh
    /early.sh
    ```
-4. At `Password:`, type the hidden password.
+4. At `Password:`, type the hidden password. Before handing over, the hidden side's frontier monitor
+   prints `Free space between the two sides: N MiB.`; if it warns (little space left, or a decoy volume
+   inside the hidden region), it waits for Enter.
 
 `<offset>` is the start sector of the hidden plain volume. Setup prints it once. Memorize it, and never
 write it on the USB or anywhere in the decoy.
@@ -45,16 +47,14 @@ The edits only change the in-RAM copy of the boot environment. The USB is never 
   * the offset was typed correctly (hidden boot only);
   * you typed the password for the US keyboard layout, which the boot environment uses.
 * **After an unclean shutdown**, v2's boot environment mounts btrfs with `rescue=nologreplay`, and the OS
-  replays its own log once it's running.
-  * v1 lacks this. Depending on the kernel, a v1 boot right after a crash either fails at the `@boot`
-    mount, or replays the log despite the read-only intent.
-  * If a v1 boot fails that way, mount the root read-write once from any environment that can open the
-    disk, to replay the log, then boot again.
+  replays its own log once it's running. (v1 lacks this; because it activates its LVs read-write, its
+  `ro` mount replays the log and writes to the disk; see [design.md §7.3](design.md#73-latesh-in-the-plain-volume).)
+* **The shutdown trim** is skipped after a crash; the next clean shutdown catches up.
 
 ## Rebuilding the USB
 
 The installed OSes update their own kernels; the USB never needs to know about it. Rebuild the USB only
 to update the boot environment itself.
 
-* **v2:** `pd usb` reads the salt back from the existing USB.
+* **v2:** `pd usb --salt-from OLD.EFI` takes the salt from the existing UKI ([install.md](install.md#3-build-the-boot-usb)).
 * **v1:** set `STATIC_SALT`/`SALT` to the original salt and rerun the UKI build ([v1.md](v1.md)).

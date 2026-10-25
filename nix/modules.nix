@@ -36,5 +36,5 @@
   "simpledrm" "efifb" "bochs"
 
   # Tests (virtio console, 9p shares)
-  "virtio-console" "9p" "9pnet-virtio" "virtio-rng" "virtio-net"
+  "virtio-console" "9p" "9pnet-virtio" "virtio-rng" "virtio-net" "af-packet"
 ]
