@@ -47,3 +47,4 @@ if __name__ == "__main__":
     print(render(m))
     for used, a, b in runs(m):
         print(f"{'used' if used else 'zero'} {a}-{b}")
+

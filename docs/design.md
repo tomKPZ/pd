@@ -127,12 +127,17 @@ So safety also depends on each filesystem preferring to reuse low addresses it h
   Orlov allocator). In the churn test (`tests/test_churn.py`: fill to 25%, delete half at random,
   repeat), an 8 GiB ext4 volume using about 1 GiB had touched 7741 MiB of the pool, essentially all of
   it, within 15 cycles. v1's `data` LV is ext4, so on v1 installs it can grow to the full disk.
-* **btrfs** allocates data block groups first-fit from low device offsets and deletes empty block
-  groups. In the same test, a btrfs volume peaking at about 4 GiB used had touched 5755 MiB of the pool
-  after 60 cycles (1.4× peak), with growth slowing. See §14 for the long-run result. `btrfs balance`
-  temporarily allocates new block groups and raises the high-water mark.
-* **So every filesystem on a pd thin LV is btrfs.** v2 creates no ext4 `data` LV; use a btrfs subvolume
-  instead.
+* **btrfs is much better, but not bounded by its peak usage (measured).** In the same test (about 1 GiB
+  written per cycle on an 8 GiB volume whose usage peaks near 4 GiB), the pool footprint grew in
+  block-group-sized steps: 3.7 GiB after 1 cycle, 5.1 GiB after 50, 5.4 GiB after 100, 6.3 GiB after
+  150, and 6.5 GiB (80% of the volume) after 200 cycles, i.e. after writing 25× the volume size. With
+  `nossd` it was slightly lower (6.1 GiB after 200). The growth slows but doesn't stop, so over a long
+  enough life a btrfs volume's footprint approaches its virtual size. `btrfs balance` allocates new
+  block groups and makes it worse.
+* **So every filesystem on a pd thin LV is btrfs,** and v2 creates no ext4 `data` LV. But the only hard
+  bound on a side's footprint is the total virtual size of its thin LVs. The hidden side is capped this
+  way (§6.2); the decoy's thin LVs span the whole pool, so the decoy is bounded only by the disk (see
+  §14).
 * **Thin snapshots** break the bound, because copy-on-write allocates new chunks for shared data. btrfs
   snapshots are fine.
 
@@ -577,6 +582,11 @@ Decisions made while implementing v2 (status "implemented": not yet reviewed by 
 
 * Memorable offset (§3): adopt it? (Implemented as the `memorable_offset` config option, off by
   default.)
-* btrfs long-run churn: does the footprint plateau? (200-cycle runs pending.)
+* **Cap the decoy too?** Measured btrfs footprints keep creeping toward the thin LV's virtual size
+  (§2.3), so a full-size decoy LV will eventually reach the hidden side however little it stores. The
+  pool must span the disk for plausibility, but a thin LV smaller than its pool is an ordinary setup
+  (room left for snapshots or other LVs). Giving the decoy's thin LVs a total virtual size of, say, 55%
+  of the disk and the hidden side 40% would make the two footprints provably disjoint. The cost is a
+  decoy filesystem that reports less than the disk's size.
 * Argon2 defaults: keep t=14, m=256 MiB, p=8, or raise memory?
 * Project name.

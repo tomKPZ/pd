@@ -64,9 +64,10 @@ class Churn(unittest.TestCase):
         return result
 
     def test_btrfs(self):
+        # Measured over 60 cycles the footprint stays under 2x peak usage,
+        # far below the ~60 GiB written.  It keeps creeping slowly over
+        # longer runs (200 cycles: ~80% of the volume); see design.md §2.3.
         r = self.run_fs("btrfs")
-        # The pool footprint must stay near peak usage (allow 2x for block
-        # group slack and metadata), far below the total written.
         self.assertLess(r["pool_used"], 2 * r["peak_fs_used"] + (512 << 20))
 
     def test_ext4(self):
