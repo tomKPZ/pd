@@ -29,12 +29,9 @@ Notes on status:
 Not done autonomously: anything involving real disks or USB sticks, pushing to the remote, external NixOS
 configuration repos, and running a migration.
 
-## Next
-
-* Try pd on real hardware: setup from `setupUki`, then decoy and hidden boots.
-
 ## Later / ideas
 
+* Try pd on real hardware: setup from `setupUki`, then decoy and hidden boots.
 * Investigate whether udev belongs in the boot UKI (`udevadm settle`, `/dev/disk/by-id`, dm/LVM
   rules, thin management): what it would cost in size and shipped rules, and what it would buy over
   the current polling and trial-by-disk approach.

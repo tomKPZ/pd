@@ -124,10 +124,12 @@ let
       cpio --null -o -H newc --reproducible --owner=0:0 --quiet) | zstd -10 -T0 -q >$out
   '';
 
+  osRelease = pkgs.writeText "os-release" "NAME=Linux\nID=linux\n";
+
   uki = cmdline: pkgs.runCommand "pd-setup.efi" { nativeBuildInputs = [ pkgs.systemdUkify ]; } ''
     ukify build --linux ${kernel}/bzImage --initrd ${initrd} \
       --stub ${pkgs.systemd}/lib/systemd/boot/efi/linuxx64.efi.stub \
-      --cmdline "${cmdline}" --output $out
+      --cmdline "${cmdline}" --os-release "@${osRelease}" --output $out
   '';
 in
 {

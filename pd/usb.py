@@ -74,6 +74,9 @@ def build_uki(cfg: Config, env: pathlib.Path, out: pathlib.Path, cmdline: str = 
             "--initrd", cpio,
             "--stub", env / "stub.efi",
             "--cmdline", cmdline,
+            # ukify defaults to the build host's /usr/lib/os-release, which
+            # would record the host OS on the USB.
+            "--os-release", "NAME=Linux\nID=linux\n",
             "--output", out)
     finally:
         os.unlink(cpio)

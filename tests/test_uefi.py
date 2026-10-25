@@ -2,6 +2,7 @@
 environment removes the firmware's boot entry for it from NVRAM."""
 
 import pathlib
+import re
 import shutil
 import subprocess
 import unittest
@@ -35,6 +36,14 @@ class Uefi(unittest.TestCase):
         fx = self.fx
         uki = fx.work / "BOOTX64.EFI"
         usb.build_uki(fx.cfg, fx.env, uki, cmdline="console=ttyS0 " + usb.BOOT_CMDLINE)
+        # The UKI must not record the build host's OS.
+        data = uki.read_bytes()
+        self.assertIn(b"NAME=Linux\nID=linux\n", data)
+        host = pathlib.Path("/usr/lib/os-release")
+        if host.exists():
+            m = re.search(r'^PRETTY_NAME="?([^"\n]+)', host.read_text(), re.M)
+            if m:
+                self.assertNotIn(m.group(1).encode(), data)
         esp = make_esp(fx.env, uki, fx.work / "esp.img")
         ovmf = fx.env / "ovmf" / "FV"
         vars_ = fx.work / "OVMF_VARS.fd"

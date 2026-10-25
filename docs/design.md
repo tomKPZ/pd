@@ -459,6 +459,8 @@ Each side can hold several OSes in the same VG (e.g. Arch and NixOS).
   to find H → create the hidden side.
 * **pd's core stops at "this side's root is mounted at `/mnt`".** The OS is installed with the distro's
   own tools, helped by optional recipes (`recipes/arch`, `recipes/nixos`).
+* **The UKI records nothing about the build host:** `pd usb` passes a neutral `--os-release`
+  (ukify otherwise embeds the host's `/usr/lib/os-release`).
 * **Building the USB.** `pd usb` combines the Nix-built UKI template with a small per-install cpio (salt
   and `early_env.sh`). A later rebuild, e.g. for a kernel update, reads the salt back from the existing
   USB (`pd usb --salt-from OLD.EFI`). Per-install values therefore never need to live in the repo or in `/nix/store`.
@@ -583,20 +585,20 @@ it.
 | D24 | OS installation through optional recipes | Separation of concerns | agreed |
 | D25 | The target hook finds the disk by trial | There's no udev on the USB | agreed |
 
-Decisions made while implementing v2 (status "implemented": not yet reviewed by the author):
+Decisions made while implementing v2:
 
 | # | Decision | Why | Status |
 |---|---|---|---|
-| D26 | The boot environment maps the root thin LV read-only from `thin_dump` output instead of activating the pool | dm-thin can't run in a read-only table; activating it read-write could write metadata | implemented |
-| D27 | NVRAM cleanup writes efivarfs directly from busybox | static efibootmgr doesn't build; one tool fewer on the USB | implemented |
-| D28 | An empty password goes straight to the recovery shell, skipping Argon2 | Faster hidden boot; a mistyped real password still takes the normal path | implemented |
-| D29 | Keys are passed to cryptsetup as files (pipe fds), never on stdin | Plain mode hashes stdin keys; the boot scripts read raw key files | implemented |
+| D26 | The boot environment maps the root thin LV read-only from `thin_dump` output instead of activating the pool | dm-thin can't run in a read-only table; activating it read-write could write metadata | agreed |
+| D27 | NVRAM cleanup writes efivarfs directly from busybox | static efibootmgr doesn't build; one tool fewer on the USB | agreed |
+| D28 | An empty password goes straight to the recovery shell, skipping Argon2 | Faster hidden boot; a mistyped real password still takes the normal path | agreed |
+| D29 | Keys are passed to cryptsetup as files (pipe fds), never on stdin | Plain mode hashes stdin keys; the boot scripts read raw key files | agreed |
 | D30 | Filesystems on pd thin LVs should be btrfs | Measured: ext4 touches the whole pool under churn without trim, and stays bounded by its first session with it (§2.3) | agreed |
-| D31 | Hidden-only features use a generic `hooks/` directory in the boot volume | Keeps hidden-specific code out of `late.sh`, which is identical on both sides | implemented |
-| D32 | Kernel modules in the boot initrd are uncompressed; GPU drivers omitted | busybox modprobe can't reliably load compressed modules; GPU firmware is over 1 GB | implemented |
-| D33 | Builds use `path:` flake references | Nix's libgit2 can't read reftable repositories | implemented |
-| D34 | Target OSes trim once at shutdown (NixOS `pd.trimOnShutdown`, default on; Arch unit in `target/arch/`); periodic fstrim disabled | Keeps footprints near live data (§2.3) | implemented |
-| D35 | A RAM-only setup UKI (`setupUki`) for running setup on real hardware | A throwaway environment with nothing to install | implemented |
+| D31 | Hidden-only features use a generic `hooks/` directory in the boot volume | Keeps hidden-specific code out of `late.sh`, which is identical on both sides | agreed |
+| D32 | Kernel modules in the boot initrd are uncompressed; GPU drivers omitted | busybox modprobe can't reliably load compressed modules; GPU firmware is over 1 GB | agreed |
+| D33 | Builds use `path:` flake references | Nix's libgit2 can't read reftable repositories | agreed |
+| D34 | Target OSes trim once at shutdown (NixOS `pd.trimOnShutdown`, default on; Arch unit in `target/arch/`); periodic fstrim disabled | Keeps footprints near live data (§2.3) | agreed |
+| D35 | A RAM-only setup UKI (`setupUki`) for running setup on real hardware | A throwaway environment with nothing to install | agreed |
 
 ---
 
