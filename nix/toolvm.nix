@@ -61,6 +61,7 @@ let
     mount -t proc proc /proc
     mount -t sysfs sysfs /sys
     mount -t devtmpfs devtmpfs /dev
+    ln -s /proc/self/fd /dev/fd
     mkdir -p /dev/pts /run /tmp /nix/store /src /work /etc/lvm
     mount -t devpts devpts /dev/pts
     mount -t tmpfs tmpfs /run
