@@ -46,9 +46,14 @@ configuration repos, and running a migration.
 * `pd rekey`: change a password, and/or the salt, by re-creating a plain volume.
 * `pd open` / `pd close` for maintenance from a live ISO.
 * Memorable hidden offset ([design.md §3](design.md#3-disk-layout)).
-* Ctrl-C at the password prompt drops straight to the recovery shell, skipping Argon2.
-* Keymap support in the boot environment.
-* FIDO2 as an extra input to Argon2.
+* Keymap support in the boot environment. Doesn't need udev: build a binary keymap at Nix time
+  (`loadkeys -b` from kbd) and load it with busybox `loadkmap` before the password prompt; the keymap
+  name goes in the per-install `early_env.sh`. It only affects the local console.
+* FIDO2 as an extra input to Argon2 (hmac-secret: key = KDF(Argon2(password), token response)).
+  Doesn't need udev either: devtmpfs creates `/dev/hidraw*`, and the boot environment runs as root.
+  Needs static libfido2 tools on the USB, a credential ID stored on the USB (the hidden side must
+  derive its hmac salt from its password, so nothing hidden-specific is stored), and a decision on
+  whether a token that's also demanded under coercion is worth it.
 * A "stock boot" variant whose USB doesn't identify pd ([threat-model.md](threat-model.md)).
 * A project name.
 

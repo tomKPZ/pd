@@ -15,8 +15,9 @@ several seconds. That pause is expected.
 ## Hidden boot
 
 1. Boot the USB as above.
-2. At `Password:`, press **Enter** with no password. You land in the recovery shell immediately (v2
-   skips Argon2 for an empty password; v1 runs it and pauses first).
+2. At `Password:`, press **Enter** with no password. You land in the recovery shell immediately. (v2
+   skips Argon2 for an empty password explicitly; in v1, `argon2` refuses an empty password and
+   `set -euo pipefail` ends `early.sh`.)
 3. Type:
    ```sh
    sed -i s/2048/<offset>/ /early_env.sh
