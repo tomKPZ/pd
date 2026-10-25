@@ -29,6 +29,11 @@ let
       dosfstools
       mtools
       file
+      # For installing Arch Linux in tests.
+      pacman
+      arch-install-scripts
+      gnutar
+      iproute2
     ];
     pathsToLink = [ "/bin" "/sbin" "/lib" "/share" ];
   };
@@ -62,20 +67,30 @@ let
     mount -t sysfs sysfs /sys
     mount -t devtmpfs devtmpfs /dev
     ln -s /proc/self/fd /dev/fd
-    mkdir -p /dev/pts /run /tmp /nix/store /src /work /etc/lvm
+    ln -s /proc/self/fd/0 /dev/stdin; ln -s /proc/self/fd/1 /dev/stdout; ln -s /proc/self/fd/2 /dev/stderr
+    mkdir -p /dev/pts /dev/shm /run /tmp /nix/store /src /work /etc/lvm
     mount -t devpts devpts /dev/pts
     mount -t tmpfs tmpfs /run
     mount -t tmpfs tmpfs /tmp
-    modprobe -a virtio_pci virtio_blk virtio_scsi 9p 9pnet_virtio virtio_rng dm-mod dm-crypt dm-thin-pool btrfs ext4 efivarfs vfat nls_cp437 nls_iso8859-1 2>/dev/null
+    modprobe -a virtio_pci virtio_blk virtio_scsi virtio_net 9p 9pnet_virtio virtio_rng dm-mod dm-crypt dm-thin-pool btrfs ext4 efivarfs vfat nls_cp437 nls_iso8859-1 2>/dev/null
     opts=trans=virtio,version=9p2000.L,msize=1048576
     mount -t 9p -o $opts,ro,cache=loose store /nix/store
     mount -t 9p -o $opts,ro src /src
     mount -t 9p -o $opts work /work
+    if mkdir -p /cache && mount -t 9p -o $opts cache /cache 2>/dev/null; then :; else rmdir /cache; fi
+    if grep -q pd.net /proc/cmdline; then
+      modprobe virtio_net
+      ip link set eth0 up
+      ip addr add 10.0.2.15/24 dev eth0
+      ip route add default via 10.0.2.2
+      echo "nameserver 10.0.2.3" > /etc/resolv.conf
+    fi
     cp ${lvmConf} /etc/lvm/lvm.conf
     hostname "$(cat /work/hostname 2>/dev/null || echo localhost)"
     export PATH=${toolEnv}/bin:${toolEnv}/sbin:/bin
     export PD_PLAIN_TREE=${plainTree} PD_BOOT_TOOLS=${bootTools} LVM_SUPPRESS_FD_WARNINGS=1
     export PYTHONPATH=/src PYTHONDONTWRITEBYTECODE=1 HOME=/tmp
+    export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
     cd /work
     setsid cttyhack sh -c 'bash /work/run.sh; echo "PD-EXIT $?"'
     sync

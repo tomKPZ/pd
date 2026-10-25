@@ -60,17 +60,25 @@ class ToolVM:
         self.work = work
 
     def run(self, script: str, disks=(), timeout: int = 900, hostname: str = "localhost",
-            check: bool = True, log: pathlib.Path | None = None) -> tuple[int, str]:
+            check: bool = True, log: pathlib.Path | None = None, network: bool = False,
+            cache: pathlib.Path | None = None) -> tuple[int, str]:
+        """network: QEMU user networking (outbound only).  cache: a host
+        directory mounted read-write at /cache, kept across runs."""
         (self.work / "run.sh").write_text("set -euo pipefail\n" + script)
         (self.work / "hostname").write_text(hostname)
         args = _qemu_base() + [
             "-kernel", str(self.env / "bzImage"),
             "-initrd", str(self.env / "toolvm-initrd.cpio.zst"),
-            "-append", "console=ttyS0 quiet panic=-1 init_on_free=1",
+            "-append", "console=ttyS0 quiet panic=-1 init_on_free=1" + (" pd.net" if network else ""),
             "-virtfs", "local,path=/nix/store,mount_tag=store,security_model=none,readonly=on",
             "-virtfs", f"local,path={REPO},mount_tag=src,security_model=none,readonly=on",
             "-virtfs", f"local,path={self.work},mount_tag=work,security_model=none",
         ] + _disk_args(disks)
+        if network:
+            args += ["-nic", "user,model=virtio-net-pci"]
+        if cache:
+            cache.mkdir(parents=True, exist_ok=True)
+            args += ["-virtfs", f"local,path={cache},mount_tag=cache,security_model=none"]
         proc = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               stdin=subprocess.DEVNULL, timeout=timeout)
         out = proc.stdout.decode(errors="replace")

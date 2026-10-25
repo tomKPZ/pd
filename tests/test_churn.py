@@ -17,7 +17,7 @@ fs={fs}
 vg=churn
 lvm pvcreate -qq /dev/vda
 lvm vgcreate -qq $vg /dev/vda
-lvm lvcreate -qq --type thin-pool -l 100%FREE --discards ignore -n pool $vg
+lvm lvcreate -qq --type thin-pool -l 100%FREE --discards {discards} -n pool $vg
 size=$(lvm lvs --noheadings --units b --nosuffix -o lv_size $vg/pool | tr -d ' ')
 lvm lvcreate -qq -V ${{size}}b -T $vg/pool -n vol
 mkdir -p /mnt/t
@@ -26,9 +26,8 @@ btrfs) mkfs.btrfs -q -f --nodiscard /dev/$vg/vol; opts=noatime,nodiscard,{btrfs_
 ext4) mkfs.ext4 -q -E nodiscard /dev/$vg/vol; opts=noatime,nodiscard ;;
 esac
 mount -o $opts /dev/$vg/vol /mnt/t
-# Discards must be refused at the pool.
 if fstrim /mnt/t 2>/dev/null; then echo "DISCARD-ACCEPTED"; else echo "DISCARD-REFUSED"; fi
-python3 /src/tests/churn.py /mnt/t $vg/pool {cycles} {target}
+python3 /src/tests/churn.py /mnt/t $vg/pool {cycles} {target} {reboot_every}
 umount /mnt/t
 lvm vgchange -an -qq $vg
 """
@@ -41,24 +40,27 @@ class Churn(unittest.TestCase):
     def setUpClass(cls):
         cls.env = vm.testenv()
 
-    def run_fs(self, fs):
+    def run_fs(self, fs, reboot_every=0):
         work = vm.workdir()
         try:
             disk = vm.sparse_disk(work / "disk.img", DISK)
             _, out = vm.ToolVM(self.env, work).run(
-                SCRIPT.format(fs=fs, cycles=CYCLES, target=TARGET,
+                SCRIPT.format(fs=fs, cycles=CYCLES, target=TARGET, reboot_every=reboot_every,
+                              discards="nopassdown" if reboot_every else "ignore",
                               btrfs_opts=os.environ.get("PD_CHURN_BTRFS_OPTS", "ssd")), disks=[disk], timeout=1800,
                 log=work / "churn.log")
         finally:
             vm.cleanup(work)
-        self.assertIn("DISCARD-REFUSED", out)
+        self.assertIn("DISCARD-ACCEPTED" if reboot_every else "DISCARD-REFUSED", out)
         rows = [json.loads(l) for l in out.splitlines() if l.startswith('{"cycle"')]
-        print(f"\n{fs} trajectory (cycle: pool MiB / fs used MiB):")
+        label = f"{fs} (fstrim + reboot every {reboot_every})" if reboot_every else fs
+        print(f"\n{label} trajectory (cycle: pool used / pool high-water / fs used, MiB):")
         for r in rows[::5] + rows[-1:]:
-            print(f"  {r['cycle']}: {r['pool_used'] >> 20} / {r['fs_used'] >> 20}")
+            print(f"  {r['cycle']}: {r['pool_used'] >> 20} / {r['high_water'] >> 20} / {r['fs_used'] >> 20}")
         result = json.loads(out.split("RESULT ", 1)[1].splitlines()[0])
-        Churn.results[fs] = result
-        print(f"\n{fs}: pool_used={result['pool_used'] >> 20} MiB "
+        Churn.results[label] = result
+        print(f"\n{label}: pool_used={result['pool_used'] >> 20} MiB "
+              f"high_water={result['high_water'] >> 20} MiB "
               f"peak_fs_used={result['peak_fs_used'] >> 20} MiB "
               f"fs_size={result['fs_size'] >> 20} MiB")
         return result
@@ -79,6 +81,17 @@ class Churn(unittest.TestCase):
         self.assertGreater(r["pool_used"], 0.9 * r["fs_size"])
 
 
+    def test_btrfs_trim_on_shutdown(self):
+        # fstrim at shutdown with a nopassdown pool: the pool reclaims what
+        # the filesystem freed, and the next activation allocates from the
+        # front again.
+        r = self.run_fs("btrfs", reboot_every=5)
+        self.assertLess(r["high_water"], 2 * r["peak_fs_used"] + (512 << 20))
+
+    def test_ext4_trim_on_shutdown(self):
+        r = self.run_fs("ext4", reboot_every=5)
+        self.assertLess(r["high_water"], 2 * r["peak_fs_used"] + (512 << 20))
+
+
 if __name__ == "__main__":
     unittest.main()
-
