@@ -9,6 +9,8 @@ let
       (src + "/target/nixos/pd.nix")
       ({ ... }: {
         pd.enable = true;
+        # Exercise the combined script; the v1 branch is skipped without header.dat.
+        pd.v1Compat = true;
         fileSystems."/" = {
           device = "/dev/sysvg/root";
           fsType = "btrfs";
