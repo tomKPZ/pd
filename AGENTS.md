@@ -40,8 +40,17 @@ current code, or [docs/roadmap.md](docs/roadmap.md) for what's being built.
 * **Never run setup, device-mapper, LVM, or cryptsetup commands on the host, and never touch real block
   devices.** Everything runs inside QEMU against image files, as an ordinary user. KVM is available
   (`/dev/kvm`, group `kvm`); OVMF is at `/usr/share/OVMF/`.
-* **Nix:** pass `--extra-experimental-features 'nix-command flakes'` and `-j auto`. The Nix build sandbox
-  has no KVM, so Nix only builds artifacts. Run QEMU tests outside Nix builds.
+* **Nix:** pass `--extra-experimental-features 'nix-command flakes'` and `-j auto`, and use `path:`
+  flake references (`nix build "path:$PWD#testenv"`): Nix's libgit2 can't read this repo's reftable
+  refs, and `path:` also picks up uncommitted files. The Nix build sandbox has no KVM, so Nix only builds
+  artifacts. Run QEMU tests outside Nix builds.
+* **Tests:** `python3 -m unittest discover -s tests -t .` builds `.testenv` and runs everything (about
+  15 minutes; `test_churn` is the slowest). Useful variables: `PD_SKIP_NIX_BUILD=1` (reuse `.testenv`),
+  `PD_TEST_DIR=/tmp/x PD_KEEP_TEST_DIR=1` (keep disk images and serial logs). `tests/debug_boot.py
+  WORKDIR` boots a kept disk into the recovery shell and runs commands from stdin.
+* **Layout:** `boot/` (USB initrd scripts), `plain/` (boot-volume scripts; `plain/hidden/` is installed
+  only on the hidden side), `target/` (hooks for installed OSes), `pd/` (setup CLI), `nix/`, `tests/`,
+  `v1/` (the v1 code, for reference).
 * **Any design change** updates the decision log in [docs/design.md §13](docs/design.md#13-decision-log).
   Update milestone status in [docs/roadmap.md](docs/roadmap.md).
 * **Style:** 4-space indent ([.editorconfig](.editorconfig)). Shell scripts use `set -euo pipefail`.

@@ -71,16 +71,28 @@ The details are in [docs/design.md](docs/design.md).
 
 ## Quick start
 
-v2 isn't usable yet. The planned workflow ([docs/design.md §9](docs/design.md#9-setup)):
+v2 works end to end in QEMU, but hasn't been used on real hardware yet. The workflow:
 
-1. On a development machine, build the artifacts: `nix build` (pinned kernel, static tools, a
-   UKI template).
-2. Boot the target machine into a live ISO. Run `pd init --decoy`, install the decoy OS into `/mnt`,
-   then `pd close`.
-3. Run `pd init --hidden`, install the hidden OS into `/mnt`, then `pd close`. Memorize the printed
-   hidden offset.
-4. Run `pd usb /dev/sdX` to write the boot UKI to a USB stick.
+1. Build: `nix build "path:$PWD#testenv"` (pinned kernel, static tools, boot initrd, UKI pieces).
+2. Write a config (`pd salt` prints a random salt):
+   ```toml
+   disk = "/dev/nvme0n1"
+   salt = "<from pd salt>"
+   vg = "sysvg"
+   [[systems]]
+   name = "nixos"
+   lv = "root"
+   kernel = "/boot/default/kernel"
+   initrd = "/boot/default/initrd"
+   cmdline = ""
+   ```
+3. In a throwaway environment (live ISO) with pd and its tools:
+   `pd randomize --config pd.toml`, then `pd init-decoy --config pd.toml --run` and install the decoy
+   OS into the mounted roots, then `pd init-hidden --config pd.toml --run` and install the hidden OS.
+   Memorize the printed hidden-boot command.
+4. `pd usb --config pd.toml --env .testenv --output BOOTX64.EFI`, and copy it to `EFI/BOOT/` on the
+   USB stick's ESP.
 
-v1 is configured by editing the constants at the top of `pd.py` and must be run as root. See
-[docs/v1.md](docs/v1.md).
-
+NixOS systems import `target/nixos/pd.nix` and set `pd.enable = true`. See
+[docs/booting.md](docs/booting.md) for booting. v1 is configured by editing the constants at the top of
+`v1/pd.py` and must be run as root ([docs/v1.md](docs/v1.md)).
