@@ -16,6 +16,6 @@ NixOS configuration repos, and running a migration.
 
 | Item | Finding | Autonomous? |
 |---|---|---|
-| **FIDO2 as an extra input to Argon2** | Wanted eventually. Design: key = KDF(Argon2(password), hmac-secret response); credential ID on the USB; the hidden side derives its hmac salt from its password, so nothing hidden-specific is stored. But a token is one more thing an adversary can demand, so it may add little against the main adversary (A2), and QEMU only emulates U2F, not FIDO2 hmac-secret, so it can't be tested here. Needs a decision on the threat model and a real token. | No |
+| **FIDO2 with a real security key** | Implemented and tested with QEMU's emulated CanoKey (design.md §4.1). Try it with a real key, in a VM (`-device usb-host,vendorid=0x1050,...`) or on the real-hardware trial. | No: needs a real key. |
 | **"Stock boot" variant** whose USB doesn't identify pd, plus a guide | Later task, e.g. the boot stick is a stock Debian Live or Tails image. The decoy would boot with stock tools (e.g. GRUB or systemd-boot with a detached-header LUKS decoy), and the hidden side would be opened by commands typed from memory in a live ISO. Most of v2 (the reversed hidden side, the read-only mapping, the monitor) carries over. A design sketch is possible autonomously; the choice of stock decoy layout is the author's. | Design only |
 | **Project name** | Last, once the author is satisfied. | No |

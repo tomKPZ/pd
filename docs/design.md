@@ -244,7 +244,7 @@ because v1 creates the pool with one data extent and then extends it.
 
 | Key | Derivation | Opens |
 |---|---|---|
-| plain key | Argon2id(password, salt), 64 bytes. Defaults: t=14, m=256 MiB, p=8, v1.3 | the side's plain volume |
+| plain key | Argon2id(password, salt), 64 bytes (defaults: t=14, m=256 MiB, p=8, v1.3), or with FIDO2 a random key unwrapped with a security key (§4.1) | the side's plain volume |
 | `data.key` | 64 random bytes generated at setup, stored in the plain volume | the side's data region |
 
 * **Cipher.** Everything uses plain dm-crypt (aes-xts-plain64, 512-bit keys, 4096-byte sectors), so
@@ -263,14 +263,75 @@ because v1 creates the pool with one data extent and then extends it.
   64–511 as the keyslot passphrase. The motivation was reencryption and FIDO2, but neither was ever used.
   A coerced examiner walks the whole boot chain, so every layer has to be explainable, and a raw key file
   gives the same separation of password from data key. Dropping LUKS also removes the odd keyslot with a
-  minimal PBKDF. If FIDO2 is ever wanted, it has to be mixed into the Argon2 step anyway, because the
-  plain volume opens with the password alone.
+  minimal PBKDF. FIDO2 (§4.1) works without it.
 * **The hidden plain volume also stores the decoy's `data.key`,** so the hidden side can watch the
   decoy (§10.2).
 * **Keys reach cryptsetup as files, never on stdin.** In plain mode, cryptsetup hashes a key read from
   stdin (`--key-file=-`) like a passphrase, but uses a key file's bytes directly. Setup passes keys as
   the read end of a pipe (`--key-file=/proc/self/fd/N`), so they never touch disk and match what the
   boot scripts read from tmpfs files.
+
+### 4.1 FIDO2 security keys (optional)
+
+**Purpose: no offline password guessing.** Without FIDO2, anyone with the USB and a disk image can
+guess passwords offline, slowed only by Argon2. With FIDO2 a side's plain key can't be derived from
+the password alone: each guess needs the physical security key, its PIN (which the key locks after 8
+wrong tries), and a touch. It doesn't help against coercion (A2): the security key is one more thing
+to hand over.
+
+**Mechanism.** FIDO2's `hmac-secret` extension, as in `systemd-cryptenroll`, with its defaults:
+non-resident credentials (nothing is stored on the security key), PIN and touch required, no user
+verification. (U2F can't be used: it only makes randomized signatures, so it can't produce a stable
+secret.)
+
+| Value | Definition |
+|---|---|
+| A | Argon2id(password, salt), as without FIDO2 |
+| K | the side's plain key: 64 random bytes, generated when FIDO2 is first enrolled for the side |
+| C_i | a credential created on security key i; its ID (an encrypted blob only that key can use) is stored on the USB |
+| h_i | hmac-secret(C_i, SHA-256(A)): 32 bytes only security key i can compute, and only from A |
+| slot | K XOR SHA-512(A ‖ h_i) |
+
+The USB carries `fido2.txt`: one line per credential, `C_i SLOT0 SLOT1`. Slot 0 belongs to the side
+whose boot volume is at the decoy's offset, slot 1 to the other side. A slot no side uses holds random
+bytes, which can't be told apart from a wrapped key.
+
+At boot, `early.sh` derives A as usual. If `fido2.txt` exists, it asks for the PIN and runs
+`fido2-hmac unlock` (`tools/fido2_hmac.c`, static, on the USB). That program waits for a security key
+holding one of the credentials (checked silently, without a touch), gets h_i (touch), and writes the
+two unwrapped candidates. `early.sh` then tries A, slot 0 and slot 1 on each disk. Trying A keeps a side
+without FIDO2 bootable, so enrolling one side never locks out the other.
+
+**Deniability.** Both sides use the same credentials, and the hidden side's request to the security key
+is derived from its own password, so nothing on the USB is specific to the hidden side (invariant 1):
+every line has two slots whether or not a second side exists. One consequence: **if the hidden side
+uses FIDO2, enroll the decoy too.** A `fido2.txt` on the USB that the decoy doesn't use points at
+another side.
+
+**Several security keys.** Each security key computes a different h_i, so each gets its own line, and
+each line wraps the same K. Losing every enrolled security key loses the sides that use FIDO2; enroll
+at least two.
+
+**Commands** (`pd/rekey.py`, `pd/fido2.py`):
+* `pd fido2 enroll [--offset N]` enrolls security keys for one side, one at a time: the plugged-in
+  one, then each one the user swaps in when asked (one USB port is enough). The first time, it
+  re-creates the side's boot volume under a random K, like `pd rekey`, and the password alone stops
+  working. Later, the first plugged-in key must be an enrolled one, to unwrap K. A security key
+  without a credential gets one; its slot for the other side stays random until that side enrolls it
+  too.
+* `pd rekey` on a FIDO2 side keeps K and re-wraps its slots under the new password, again one security
+  key at a time. The slots of keys that weren't plugged in are replaced with random bytes, since they
+  would still open with the old password.
+* `pd fido2 remove N` and `pd fido2 list`.
+* After any change, build a new USB: `fido2.txt` is part of it. The config's `fido2` names the file.
+
+**Cost.** `fido2-hmac` (static libfido2, libcbor, OpenSSL; 5.7 MB) adds about 0.5 MB to every USB's
+compressed initrd, since its OpenSSL largely duplicates cryptsetup's. A PIN prompt and a touch on
+every boot, only when `fido2.txt` exists.
+
+**Tests.** `tests/test_fido2.py` uses QEMU's emulated CanoKey, which implements `hmac-secret`. QEMU
+emulates one CanoKey at a time, so the test swaps between two over QMP, like a user swapping keys. A
+real security key can be passed into a VM with `-device usb-host`.
 
 ---
 
@@ -589,6 +650,7 @@ go to another pd setup; never `dd` the disk.
   | `test_nixos` | a real NixOS initrd with `pd.nix` unlocks the disk and mounts `/sysroot` |
   | `test_arch` | a real Arch install (pacstrap, `pd` mkinitcpio hook) boots through pd (`PD_TEST_ARCH=1`, needs network) |
   | `test_monitor` | frontier monitor report and warning; no hidden-only files in the decoy |
+  | `test_fido2` | enroll two emulated security keys for both sides, boot with either, wrong PIN, unknown key, rekey, remove |
   | `test_churn` | btrfs, XFS and (unsupported) ext4 pool footprint under churn, with and without a shutdown trim |
   | `fs_survey.py` (not in the suite; `python3 -m tests.fs_survey`) | the §2.3 table: filesystems and btrfs options × workloads × trim |
   | `test_luks_equiv` | a v1 LUKS2 data region reads identically through plain dm-crypt with its volume key |
@@ -670,6 +732,7 @@ Decisions made while implementing v2:
 | D35 | A RAM-only setup UKI (`setupUki`) for running setup on real hardware | A throwaway environment with nothing to install | agreed |
 | D36 | Keep btrfs's default mount options; recommend `chattr +C` (or an XFS volume) for files rewritten in place | The filesystem survey (§2.3): `ssd`/`nossd`/`autodefrag` make no difference, `ssd_spread` is worse, and only rewrites of large files are a problem for btrfs | proposed |
 | D37 | Extra volumes are XFS by default and may be btrfs; ext4 is dropped | The filesystem survey (§2.3): XFS matches ext4 on in-place rewrites and is much better under churn, with or without the trim | agreed |
+| D38 | Optional FIDO2: hmac-secret unwraps a random plain key from per-key slots on the USB (two per credential, random when unused); systemd-cryptenroll's defaults (PIN and touch, no user verification) | Stops offline password guessing; nothing hidden-specific on the USB; any of several keys works; a side without FIDO2 still boots (§4.1) | agreed |
 
 ---
 

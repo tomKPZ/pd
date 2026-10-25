@@ -1,4 +1,4 @@
-{ pkgs, kernel, modulesClosure, plainTree, bootTools }:
+{ pkgs, kernel, modulesClosure, plainTree, bootTools, fido2Hmac }:
 let
   # Tools for running setup and tests inside a VM.  The VM mounts the host's
   # /nix/store read-only over 9p, so nothing here is copied into the initrd.
@@ -36,6 +36,7 @@ let
       arch-install-scripts
       gnutar
       iproute2
+      fido2Hmac
     ];
     pathsToLink = [ "/bin" "/sbin" "/lib" "/share" ];
   };
@@ -74,7 +75,8 @@ let
     mount -t devpts devpts /dev/pts
     mount -t tmpfs tmpfs /run
     mount -t tmpfs tmpfs /tmp
-    modprobe -a virtio_pci virtio_blk virtio_scsi virtio_net 9p 9pnet_virtio virtio_rng dm-mod dm-crypt dm-thin-pool btrfs ext4 xfs f2fs efivarfs vfat nls_cp437 nls_iso8859-1 2>/dev/null
+    modprobe -a virtio_pci virtio_blk virtio_scsi virtio_net 9p 9pnet_virtio virtio_rng dm-mod dm-crypt dm-thin-pool btrfs ext4 xfs f2fs efivarfs vfat nls_cp437 nls_iso8859-1 \
+      xhci_pci usbhid hid_generic 2>/dev/null
     opts=trans=virtio,version=9p2000.L,msize=1048576
     mount -t 9p -o $opts,ro,cache=loose store /nix/store
     mount -t 9p -o $opts,ro src /src

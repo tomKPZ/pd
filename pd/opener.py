@@ -23,7 +23,7 @@ import xml.etree.ElementTree as ET
 from pd import layout as L
 from pd import setup
 from pd.config import CIPHER_ARGS, Config
-from pd.util import argon2, cmd, cmd_output, mounted, mountpoint, plain_crypt
+from pd.util import cmd, cmd_output, mounted, mountpoint, plain_crypt
 
 STATE = pathlib.Path("/run/pd/open.json")
 RO_PREFIX = "pd-ro-"
@@ -74,18 +74,15 @@ class Session:
 
 def read_boot_volume(cfg: Config, offset: int, password: bytes):
     """data.key, table and the systems' env.sh settings of a side."""
-    key = argon2(password, cfg.salt, cfg.argon2)
-    try:
-        with setup.boot_volume(cfg.disk, offset, key, create=False) as mnt:
-            data_key = (mnt / "data.key").read_bytes()
-            table = (mnt / "table.txt").read_text()
-            systems = {}
-            for d in sorted((mnt / "systems").iterdir()):
-                if d.is_dir() and not d.is_symlink() and (d / "env.sh").exists():
-                    env = dict(re.findall(r"^(\w+)='?(.*?)'?$", (d / "env.sh").read_text(), re.M))
-                    systems[d.name] = env
-    except subprocess.CalledProcessError:
-        raise RuntimeError("that password doesn't open a boot volume at that offset")
+    key = setup.boot_key(cfg, offset, password)
+    with setup.boot_volume(cfg.disk, offset, key, create=False) as mnt:
+        data_key = (mnt / "data.key").read_bytes()
+        table = (mnt / "table.txt").read_text()
+        systems = {}
+        for d in sorted((mnt / "systems").iterdir()):
+            if d.is_dir() and not d.is_symlink() and (d / "env.sh").exists():
+                env = dict(re.findall(r"^(\w+)='?(.*?)'?$", (d / "env.sh").read_text(), re.M))
+                systems[d.name] = env
     return data_key, table, systems
 
 

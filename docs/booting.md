@@ -8,6 +8,8 @@ several seconds. That pause is expected.
 1. Insert the USB and choose it in the firmware's boot menu. The UKI is at `EFI/BOOT/BOOTX64.EFI`, the
    removable-media path, so no boot entry needs to exist beforehand.
 2. At `Password:`, type the decoy password and press Enter.
+   * With FIDO2 security keys: at `Security key PIN:`, type the PIN, plug in an enrolled key if it
+     isn't already (the boot waits up to a minute), and touch it when asked.
 3. The default system boots.
    * To choose a different system, hold **Shift** after pressing Enter until a menu appears.
    * For NixOS, keep holding **Shift** to get the generation menu.
@@ -23,7 +25,7 @@ several seconds. That pause is expected.
    sed -i s/2048/<offset>/ /early_env.sh
    /early.sh
    ```
-4. At `Password:`, type the hidden password. Before handing over, the hidden side's frontier monitor
+4. At `Password:`, type the hidden password (then the PIN and a touch, with FIDO2). Before handing over, the hidden side's frontier monitor
    prints `Free space between the two sides: N MiB.`; if it warns (little space left, or a decoy volume
    inside the hidden region), it waits for Enter.
 
@@ -53,11 +55,14 @@ The edits only change the in-RAM copy of the boot environment. The USB is never 
   replays its own log once it's running. (v1 lacks this; because it activates its LVs read-write, its
   `ro` mount replays the log and writes to the disk; see [design.md §7.3](design.md#73-latesh-in-the-plain-volume).)
 * **The shutdown trim** is skipped after a crash; the next clean shutdown catches up.
+* **FIDO2:** `Wrong PIN.` asks again (three times). After three wrong PINs in a row the key refuses
+  until it's unplugged and plugged in again; after eight in total it locks for good. `No security key
+  found.` means no plugged-in key holds one of the USB's credentials.
 
 ## Rebuilding the USB
 
 The installed OSes update their own kernels; the USB never needs to know about it. Rebuild the USB only
 to update the boot environment itself.
 
-* **v2:** `pd usb --salt-from OLD.EFI` takes the salt from the existing UKI ([install.md](install.md#3-build-the-boot-usb)).
+* **v2:** `pd usb --salt-from OLD.EFI` takes the salt (and `fido2.txt`, if the config has none) from the existing UKI ([install.md](install.md#3-build-the-boot-usb)).
 * **v1:** set `STATIC_SALT`/`SALT` to the original salt and rerun the UKI build ([v1.md](v1.md)).

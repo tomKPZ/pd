@@ -14,7 +14,7 @@
         nixosTest = import ./nix/nixos-test.nix { inherit nixpkgs system; src = self; };
         setupUki = pd.setupEnv.uki;
         pdPyz = pd.pdPyz;
-        inherit (pd) testenv bootTools plainTools bootInitrd plainTree modulesClosure detectShift kernel;
+        inherit (pd) testenv bootTools plainTools bootInitrd plainTree modulesClosure detectShift fido2Hmac kernel;
         default = pkgs.linkFarm "pd" [
           { name = "bzImage"; path = pd.kernelImage; }
           { name = "boot-initrd.cpio.zst"; path = pd.bootInitrd; }

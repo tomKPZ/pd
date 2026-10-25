@@ -37,10 +37,15 @@ def _cpio_entry(name: str, data: bytes, mode: int, ino: int) -> bytes:
 
 
 def install_cpio(cfg: Config, env: pathlib.Path | None = None) -> bytes:
-    """newc cpio with the per-install files: salt.txt, early_env.sh, and the
-    keymap (from env/keymaps) if one is configured."""
+    """newc cpio with the per-install files: salt.txt, early_env.sh, the
+    FIDO2 slots (fido2.txt) if any, and the keymap (from env/keymaps) if one
+    is configured."""
     buf = io.BytesIO()
     files = [("salt.txt", cfg.salt.encode()), ("early_env.sh", early_env(cfg).encode())]
+    from pd import fido2
+    creds = fido2.load(cfg)
+    if creds:
+        files.append(("fido2.txt", fido2.dump(creds).encode()))
     if cfg.keymap:
         if env is None:
             raise ValueError("a keymap needs --env (the built testenv) to find keymaps/")
@@ -54,11 +59,12 @@ def install_cpio(cfg: Config, env: pathlib.Path | None = None) -> bytes:
     return buf.getvalue()
 
 
-def read_salt(uki: pathlib.Path) -> str:
-    """Recover the salt from an existing UKI (or initrd).  The per-install
-    cpio is stored uncompressed, so salt.txt can be found by its newc header."""
+def read_member(uki: pathlib.Path, member: str) -> str | None:
+    """A file of the per-install cpio in an existing UKI (or initrd), or None.
+    That cpio is stored uncompressed, so the file can be found by its newc
+    header."""
     data = pathlib.Path(uki).read_bytes()
-    name = b"salt.txt\0"
+    name = member.encode() + b"\0"
     i = data.find(name)
     while i != -1:
         hdr = data[i - 110:i]
@@ -68,7 +74,15 @@ def read_salt(uki: pathlib.Path) -> str:
             start += -(start - (i - 110)) % 4
             return data[start:start + size].decode()
         i = data.find(name, i + 1)
-    raise ValueError(f"no salt.txt found in {uki}")
+    return None
+
+
+def read_salt(uki: pathlib.Path) -> str:
+    """Recover the salt from an existing UKI (or initrd)."""
+    salt = read_member(uki, "salt.txt")
+    if salt is None:
+        raise ValueError(f"no salt.txt found in {uki}")
+    return salt
 
 
 def build_uki(cfg: Config, env: pathlib.Path, out: pathlib.Path, cmdline: str = BOOT_CMDLINE) -> None:

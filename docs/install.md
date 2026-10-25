@@ -186,6 +186,29 @@ nixos-install --root $PD_ROOT/nixos              # or --flake <path>#<host>
 The module warns at build time about filesystems without `nodiscard` and about `services.fstrim`. Don't
 put `root=` in the kernel parameters: NixOS mounts root from `fileSystems."/"`.
 
+## FIDO2 security keys (optional)
+
+A FIDO2 security key with `hmac-secret` (e.g. any YubiKey 5 or Security Key) makes offline password
+guessing impossible without the key ([design.md §4.1](design.md#41-fido2-security-keys-optional)).
+Like `systemd-cryptenroll`, pd needs the key's PIN and a touch. Set a PIN first (e.g. `ykman fido
+access change-pin`). Then, in the setup environment, after setting up the sides:
+
+1. Add `fido2 = "fido2.txt"` to the config, at the top level (before any `[table]`).
+2. Enroll the decoy: `pd fido2 enroll --config pd.toml`. It asks for the decoy password and the PIN,
+   and for a touch. Then it offers to enroll another key: swap keys and press Enter. Enroll at least
+   two keys: losing every enrolled key loses the side.
+3. If there's a hidden side, enroll it too, with the same keys: `pd fido2 enroll --config pd.toml
+   --offset N`. If the hidden side uses FIDO2, the decoy must too (otherwise `fido2.txt` on the USB
+   points at another side).
+4. Build the boot USB again (§3). `fido2.txt` goes on it, and the boot asks for the PIN after the
+   password.
+
+The first enrollment re-creates the side's boot volume under a random key. After that the password alone
+no longer opens it. To add a key later, plug in an enrolled one first. `pd rekey` re-wraps every key
+it's shown, one at a time; keys it isn't shown stop working for that side. `pd fido2 list` and `pd
+fido2 remove N` manage the list. Rebuild the USB after every change. *(tested: `test_fido2`, with
+QEMU's emulated CanoKey; not yet with a real security key.)*
+
 ## From a live ISO
 
 `pd open`, `pd close` and `pd rekey` also run from an ordinary live system such as Debian Live or
@@ -196,8 +219,9 @@ sudo apt install cryptsetup lvm2 thin-provisioning-tools btrfs-progs argon2   # 
 sudo python3 pd.pyz open --config pd.toml          # read-only; --rw to change things
 sudo python3 pd.pyz close
 ```
-Setting up a disk (`randomize`, `init-decoy`, `init-hidden`) needs the setup UKI, which also carries
-pd's boot-volume tools. A live system keeps no trace on the disk, but think about what it logs
+With FIDO2 security keys, also copy the static `fido2-hmac` (`nix build "path:$PWD#fido2Hmac"`) onto the
+`PATH`. Setting up a disk (`randomize`, `init-decoy`, `init-hidden`) needs the setup UKI, which also
+carries pd's boot-volume tools. A live system keeps no trace on the disk, but think about what it logs
 elsewhere (e.g. Tails' persistent storage, if enabled). *(tested: `test_open` runs `pd.pyz` in the
 tool VM; not yet on an actual Debian Live or Tails image.)*
 

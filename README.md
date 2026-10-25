@@ -32,7 +32,8 @@ goal is to avoid that question altogether.
   that is mostly free space.
 * Each side has a small encrypted **plain volume**. It's keyed by Argon2id(password, salt) and found by
   trying that key at a fixed offset. It holds the side's data-region key, boot scripts, and tools. The
-  boot USB only knows the decoy's offset.
+  boot USB only knows the decoy's offset. Optionally, FIDO2 security keys (e.g. YubiKeys) become a
+  second factor, so passwords can't be guessed offline.
 * **Booting the decoy:** boot the USB and type the decoy password.
 * **Booting the hidden system:** press Enter at the password prompt to fall into the "recovery" shell,
   change one number with a one-line `sed`, re-run the boot script, and type the hidden password.

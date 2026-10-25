@@ -12,6 +12,7 @@ import pathlib
 import shutil
 import subprocess
 
+from pd import fido2
 from pd import layout as L
 from pd.config import CIPHER_ARGS, Config
 from pd.util import argon2, cmd, cmd_output, dm_device, mounted, mountpoint, plain_crypt, write_file
@@ -319,21 +320,47 @@ def set_hostname(cfg: Config) -> None:
 
 
 def boot_volume_exists(disk: str, offset: int, key: bytes) -> bool:
+    """Does key open a boot volume at offset?  Quiet: wrong keys are expected
+    when trying candidates (find_boot_key)."""
     try:
-        with boot_volume(disk, offset, key, create=False) as mnt:
-            return (mnt / "data.key").exists()
+        with plain_crypt(BOOT_MAP, disk, key, CIPHER_ARGS, offset=L.sectors(offset),
+                         size=L.sectors(L.PLAIN_SIZE), readonly=True) as dev:
+            with mountpoint("boot-") as mnt:
+                if cmd("mount", "-t", "btrfs", "-o", "ro,nodiscard,rescue=nologreplay", dev, mnt,
+                       check=False, stderr=subprocess.DEVNULL).returncode != 0:
+                    return False
+                try:
+                    return (mnt / "data.key").exists()
+                finally:
+                    cmd("umount", mnt)
     except subprocess.CalledProcessError:
         return False
 
 
+def find_boot_key(cfg: Config, offset: int, password: bytes) -> tuple[bytes, int | None] | None:
+    """The key that opens the boot volume at offset, and the FIDO2 slot it
+    came from (None: the password alone, A = Argon2(password, salt)); None
+    if nothing opens it.  Asks a present security key if FIDO2 is set up."""
+    a = argon2(password, cfg.salt, cfg.argon2)
+    for key, slot in fido2.candidate_keys(cfg, a):
+        if boot_volume_exists(cfg.disk, offset, key):
+            return key, slot
+    return None
+
+
+def boot_key(cfg: Config, offset: int, password: bytes, what: str = "that password") -> bytes:
+    found = find_boot_key(cfg, offset, password)
+    if found is None:
+        hint = " (or no enrolled security key is plugged in)" if fido2.load(cfg) else ""
+        raise RuntimeError(f"{what} doesn't open a boot volume at that offset{hint}")
+    return found[0]
+
+
 def read_hidden_layout(cfg: Config, offset: int, password: bytes) -> L.HiddenLayout:
     """The layout of an existing hidden side, from its boot volume."""
-    key = argon2(password, cfg.salt, cfg.argon2)
-    try:
-        with boot_volume(cfg.disk, offset, key, create=False) as mnt:
-            table = (mnt / "table.txt").read_text()
-    except subprocess.CalledProcessError:
-        raise RuntimeError("the hidden password doesn't open a boot volume at that offset")
+    key = boot_key(cfg, offset, password, "the hidden password")
+    with boot_volume(cfg.disk, offset, key, create=False) as mnt:
+        table = (mnt / "table.txt").read_text()
     lo, hi = L.table_physical_range(table)
     return L.HiddenLayout(plain_offset=offset, data_start=lo, data_end=hi)
 
@@ -353,8 +380,10 @@ def init_decoy(cfg: Config, password: bytes, run=None, *, force: bool = False,
     set_hostname(cfg)
     disk = cfg.disk
     d = check_disk(disk)
-    key = argon2(password, cfg.salt, cfg.argon2)
-    if not force and boot_volume_exists(disk, L.DECOY_PLAIN_OFFSET, key):
+    existing = find_boot_key(cfg, L.DECOY_PLAIN_OFFSET, password)
+    # Re-creating keeps the existing key, so FIDO2 enrollment carries over.
+    key = existing[0] if existing else argon2(password, cfg.salt, cfg.argon2)
+    if not force and existing:
         raise RuntimeError(
             "this disk already has a decoy side with that password.  To re-create it, pass --force "
             "and either --no-hidden or --hidden-offset (the hidden password is then checked).")
@@ -384,7 +413,7 @@ def open_decoy_readonly(cfg: Config, password: bytes):
     """Yield (data_key, table, segments, pe_start) of the decoy, read-only."""
     @contextlib.contextmanager
     def ctx():
-        key = argon2(password, cfg.salt, cfg.argon2)
+        key = boot_key(cfg, L.DECOY_PLAIN_OFFSET, password, "the decoy password")
         with boot_volume(cfg.disk, L.DECOY_PLAIN_OFFSET, key, create=False) as mnt:
             data_key = (mnt / "data.key").read_bytes()
             table = (mnt / "table.txt").read_text()

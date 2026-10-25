@@ -1,6 +1,7 @@
 """Per-install configuration (TOML, kept outside the repo)."""
 
 import dataclasses
+import pathlib
 import re
 import tomllib
 
@@ -47,6 +48,9 @@ class Config:
     vg: str = "sysvg"
     hostname: str | None = None  # set during setup, since LVM records it
     keymap: str | None = None  # console keymap for the password prompt (kbd name, e.g. "de")
+    # FIDO2 slots file (pd/fido2.py), relative to the config file.  Written by
+    # `pd fido2 enroll`, put on the USB by `pd usb`.
+    fido2: str | None = None
     swap_size: int = 64 << 20
     hidden_cap: float = 0.4  # fraction of the disk the hidden thin LVs may use
     memorable_offset: bool = True
@@ -67,6 +71,8 @@ class Config:
         "@var_log": "var/log",
         "@var_tmp": "var/tmp",
     })
+    # fido2.txt contents taken from an existing UKI (`--salt-from`), if any.
+    fido2_text: str | None = dataclasses.field(default=None, repr=False)
 
     @staticmethod
     def load(path) -> "Config":
@@ -78,6 +84,8 @@ class Config:
         if "swap_size" in raw:
             raw["swap_size"] = parse_size(raw["swap_size"])
         subvols = raw.pop("subvolumes", None)
+        if raw.get("fido2"):
+            raw["fido2"] = str(pathlib.Path(path).parent / raw["fido2"])
         cfg = Config(argon2=Argon2Params(**a), systems=systems, volumes=volumes, **raw)
         if subvols is not None:
             cfg.subvolumes = subvols

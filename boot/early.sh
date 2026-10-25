@@ -37,45 +37,79 @@ forget_boot_entry() {
     rm -f /run/bootorder
 }
 
-read_password() {
-    printf "Password: "
+read_secret() {
+    printf "%s: " "$1"
     stty -echo 2>/dev/null
-    IFS= read -r PASSWORD
+    IFS= read -r SECRET
     stty echo 2>/dev/null
     echo
+}
+
+# With FIDO2 (fido2.txt on the USB), a security key unwraps the boot volume
+# key from one of two slots; see docs/design.md §4.1.  The Argon2 output
+# alone is tried too, for a side without FIDO2.
+unlock_fido2() {
+    tries=0
+    while [ $tries -lt 3 ]; do
+        read_secret "Security key PIN"
+        printf '%s\n' "$SECRET" | fido2-hmac unlock /fido2.txt /run/pd/boot.key /run/pd
+        rc=$?
+        SECRET=
+        case $rc in
+        0) KEYS="$KEYS /run/pd/slot0.key /run/pd/slot1.key"; return ;;
+        3) echo "Wrong PIN." ;;
+        4) echo "PIN blocked: remove and reinsert the security key."; return ;;
+        5) echo "Not touched." ;;
+        *) return ;;
+        esac
+        tries=$((tries + 1))
+    done
 }
 
 forget_boot_entry
 
 mkdir -p /run/pd /mnt/boot
 chmod 700 /run/pd
-read_password
-if [ -z "$PASSWORD" ]; then
+read_secret "Password"
+if [ -z "$SECRET" ]; then
     echo "No bootable disk found."
     exit 1
 fi
-printf %s "$PASSWORD" | argon2 "$(cat /salt.txt)" $ARGON2_ARGS | xxd -r -p >/run/pd/boot.key
-PASSWORD=
-unset PASSWORD
+printf %s "$SECRET" | argon2 "$(cat /salt.txt)" $ARGON2_ARGS | xxd -r -p >/run/pd/boot.key
+SECRET=
+unset SECRET
+
+KEYS=/run/pd/boot.key
+[ -s /fido2.txt ] && unlock_fido2
+
+forget_keys() {
+    for k in $KEYS; do
+        [ "$k" = "${1:-}" ] || shred -u "$k" 2>/dev/null
+    done
+}
 
 for disk in /sys/block/*; do
     disk=/dev/${disk##*/}
     case "$disk" in /dev/loop* | /dev/ram* | /dev/dm-* | /dev/sr*) continue ;; esac
     [ -b "$disk" ] || continue
-    if cryptsetup open --type plain --readonly --batch-mode $CRYPT_ARGS \
-        --offset "$PLAIN_OFFSET" --size "$PLAIN_SIZE" \
-        --key-file /run/pd/boot.key "$disk" cryptboot 2>/dev/null; then
-        if mount -t btrfs -o ro,nodiscard,rescue=nologreplay /dev/mapper/cryptboot /mnt/boot 2>/dev/null; then
-            if [ -x /mnt/boot/late.sh ]; then
-                echo "$disk" >/run/pd/disk
-                exec /mnt/boot/late.sh
+    for key in $KEYS; do
+        if cryptsetup open --type plain --readonly --batch-mode $CRYPT_ARGS \
+            --offset "$PLAIN_OFFSET" --size "$PLAIN_SIZE" \
+            --key-file "$key" "$disk" cryptboot 2>/dev/null; then
+            if mount -t btrfs -o ro,nodiscard,rescue=nologreplay /dev/mapper/cryptboot /mnt/boot 2>/dev/null; then
+                if [ -x /mnt/boot/late.sh ]; then
+                    echo "$disk" >/run/pd/disk
+                    forget_keys "$key"
+                    [ "$key" = /run/pd/boot.key ] || mv "$key" /run/pd/boot.key
+                    exec /mnt/boot/late.sh
+                fi
+                umount /mnt/boot
             fi
-            umount /mnt/boot
+            cryptsetup close cryptboot
         fi
-        cryptsetup close cryptboot
-    fi
+    done
 done
 
-shred -u /run/pd/boot.key
+forget_keys
 echo "No bootable disk found."
 exit 1

@@ -26,6 +26,41 @@ let
     '';
   };
 
+  # USB only: no smartcard (pcsc) support, whose static build fails anyway.
+  # Only the library: libfido2's own tests and tools don't link statically.
+  # libcbor's static build uses LTO, whose archive index has no symbols.
+  libcborStatic = static.libcbor.overrideAttrs (old: {
+    env = (old.env or { }) // { NIX_CFLAGS_COMPILE = "-fno-lto"; };
+  });
+  libfido2Static = (static.libfido2.override {
+    withPcsclite = false;
+    libcbor = libcborStatic;
+  }).overrideAttrs (old: {
+    cmakeFlags = old.cmakeFlags ++ [
+      "-DBUILD_TESTS=OFF" "-DBUILD_EXAMPLES=OFF" "-DBUILD_TOOLS=OFF" "-DBUILD_MANPAGES=OFF"
+    ];
+    outputs = [ "out" "dev" ];
+    doInstallCheck = false;
+  });
+
+  # FIDO2 hmac-secret for the boot USB and for setup (docs/design.md §4.1).
+  fido2Hmac = static.stdenv.mkDerivation {
+    pname = "fido2-hmac";
+    version = "1";
+    src = src + "/tools";
+    nativeBuildInputs = [ pkgs.pkg-config ];
+    buildInputs = [ libfido2Static libcborStatic static.libudev-zero static.openssl static.zlib ];
+    dontConfigure = true;
+    # libfido2.pc doesn't list its private dependencies.
+    buildPhase = ''
+      $CC -static -O2 -Wall -Wextra -Werror fido2_hmac.c -o fido2-hmac \
+        $(pkg-config --cflags libfido2) -lfido2 -lcbor -ludev -lcrypto -lz -lpthread
+    '';
+    installPhase = ''
+      install -Dm755 fido2-hmac $out/bin/fido2-hmac
+    '';
+  };
+
   # Copy statically linked binaries into one bin/ directory, stripped, and
   # refuse anything that is dynamically linked.
   staticBin = name: bins: pkgs.runCommand name { nativeBuildInputs = [ pkgs.binutils pkgs.file ]; } ''
@@ -49,6 +84,7 @@ let
     "${static.busybox}/bin/busybox"
     "${lib.getBin static.cryptsetup}/bin/cryptsetup"
     "${static.libargon2}/bin/argon2"
+    "${fido2Hmac}/bin/fido2-hmac"
   ];
 
   # Tools stored in the encrypted boot volume, used by late.sh.
@@ -145,9 +181,31 @@ let
     python3 -m zipapp src -o $out -p "/usr/bin/env python3" -m "pd.cli:entry"
   '';
 
-  toolvm = import ./toolvm.nix { inherit pkgs kernel plainTree bootTools; modulesClosure = toolModulesClosure; };
+  # QEMU with CanoKey, an emulated FIDO2 security key (tests only), patched
+  # so that two emulated keys are actually different:
+  # * its random numbers come from an LCG seeded with 0, so every new key got
+  #   the same secrets; use getrandom();
+  # * it keeps littlefs's caches when a key is hot-plugged with a different
+  #   state file (the tests swap keys to enroll several); remount instead.
+  canokeyQemu = pkgs.canokey-qemu.overrideAttrs (old: {
+    postPatch = (old.postPatch or "") + ''
+      substituteInPlace canokey-core/canokey-crypto/src/rand.c \
+        --replace-fail '#include <rand.h>' '#include <rand.h>
+      #include <sys/random.h>' \
+        --replace-fail '__attribute__((weak)) uint32_t random32(void) {' \
+          '__attribute__((weak)) uint32_t random32(void) { uint32_t r; if (getrandom(&r, sizeof r, 0) == sizeof r) return r;' \
+        --replace-fail '__attribute__((weak)) void random_buffer(uint8_t *buf, size_t len) {' \
+          '__attribute__((weak)) void random_buffer(uint8_t *buf, size_t len) { if (getrandom(buf, len, 0) == (ssize_t)len) return;'
+      substituteInPlace canokey-core/src/fs.c --replace-fail \
+        'int fs_mount(const struct lfs_config *cfg) { return lfs_mount(&lfs, cfg); }' \
+        'static int fs_mounted; int fs_mount(const struct lfs_config *cfg) { if (fs_mounted) lfs_unmount(&lfs); int err = lfs_mount(&lfs, cfg); fs_mounted = !err; return err; }'
+    '';
+  });
+  qemuCanokey = pkgs.qemu_kvm.override { canokeySupport = true; canokey-qemu = canokeyQemu; };
 
-  setupEnv = import ./setup-env.nix { inherit pkgs kernel plainTree src; modulesClosure = setupModulesClosure; };
+  toolvm = import ./toolvm.nix { inherit pkgs kernel plainTree bootTools fido2Hmac; modulesClosure = toolModulesClosure; };
+
+  setupEnv = import ./setup-env.nix { inherit pkgs kernel plainTree src fido2Hmac; modulesClosure = setupModulesClosure; };
 
   faketarget = import ./faketarget.nix { inherit pkgs modulesClosure bootTools plainTools src; };
 
@@ -166,11 +224,13 @@ let
     { name = "faketarget-initrd.cpio.zst"; path = faketarget; }
     { name = "setup-initrd.cpio.zst"; path = setupEnv.initrd; }
     { name = "keymaps"; path = keymaps; }
+    # QEMU with an emulated FIDO2 security key (CanoKey), for the FIDO2 tests.
+    { name = "qemu-canokey"; path = qemuCanokey; }
   ];
 in
 {
   inherit testenv toolvm setupEnv pdPyz;
-  inherit bootTools plainTools bootInitrd plainTree modulesClosure detectShift lvm2Static;
+  inherit bootTools plainTools bootInitrd plainTree modulesClosure detectShift fido2Hmac lvm2Static;
   kernelImage = "${kernel}/bzImage";
   kernel = kernel;
   ukify = pkgs.systemdUkify;

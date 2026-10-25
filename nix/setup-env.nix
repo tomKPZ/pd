@@ -1,4 +1,4 @@
-{ pkgs, kernel, modulesClosure, plainTree, src }:
+{ pkgs, kernel, modulesClosure, plainTree, src, fido2Hmac }:
 # A RAM-only setup environment: boot it (as a UKI from a USB stick) on the
 # target machine to run `pd randomize`, `pd init-decoy`, `pd init-hidden`.
 # Nothing is written anywhere but the target disk, and nothing persists.
@@ -26,6 +26,7 @@ let
       thin-provisioning-tools
       btrfs-progs
       xfsTools
+      fido2Hmac
       dosfstools
       util-linux
       coreutils

@@ -11,10 +11,16 @@ import sys
 from pd import layout as L
 
 
+def stdin_line() -> bytes:
+    """The next line of stdin (--password-stdin: passwords, then the
+    security key PIN if one is needed, then answers to "next security key"
+    prompts).  Read one line at a time, so a test can answer prompts."""
+    return sys.stdin.buffer.readline().rstrip(b"\n")
+
+
 def read_passwords(args, names: list[str]) -> list[bytes]:
     if args.password_stdin:
-        lines = sys.stdin.buffer.read().split(b"\n")
-        return lines[: len(names)]
+        return [stdin_line() for _ in names]
     out = []
     for n in names:
         while True:
@@ -25,6 +31,20 @@ def read_passwords(args, names: list[str]) -> list[bytes]:
                 break
             print("Passwords do not match.")
     return out
+
+
+def key_prompter(args):
+    """next_key for enrolling and re-keying: ask for the next security key."""
+    if args.password_stdin:
+        def next_key_stdin() -> bool:
+            print("Next security key? (next/done)", flush=True)
+            return stdin_line().strip() == b"next"
+        return next_key_stdin
+
+    def next_key() -> bool:
+        answer = input("Plug in the next security key and press Enter, or type \"done\": ")
+        return answer.strip().lower() not in ("done", "d", "q")
+    return next_key
 
 
 def runner(args):
@@ -76,6 +96,18 @@ def main(argv=None) -> int:
                    help="re-key under this salt (rekey both sides, then build a new USB)")
     k.add_argument("--password-stdin", action="store_true")
 
+    f = sub.add_parser("fido2", help="enroll or remove FIDO2 security keys")
+    fsub = f.add_subparsers(dest="fido2_command", required=True)
+    fe = fsub.add_parser("enroll", help="enroll every plugged-in security key for one side")
+    fe.add_argument("--offset", type=int, default=None,
+                    help="boot volume start sector (default: the decoy's)")
+    fe.add_argument("--password-stdin", action="store_true")
+    fr = fsub.add_parser("remove", help="remove security keys (by number, from `pd fido2 list`)")
+    fr.add_argument("index", type=int, nargs="+")
+    fsub.add_parser("list", help="list the enrolled security keys")
+    for x in (fe, fr, fsub.choices["list"]):
+        x.add_argument("--config", required=True)
+
     m = sub.add_parser("migrate-v1", help="convert a v1 install to v2 in place")
     m.add_argument("--config", required=True, help="v2 config (new salt)")
     m.add_argument("--v1-salt", required=True)
@@ -117,12 +149,25 @@ def main(argv=None) -> int:
         print("Closed.")
         return 0
 
+    from pd import fido2
     from pd.config import Config
     cfg = Config.load(args.config)
     if getattr(args, "salt_from", None):
         from pd import usb
-        cfg.salt = usb.read_salt(pathlib.Path(args.salt_from))
+        uki = pathlib.Path(args.salt_from)
+        cfg.salt = usb.read_salt(uki)
+        if not (cfg.fido2 and pathlib.Path(cfg.fido2).exists()):
+            cfg.fido2_text = usb.read_member(uki, "fido2.txt")
     cfg.check_salt()
+    if getattr(args, "password_stdin", False):
+        # One PIN line, after the passwords, for every security key.
+        pin: list[str] = []
+
+        def pin_from_stdin(dev: str) -> str:
+            if not pin:
+                pin.append(stdin_line().decode())
+            return pin[0]
+        fido2.pin_source = pin_from_stdin
 
     if args.command == "randomize":
         from pd import setup
@@ -134,11 +179,30 @@ def main(argv=None) -> int:
         if args.new_salt:
             Config(disk=cfg.disk, salt=args.new_salt).check_salt()
         old, new = read_passwords(args, ["Current", "New"])
-        rekey.rekey(cfg, rekey.default_offset(cfg, args.offset), old, new, args.new_salt)
+        for w in rekey.rekey(cfg, rekey.default_offset(cfg, args.offset), old, new, args.new_salt,
+                             key_prompter(args)):
+            print(f"Warning: {w}")
         print("Re-keyed.")
+        if fido2.load(cfg):
+            print("Build a new boot USB (`pd usb`): fido2.txt changed if this side uses FIDO2.")
         if args.new_salt:
             print("Re-key the other side with the same --new-salt, put the new salt in the config,")
             print("and build a new boot USB.")
+    elif args.command == "fido2":
+        from pd import rekey
+        if args.fido2_command == "enroll":
+            (pw,) = read_passwords(args, ["Password"])
+            n, created = rekey.enroll(cfg, rekey.default_offset(cfg, args.offset), pw,
+                                      key_prompter(args))
+            print(f"Enrolled {n} security key(s) for this side; the password alone no longer opens it.")
+            if created:
+                print(f"{created} new key(s): enroll them for the other side too, if there is one.")
+            print("Build a new boot USB (`pd usb`).")
+        elif args.fido2_command == "remove":
+            rekey.remove(cfg, args.index)
+            print("Removed.  Build a new boot USB (`pd usb`).")
+        else:
+            print(rekey.status(cfg))
     elif args.command == "migrate-v1":
         from pd import migrate
         from pd.util import Argon2Params

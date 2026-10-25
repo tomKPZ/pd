@@ -47,6 +47,13 @@ there.
 > simply keep coercing. pd remains a research project until there is a variant whose boot USB can't be
 > told apart from a stock setup ([design.md §12](design.md#12-alternatives-considered), last row).
 
+### Offline password guessing
+Anyone with the USB and a disk image (A1 or A2) can guess passwords offline: the salt is on the USB, and
+a guess is checked by trying to open a boot volume. Argon2 (256 MiB, 14 passes by default) makes each
+guess slow. With FIDO2 security keys enrolled ([design.md §4.1](design.md#41-fido2-security-keys-optional)),
+each guess also needs the physical key, its PIN (the key locks after 8 wrong tries), and a touch. That
+doesn't change coercion: a coercer demands the key along with the password.
+
 ## Out of scope
 
 * **Snapshot adversaries.** Two or more disk images taken at different times show "free" space
@@ -73,6 +80,7 @@ there.
 | Leftover traces on the machine that ran setup | Run setup only from the RAM-only setup UKI ([install.md](install.md)). Wipe the setup stick afterwards: it holds `pd.toml`. |
 | LVM metadata history in the decoy | v2 creates the decoy with stock commands and names ([design.md §6.1](design.md#61-decoy-stock-lvm)). A v1 decoy's history shows pd's unusual commands. |
 | Filesystem errors in the decoy | If the hidden side ever overwrote decoy blocks, the decoy would show checksum errors. Prevented by the hidden cap and the frontier monitor. |
+| `fido2.txt` on the USB, but the decoy doesn't use a security key | Points at a side that does. If the hidden side uses FIDO2, enroll the decoy too. |
 | A written-down hidden offset | Not a secret in itself, but a note of it next to the machine is a pointer saying "there is a hidden side". Keep it out of the decoy, off the USB, and away from the machine. |
 
 ## Operational rules
