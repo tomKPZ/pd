@@ -1,8 +1,8 @@
 # Stock boot
 
 > [!WARNING]
-> Tested in QEMU only, and not yet on a real live system (see [Status](#status)). Rehearse on a spare disk
-> first.
+> Tested in QEMU, including a hidden boot from the real Debian Live 13 image, but not yet on real
+> hardware (see [Status](#status)). Rehearse on a spare disk first.
 
 In stock boot, no pd USB exists. The decoy is an ordinary encrypted Linux install that boots on its own.
 To use the hidden system, you boot a stock live system (such as Tails) and type a few commands from
@@ -126,10 +126,15 @@ The hidden boot needs a live system with:
   verify;
 * a root shell.
 
-Tails 7 (based on Debian 13, with OpenSSL 3.5) should fit. Set an administration password at its
-Welcome Screen to get `sudo`. Other live images based on Debian 13, and recent Fedora and Ubuntu (25.04
-and later) live images, also ship OpenSSL 3.2 or later. Check `command -v cryptsetup openssl` and
-`openssl version` on the image you choose before relying on it. Nothing from pd goes on the live USB.
+* **Debian Live 13** desktop images (Xfce, GNOME, KDE, …) have everything (OpenSSL 3.5, cryptsetup 2.7);
+  the test suite boots the hidden side from the Xfce one. Log in as `user` (password `live`), then
+  `sudo -i`. Debian's "standard" live image (no desktop) has no cryptsetup.
+* **Tails 7** (based on Debian 13, with OpenSSL 3.5) should fit too. Set an administration password at
+  its Welcome Screen to get `sudo`.
+* Recent Fedora and Ubuntu (25.04 and later) live images also ship OpenSSL 3.2 or later.
+
+Check `command -v cryptsetup openssl` and `openssl version` on the image you choose before relying on it.
+Nothing from pd goes on the live USB.
 
 ## 3. Setting up the hidden side
 
@@ -260,9 +265,12 @@ install argon2 xxd`, which downloads them; on Tails, through Tor):
   * `pd init-hidden --stock-decoy` leaves the decoy's LUKS header, LVM metadata and files unchanged.
   * The printed commands, typed in a fresh VM, boot the hidden system, and the frontier monitor reads
     the LUKS decoy.
+* **Tested with a real live image** (`tests/test_live.py`, opt-in with `PD_TEST_LIVE=1`; downloads
+  Debian Live 13 Xfce, about 3.8 GB): the test logs in on the live system's serial console, types the
+  printed commands as root, and the hidden system boots. This covers the live system's systemd and
+  udev, its OpenSSL and cryptsetup, and kexec under its kernel.
 * **Not yet tested:**
-  * a real live system: its udev (`late.sh` stops udev first, so LVM can't activate anything) and
-    kexec under its kernel;
-  * Secure Boot;
+  * real hardware, and Secure Boot;
+  * Tails;
   * a detached header;
   * a decoy laid out by a real installer.

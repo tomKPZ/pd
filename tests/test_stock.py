@@ -12,6 +12,8 @@ with an ESP and a LUKS2 partition, LVM with a thin pool inside.  Then:
   hidden system.
 """
 
+import dataclasses
+import pathlib
 import re
 import unittest
 
@@ -73,40 +75,57 @@ def fingerprints(out: str) -> list[tuple[str, str]]:
     return re.findall(r"^(HEADER|LVMMETA|FILES) ([^\r\n]*)", out, re.M)
 
 
+@dataclasses.dataclass
+class Stock:
+    env: pathlib.Path
+    work: pathlib.Path
+    disk: pathlib.Path
+    commands: list[str]  # what pd printed for the hidden boot
+    offset: int
+
+
+def make_stock(test: unittest.TestCase) -> Stock:
+    """Build a stock decoy, add a hidden side with `pd init-hidden
+    --stock-decoy`, and check that the decoy is unchanged."""
+    env = vm.testenv()
+    work = vm.workdir()
+    test.addCleanup(vm.cleanup, work)
+    disk = vm.sparse_disk(work / "disk.img", 8 << 30)
+    (work / "install.sh").write_text(fixture.INSTALL.format(
+        kernel=env / "bzImage", initrd=env / "faketarget-initrd.cpio.zst"))
+
+    _, out = vm.ToolVM(env, work).run(STOCK_DECOY + FINGERPRINT + """
+    fingerprint
+    echo "UUID $(cryptsetup luksUUID /dev/vda2)"
+    """, disks=[disk], log=work / "decoy.log")
+    before = fingerprints(out)
+    uuid = re.search(r"^UUID (\S+)", out, re.M).group(1)
+    test.assertEqual([k for k, _ in before], ["HEADER", "LVMMETA", "FILES"])
+    test.assertTrue(before[2][1].startswith("decoy "))
+
+    # The salt is the decoy's LUKS UUID, read back at boot.
+    (work / "pd.toml").write_text(fixture.CONFIG.format(salt=uuid))
+    _, out = vm.ToolVM(env, work).run(FINGERPRINT + f"""
+    printf '%s\\n%s\\n' '{DECOY_PW}' '{HIDDEN_PW}' | python3 -m pd init-hidden --config pd.toml \\
+        --stock-decoy /dev/vda2 --password-stdin --run 'sh /work/install.sh hidden' | tee hidden.txt
+    fingerprint
+    """, disks=[disk], log=work / "init-hidden.log")
+    after = fingerprints(out)
+    test.assertEqual(before, after, "pd changed the decoy")
+    printed = (work / "hidden.txt").read_text()
+    test.assertIn("The salt is the decoy's LUKS UUID", printed)
+    after_header = printed.split("Hidden boot from a live system", 1)[1].splitlines()[1:]
+    commands = [line[2:] for line in after_header if line.startswith("  ")]
+    test.assertEqual(commands[0], "read -rs P")
+    offset = int(re.search(r" -o (\d+) ", commands[1]).group(1))
+    test.assertEqual(offset % 10**6, 0)
+    return Stock(env=env, work=work, disk=disk, commands=commands, offset=offset)
+
+
 class StockBoot(unittest.TestCase):
     def test_stock_decoy(self):
-        env = vm.testenv()
-        work = vm.workdir()
-        self.addCleanup(vm.cleanup, work)
-        disk = vm.sparse_disk(work / "disk.img", 8 << 30)
-        (work / "install.sh").write_text(fixture.INSTALL.format(
-            kernel=env / "bzImage", initrd=env / "faketarget-initrd.cpio.zst"))
-
-        _, out = vm.ToolVM(env, work).run(STOCK_DECOY + FINGERPRINT + """
-        fingerprint
-        echo "UUID $(cryptsetup luksUUID /dev/vda2)"
-        """, disks=[disk], log=work / "decoy.log")
-        before = fingerprints(out)
-        uuid = re.search(r"^UUID (\S+)", out, re.M).group(1)
-        self.assertEqual([k for k, _ in before], ["HEADER", "LVMMETA", "FILES"])
-        self.assertTrue(before[2][1].startswith("decoy "))
-
-        # The salt is the decoy's LUKS UUID, read back at boot.
-        (work / "pd.toml").write_text(fixture.CONFIG.format(salt=uuid))
-        _, out = vm.ToolVM(env, work).run(FINGERPRINT + f"""
-        printf '%s\\n%s\\n' '{DECOY_PW}' '{HIDDEN_PW}' | python3 -m pd init-hidden --config pd.toml \\
-            --stock-decoy /dev/vda2 --password-stdin --run 'sh /work/install.sh hidden' | tee hidden.txt
-        fingerprint
-        """, disks=[disk], log=work / "init-hidden.log")
-        after = fingerprints(out)
-        self.assertEqual(before, after, "pd changed the decoy")
-        printed = (work / "hidden.txt").read_text()
-        self.assertIn("The salt is the decoy's LUKS UUID", printed)
-        after_header = printed.split("Hidden boot from a live system", 1)[1].splitlines()[1:]
-        commands = [line[2:] for line in after_header if line.startswith("  ")]
-        self.assertEqual(commands[0], "read -rs P")
-        offset = int(re.search(r" -o (\d+) ", commands[1]).group(1))
-        self.assertEqual(offset % 10**6, 0)
+        st = make_stock(self)
+        env, work, disk, commands, offset = st.env, st.work, st.disk, st.commands, st.offset
 
         # The live system: the password is set instead of read.
         script = f"P='{HIDDEN_PW}'\n" + "\n".join(commands[1:]) + "\n"

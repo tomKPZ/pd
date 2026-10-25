@@ -17,5 +17,5 @@ NixOS configuration repos, and running a migration.
 | Item | Finding | Autonomous? |
 |---|---|---|
 | **FIDO2 with a real security key** | Implemented and tested with QEMU's emulated CanoKey (design.md §4.1). Try it with a real key, in a VM (`-device usb-host,vendorid=0x1050,...`) or on the real-hardware trial. | No: needs a real key. |
-| **Stock boot on a real live system** | Documented and tested in QEMU ([stock-boot.md](stock-boot.md)). Try it with a real live image (e.g. Tails 7) during the real-hardware trial: its udev, kexec, and Secure Boot off. An opt-in test could boot a downloaded Debian Live image in QEMU and type the commands. | Test: yes (downloads ~1.5 GB) |
+| **Stock boot on real hardware** | Documented and tested in QEMU, including a hidden boot from the real Debian Live 13 image (`PD_TEST_LIVE=1`, [stock-boot.md](stock-boot.md)). Try it during the real-hardware trial, ideally also with Tails 7 (its Welcome Screen needs a GUI, so it isn't automated). | No: needs real hardware. |
 | **Project name** | Last, once the author is satisfied. | No |

@@ -655,6 +655,7 @@ go to another pd setup; never `dd` the disk.
   | `test_arch` | a real Arch install (pacstrap, `pd` mkinitcpio hook) boots through pd (`PD_TEST_ARCH=1`, needs network) |
   | `test_monitor` | frontier monitor report and warning; no hidden-only files in the decoy |
   | `test_stock` | stock boot: a stock LUKS + LVM thin decoy is left unchanged by `init-hidden --stock-decoy`, and the printed commands boot the hidden side from another VM |
+  | `test_live` (opt-in: `PD_TEST_LIVE=1`) | stock boot from the real Debian Live 13 Xfce image: log in on its serial console, type the printed commands, boot the hidden side |
   | `test_fido2` | enroll two emulated security keys for both sides, boot with either, wrong PIN, unknown key, rekey, remove |
   | `test_churn` | btrfs, XFS and (unsupported) ext4 pool footprint under churn, with and without a shutdown trim |
   | `fs_survey.py` (not in the suite; `python3 -m tests.fs_survey`) | the §2.3 table: filesystems and btrfs options × workloads × trim |

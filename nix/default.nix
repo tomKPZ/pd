@@ -233,6 +233,8 @@ let
     { name = "keymaps"; path = keymaps; }
     # QEMU with an emulated FIDO2 security key (CanoKey), for the FIDO2 tests.
     { name = "qemu-canokey"; path = qemuCanokey; }
+    # Extracts a live ISO's kernel and initrd (test_live).
+    { name = "xorriso"; path = pkgs.xorriso; }
   ];
 in
 {

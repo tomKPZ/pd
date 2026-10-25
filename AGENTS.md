@@ -55,8 +55,9 @@ order: [README.md](README.md) → [docs/design.md](docs/design.md) →
   only on the hidden side), `target/` (hook, NixOS module, Arch hook and trim unit for installed OSes),
   `pd/` (setup CLI), `nix/` (static tools, kernel modules, boot initrd, tool VM, setup UKI, fake target,
   NixOS test system), `tests/`, `tools/` (`detect_shift.c`, `fido2_hmac.c`). The v1 code is on branch `main` (`git show main:pd.py`).
-* **Opt-in tests:** `PD_TEST_ARCH=1` (Arch install, downloads packages into `~/.cache/pd-tests`) and
-  `PD_TEST_NET=1` (setup environment networking) need internet access.
+* **Opt-in tests:** `PD_TEST_ARCH=1` (Arch install, downloads packages into `~/.cache/pd-tests`),
+  `PD_TEST_NET=1` (setup environment networking) and `PD_TEST_LIVE=1` (stock boot from Debian Live,
+  downloads a 3.8 GB image into `~/.cache/pd-tests/live`) need internet access.
 * **Any design change** updates the decision log in [docs/design.md §13](docs/design.md#13-decision-log).
   Update milestone status in [docs/roadmap.md](docs/roadmap.md).
 * **Style:** 4-space indent ([.editorconfig](.editorconfig)). Shell scripts use `set -euo pipefail`.
