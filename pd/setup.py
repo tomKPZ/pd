@@ -282,7 +282,14 @@ def check_disk(disk: str) -> int:
     return d
 
 
+def set_hostname(cfg: Config) -> None:
+    """LVM records the host name in its metadata; make it the decoy's."""
+    if cfg.hostname:
+        cmd("hostname", cfg.hostname)
+
+
 def init_decoy(cfg: Config, password: bytes, run=None) -> None:
+    set_hostname(cfg)
     disk = cfg.disk
     d = check_disk(disk)
     key = argon2(password, cfg.salt, cfg.argon2)
@@ -316,12 +323,11 @@ def open_decoy_readonly(cfg: Config, password: bytes):
 def init_hidden(cfg: Config, decoy_password: bytes, password: bytes, run=None) -> L.HiddenLayout:
     if decoy_password == password:
         raise RuntimeError("the hidden password must differ from the decoy password")
+    set_hostname(cfg)
     disk = cfg.disk
     d = check_disk(disk)
     with open_decoy_readonly(cfg, decoy_password) as (decoy_key, decoy_table, segs, pe_start):
         top = decoy_top(segs, pe_start, L.DATA_START, d)
-    for s in segs:
-        print(f"decoy segment: {s['lv']} extents {s['first']}-{s['last']}", flush=True)
     hl = L.hidden_layout(top, memorable=cfg.memorable_offset)
     check_no_overlap(segs, pe_start, hl)
     key = argon2(password, cfg.salt, cfg.argon2)

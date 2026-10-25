@@ -64,7 +64,7 @@ class Fixture:
         return vm.ToolVM(self.env, self.work)
 
 
-def make(size: int = 8 << 30, kernel=None, initrd=None) -> Fixture:
+def make(size: int = 8 << 30, kernel=None, initrd=None, randomize: bool = True) -> Fixture:
     """Set up a disk.  `kernel`/`initrd` are the target OS's boot files
     (default: the fake target)."""
     env = vm.testenv()
@@ -76,7 +76,7 @@ def make(size: int = 8 << 30, kernel=None, initrd=None) -> Fixture:
     (work / "install.sh").write_text(INSTALL.format(kernel=kernel, initrd=initrd))
     cfg = Config.load(work / "pd.toml")
     script = f"""
-    python3 -m pd randomize --config pd.toml
+    {"python3 -m pd randomize --config pd.toml" if randomize else ""}
     printf '%s\\n' '{DECOY_PW}' | python3 -m pd init-decoy --config pd.toml --password-stdin --run 'sh /work/install.sh decoy'
     printf '%s\\n%s\\n' '{DECOY_PW}' '{HIDDEN_PW}' | python3 -m pd init-hidden --config pd.toml --password-stdin --run 'sh /work/install.sh hidden' | tee hidden.txt
     """

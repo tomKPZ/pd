@@ -18,7 +18,9 @@ Status values: ☐ not started · ◐ in progress · ☑ done.
 | ☑ | **M9 Migration tool** and guide for v1 installs ([migration.md](migration.md)) | migration test on a v1 image passes |
 
 Notes on status:
-* M3: ext4 measured unsafe; btrfs long-run (200 cycles) pending. The disk visualizer isn't revived yet.
+* M3: ext4 measured unsafe; btrfs long-run (200 cycles) pending. The disk visualizer is revived
+  (`tests/visualize.py`, used by `tests/test_growth.py`).
+* D22: `pd usb` takes the salt from the config; reading it back from an existing USB isn't implemented.
 * M6: NixOS module tested with a real NixOS initrd; Arch hook written but untested (needs an Arch
   install in a VM); no full OS installs in tests yet.
 * M7: the decoy-segment overlap warning isn't implemented yet.

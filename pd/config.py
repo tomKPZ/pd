@@ -34,6 +34,7 @@ class Config:
     disk: str
     salt: str
     vg: str = "sysvg"
+    hostname: str | None = None  # set during setup, since LVM records it
     swap_size: int = 64 << 20
     hidden_cap: float = 0.4  # fraction of the disk the hidden thin LVs may use
     memorable_offset: bool = False
