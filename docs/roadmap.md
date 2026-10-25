@@ -15,7 +15,7 @@ Status values: ☐ not started · ◐ in progress · ☑ done.
 | ◐ | **M6 Target integrations**: shared `hook.sh`, NixOS module (from `patches/`), Arch mkinitcpio hook; optional real NixOS/Arch installs in tests | NixOS end-to-end in QEMU, at least |
 | ☑ | **M7 Frontier monitor** (D15) | warns in a test where the decoy grows toward the hidden region |
 | ◐ | **M8 Docs pass**: bring all docs in line with what was built | — |
-| ☐ | **M9 Migration tool** and guide for v1 installs ([migration.md](migration.md)) | migration test on a v1 image passes |
+| ☑ | **M9 Migration tool** and guide for v1 installs ([migration.md](migration.md)) | migration test on a v1 image passes |
 
 Notes on status:
 * M3: ext4 measured unsafe; btrfs long-run (200 cycles) pending. The disk visualizer isn't revived yet.

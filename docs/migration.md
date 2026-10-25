@@ -1,8 +1,9 @@
-# Migrating a v1 install to v2 (draft)
+# Migrating a v1 install to v2
 
 > [!CAUTION]
-> Draft. Nothing here has been tested yet. The migration tool and its tests are milestone M9 in
-> [roadmap.md](roadmap.md). Don't run any of this on a real disk until the tests pass.
+> `pd migrate-v1` is tested only against v1-format disks built in QEMU (`tests/make_v1.py`,
+> `tests/test_migrate.py`). It rewrites both boot volumes in place. Back up nothing to unencrypted
+> storage; rehearse on a disk image first.
 
 ## Why no data re-encryption is needed
 
@@ -33,24 +34,26 @@ What does change:
 > hidden side by design, so re-initializing a decoy must require the hidden offset or password and check
 > for overlap before writing anything (roadmap).
 
-## Steps (planned)
+## Steps
 
-1. **Install a transitional hook in every OS on both sides.** It follows the v1 path when
-   `/boot_tmp/header.dat` exists and the v2 path otherwise. Rebuild the initrds and confirm each OS still
-   boots with the v1 USB.
-2. **Boot a throwaway environment** (live ISO + pd bundle). Then, per side:
-   1. Derive the v1 key: 512-byte Argon2 output, with the `a` suffix for the hidden side. Open the plain
-      volume read-only and copy its contents to tmpfs.
-   2. Extract the volume key: `cryptsetup luksDump --dump-volume-key --header header.dat
-      --key-file key.bin --keyfile-offset 64 <data mapping>`. Write the 64 raw bytes to `data.key`.
-   3. Verify that a plain-mode mapping with `data.key` shows the same plaintext as the LUKS mapping:
-      compare the LVM label and the first GiB.
-   4. Re-create the plain volume at the same location under the v2 key (new salt), and write the v2
-      contents. Keep `table.txt`.
-   5. Hidden side only: add the decoy's `data.key` and table, for the frontier monitor.
-3. **Write the v2 USB** with the new salt. Boot both sides.
-4. **Remove the transitional v1 branch** from the hooks.
+1. **Install the v2 target hook in every OS on both sides,** alongside the v1 one: NixOS imports
+   `target/nixos/pd.nix`; Arch adds the `pd` mkinitcpio hook. v1's hook only acts when
+   `/boot_tmp/header.dat` exists and v2's only when `/boot_tmp/data.key` exists, so both can be
+   installed at once. Rebuild the initrds and confirm each OS still boots with the v1 USB.
+2. **Boot a throwaway environment** with pd, write a v2 config with a **new** salt (`pd salt`), and run:
+   ```sh
+   pd migrate-v1 --config pd.toml --v1-salt <v1 salt> --v1-hidden-offset <v1 hidden sector>
+   ```
+   Omit `--v1-hidden-offset` if there is no hidden side. For each side, the tool:
+   1. derives the v1 key (512-byte Argon2 output, salt + `a` for the hidden side) and reads the v1 boot
+      volume read-only;
+   2. extracts the LUKS volume key (`cryptsetup luksDump --dump-volume-key`, in `/run` only);
+   3. checks that plain dm-crypt with that key shows the LVM PV;
+   4. only after both sides pass, re-creates each boot volume in place under the v2 key, keeping
+      `table.txt` and `systems/*/env.sh`, replacing `extra.sh` with the v2 versions, and adding the
+      frontier monitor to the hidden side.
+3. **Write the v2 USB** with the new salt (`pd usb`). Boot both sides.
+4. **Remove the v1 hook** from the target OSes.
 
-Rollback: keep the v1 USB until both sides boot with v2. Keep copies of the old plain volumes only in
-RAM during the migration. A 255 MiB random-looking file stored elsewhere is itself evidence.
-
+Rollback: keep the v1 USB until both sides boot with v2. The data regions are never modified, but the
+v1 boot volumes are overwritten in step 2, so the v1 USB stops working after it.

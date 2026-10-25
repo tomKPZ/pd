@@ -76,32 +76,59 @@ def boot_volume(disk: str, offset: int, key: bytes, *, create: bool):
 
 
 def write_boot_volume(mnt: pathlib.Path, cfg: Config, data_key: bytes, table: str,
-                      extra: dict[str, bytes] | None = None) -> None:
+                      extra: dict[str, bytes] | None = None,
+                      systems_from: dict[str, dict[str, bytes]] | None = None,
+                      default: str | None = None) -> None:
+    """Fill a freshly created boot volume.
+
+    `systems_from` (used by migration) supplies existing systems/<name>/
+    files instead of generating env.sh from the config; their extra.sh is
+    replaced by the current one from plain/systems/<name>/ if there is one.
+    """
     tree = pathlib.Path(os.environ.get("PD_PLAIN_TREE", ""))
     if not (tree / "late.sh").exists():
         raise RuntimeError("PD_PLAIN_TREE must point at the built plain tree (nix build .#plainTree)")
     shutil.copytree(tree / "bin", mnt / "bin", symlinks=True)
-    shutil.copy(tree / "late.sh", mnt / "late.sh")
-    shutil.copy(tree / "thin-ro.sh", mnt / "thin-ro.sh")
+    for f in ("late.sh", "thin-ro.sh"):
+        shutil.copy(tree / f, mnt / f)
     os.chmod(mnt / "late.sh", 0o755)
     write_file(mnt / "data.key", data_key, 0o600)
     write_file(mnt / "table.txt", table)
     write_file(mnt / "crypt.env", f'CRYPT_ARGS="{" ".join(CIPHER_ARGS)}"\n')
     systems = mnt / "systems"
     systems.mkdir()
-    for s in cfg.systems:
-        d = systems / s.name
+    if systems_from is None:
+        systems_from = {}
+        for s in cfg.systems:
+            systems_from[s.name] = {"env.sh": "".join(f"{k}='{v}'\n" for k, v in [
+                ("VG", cfg.vg), ("LV_ROOT", s.lv), ("KERNEL", s.kernel),
+                ("INITRD", s.initrd), ("CMDLINE", s.cmdline)]).encode()}
+        extras = {s.name: s.extra or s.name for s in cfg.systems}
+        default = cfg.default
+    else:
+        extras = {name: name for name in systems_from}
+    for name, files in systems_from.items():
+        d = systems / name
         d.mkdir()
-        write_file(d / "env.sh", "".join(f"{k}='{v}'\n" for k, v in [
-            ("VG", cfg.vg), ("LV_ROOT", s.lv), ("KERNEL", s.kernel),
-            ("INITRD", s.initrd), ("CMDLINE", s.cmdline)]))
-        hook = REPO / "plain" / "systems" / (s.extra or s.name) / "extra.sh"
+        write_file(d / "env.sh", files["env.sh"])
+        hook = REPO / "plain" / "systems" / extras[name] / "extra.sh"
         if hook.exists():
             shutil.copy(hook, d / "extra.sh")
             os.chmod(d / "extra.sh", 0o755)
-    os.symlink(cfg.default, systems / "default")
+    if default:
+        os.symlink(default, systems / "default")
     for name, data in (extra or {}).items():
         write_file(mnt / name, data, 0o600)
+    cmd("sync")
+
+
+def install_hidden_extras(mnt: pathlib.Path, cfg: Config, decoy_key: bytes, decoy_table: str) -> None:
+    """Hidden-only files: never copy these into the decoy."""
+    write_file(mnt / "decoy.key", decoy_key, 0o600)
+    write_file(mnt / "decoy.table", decoy_table)
+    (mnt / "hooks").mkdir()
+    shutil.copy(REPO / "plain" / "hidden" / "frontier.sh", mnt / "hooks" / "frontier.sh")
+    write_file(mnt / "frontier.env", f"MIN_GAP_PERCENT={cfg.min_gap_percent}\n")
     cmd("sync")
 
 
@@ -303,12 +330,8 @@ def init_hidden(cfg: Config, decoy_password: bytes, password: bytes, run=None) -
     data_key = os.urandom(64)
     table = hl.data_table()
     with boot_volume(disk, hl.plain_offset, key, create=True) as mnt:
-        # Hidden-only files: never copy these into the decoy.
-        write_boot_volume(mnt, cfg, data_key, table,
-                          extra={"decoy.key": decoy_key, "decoy.table": decoy_table.encode()})
-        (mnt / "hooks").mkdir()
-        shutil.copy(REPO / "plain" / "hidden" / "frontier.sh", mnt / "hooks" / "frontier.sh")
-        write_file(mnt / "frontier.env", f"MIN_GAP_PERCENT={cfg.min_gap_percent}\n")
+        write_boot_volume(mnt, cfg, data_key, table)
+        install_hidden_extras(mnt, cfg, decoy_key, decoy_table)
     with data_region(disk, table, data_key, readonly=False) as dev:
         create_lvm(dev, cfg, hidden=True, disk_bytes=d)
         with vg_active(cfg.vg):

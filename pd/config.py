@@ -66,9 +66,7 @@ class Config:
         cfg = Config(argon2=Argon2Params(**a), systems=systems, **raw)
         if subvols is not None:
             cfg.subvolumes = subvols
-        if not cfg.systems:
-            raise ValueError("config needs at least one [[systems]] entry")
-        if cfg.default is None:
+        if cfg.default is None and cfg.systems:
             cfg.default = cfg.systems[0].name
         if not re.fullmatch(r"[0-9a-fA-F]{16,}", cfg.salt):
             raise ValueError("salt must be hex (use `pd salt` to generate one)")

@@ -64,6 +64,15 @@ def main(argv=None) -> int:
     o.add_argument("--password-stdin", action="store_true")
     o.add_argument("--run", nargs="?", const="")
 
+    m = sub.add_parser("migrate-v1", help="convert a v1 install to v2 in place")
+    m.add_argument("--config", required=True, help="v2 config (new salt)")
+    m.add_argument("--v1-salt", required=True)
+    m.add_argument("--v1-hidden-offset", type=int, default=None,
+                   help="start sector of the v1 hidden boot volume (omit if there is none)")
+    m.add_argument("--v1-argon2", default=None,
+                   help="v1 Argon2 parameters t,m_log2,p (default 14,18,8)")
+    m.add_argument("--password-stdin", action="store_true")
+
     u = sub.add_parser("usb", help="build the boot UKI")
     u.add_argument("--config", required=True)
     u.add_argument("--env", required=True, help="path to the built testenv/default output")
@@ -86,7 +95,21 @@ def main(argv=None) -> int:
     if args.command == "randomize":
         from pd import setup
         setup.randomize(cfg.disk)
-    elif args.command == "init-decoy":
+    elif args.command in ("init-decoy", "init-hidden") and not cfg.systems:
+        raise SystemExit("config needs at least one [[systems]] entry")
+    elif args.command == "migrate-v1":
+        from pd import migrate
+        from pd.util import Argon2Params
+        hidden = args.v1_hidden_offset is not None
+        pws = read_passwords(args, ["Decoy", "Hidden"] if hidden else ["Decoy"])
+        params = migrate.V1_ARGON2
+        if args.v1_argon2:
+            t_, m_, p_ = (int(x) for x in args.v1_argon2.split(","))
+            params = Argon2Params(t=t_, m_log2=m_, p=p_, length=512)
+        migrate.migrate(cfg, args.v1_salt, pws[0], pws[1] if hidden else None,
+                        args.v1_hidden_offset * L.SECTOR if hidden else None, params)
+        print("Migrated.  Install the v2 target hook in every OS, then boot with a v2 USB.")
+    if args.command == "init-decoy":
         from pd import setup
         (pw,) = read_passwords(args, ["Decoy"])
         setup.init_decoy(cfg, pw, runner(args))
