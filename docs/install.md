@@ -66,7 +66,7 @@ cmdline = "root=/dev/sysvg/root rootflags=subvol=@ rw"
 
 [[volumes]]                    # optional extra thin LVs
 name = "data"
-fs = "ext4"                    # or "btrfs" (default); see design.md §2.3
+fs = "xfs"                     # (default) or "btrfs"; see design.md §2.3
 ```
 
 `default` (the system booted without holding Shift) is the first `[[systems]]` entry unless set.
@@ -76,7 +76,7 @@ the boot path needs `@boot` (and `@nix` for NixOS).
 
 On btrfs, files that get rewritten in place (VM images, databases) make the filesystem grow to
 more than twice their size, and the side's footprint on the disk grows with it. Give them a directory
-with `chattr +C` (before creating the files), or put them on an ext4 volume (design.md §2.3).
+with `chattr +C` (before creating the files), or put them on an XFS volume (design.md §2.3).
 
 ## 3. Build the boot USB
 
@@ -140,10 +140,10 @@ install -Dm644 $PD_SRC/target/arch/pd-hook "$r/etc/initcpio/hooks/pd"
 install -Dm644 $PD_SRC/target/arch/fstrim-before-umount.service "$r/etc/systemd/system/"
 sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect microcode modconf kms keyboard keymap consolefont block pd lvm2 filesystems fsck)/' \
     "$r/etc/mkinitcpio.conf"
-genfstab -U "$r" | sed -E 's/\t(btrfs|ext4)\t([^\t]*)/\t\1\t\2,nodiscard/' >> "$r/etc/fstab"
+genfstab -U "$r" | sed -E 's/\t(btrfs|xfs)\t([^\t]*)/\t\1\t\2,nodiscard/' >> "$r/etc/fstab"
 arch-chroot "$r" sh -c 'systemctl enable fstrim-before-umount.service; mkinitcpio -P; passwd'
 ```
-Check `$r/etc/fstab` by hand: every btrfs and ext4 entry needs `nodiscard`. The `pd` hook targets the
+Check `$r/etc/fstab` by hand: every btrfs and XFS entry needs `nodiscard`. The `pd` hook targets the
 default busybox-based initramfs (`udev` hook), not the `systemd` hook. With `autodetect`, mkinitcpio
 only includes drivers for the machine it runs on, which is the target machine here.
 

@@ -85,8 +85,10 @@ let
     depmod -b $out -a $ver
   '';
   modulesClosure = mkModulesClosure rootModules;
-  # The tool VM also needs filesystems pd itself doesn't use (for surveys).
-  toolModulesClosure = mkModulesClosure (rootModules ++ [ "xfs" "f2fs" ]);
+  # Setup formats extra volumes as XFS; the boot environment never mounts them.
+  setupModulesClosure = mkModulesClosure (rootModules ++ [ "xfs" ]);
+  # The tool VM also has ext4 and f2fs, for the filesystem survey.
+  toolModulesClosure = mkModulesClosure (rootModules ++ [ "xfs" "ext4" "f2fs" ]);
 
   # The boot environment's initrd, without per-install files (salt and
   # early_env.sh, which `pd usb` appends as a second cpio).
@@ -145,7 +147,7 @@ let
 
   toolvm = import ./toolvm.nix { inherit pkgs kernel plainTree bootTools; modulesClosure = toolModulesClosure; };
 
-  setupEnv = import ./setup-env.nix { inherit pkgs kernel modulesClosure plainTree src; };
+  setupEnv = import ./setup-env.nix { inherit pkgs kernel plainTree src; modulesClosure = setupModulesClosure; };
 
   faketarget = import ./faketarget.nix { inherit pkgs modulesClosure bootTools plainTools src; };
 

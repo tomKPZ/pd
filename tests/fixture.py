@@ -34,7 +34,7 @@ cmdline = "console=ttyS0 panic=-1 root=/dev/sysvg/root rootflags=subvol=@"
 
 [[volumes]]
 name = "data"
-fs = "ext4"
+fs = "xfs"
 """
 
 INSTALL = """

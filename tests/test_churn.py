@@ -1,6 +1,7 @@
 """Churn test (design.md §2.3): with discards off, a filesystem's footprint
 in the thin pool must track its peak usage, not its total writes.  Run for
-btrfs and ext4; this decides which filesystems are safe on pd."""
+btrfs and XFS (the filesystems pd uses), and for ext4, which pd doesn't
+support because of what these tests show (tests/fs_survey.py compares more)."""
 
 import json
 import os
@@ -23,6 +24,7 @@ lvm lvcreate -qq -V ${{size}}b -T $vg/pool -n vol
 mkdir -p /mnt/t
 case $fs in
 btrfs) mkfs.btrfs -q -f --nodiscard /dev/$vg/vol; opts=noatime,nodiscard,{btrfs_opts} ;;
+xfs) mkfs.xfs -q -f -K /dev/$vg/vol; opts=noatime,nodiscard ;;
 ext4) mkfs.ext4 -q -E nodiscard /dev/$vg/vol; opts=noatime,nodiscard ;;
 esac
 mount -o $opts /dev/$vg/vol /mnt/t
@@ -74,11 +76,17 @@ class Churn(unittest.TestCase):
         r = self.run_fs("btrfs")
         self.assertLess(r["pool_used"], 1.5 * r["peak_fs_used"] + (512 << 20))
 
+    def test_xfs(self):
+        # Measured: 3.5 GiB at 60 cycles (about 1.7x peak usage), creeping
+        # slowly (3.8 GiB at 200).
+        r = self.run_fs("xfs")
+        self.assertLess(r["pool_used"], 2 * r["peak_fs_used"] + (512 << 20))
+
     def test_ext4(self):
         # Measured: ext4 spreads allocations over the whole device, so without
         # the shutdown trim its pool footprint reaches the full virtual size
-        # within ~15 cycles while using under 1 GiB.  This test documents that
-        # and fails loudly if it ever stops being true.
+        # within ~15 cycles while using under 1 GiB.  That's why pd doesn't
+        # support ext4; this test fails loudly if it ever stops being true.
         r = self.run_fs("ext4")
         self.assertGreater(r["pool_used"], 0.9 * r["fs_size"])
 
@@ -88,6 +96,10 @@ class Churn(unittest.TestCase):
         # the filesystem freed, and the next activation allocates from the
         # front again.
         r = self.run_fs("btrfs", reboot_every=5)
+        self.assertLess(r["high_water"], 2 * r["peak_fs_used"] + (512 << 20))
+
+    def test_xfs_trim_on_shutdown(self):
+        r = self.run_fs("xfs", reboot_every=5)
         self.assertLess(r["high_water"], 2 * r["peak_fs_used"] + (512 << 20))
 
     def test_ext4_trim_on_shutdown(self):

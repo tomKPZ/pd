@@ -9,8 +9,8 @@ returns; the steps to undo are recorded in /run/pd/open.json (no keys) for
 Read-only opening (the default) never writes to the disk: every mapping is
 read-only, thin LVs are mapped from thin_dump output instead of activating
 the pool (dm-thin can't run in a read-only table), btrfs is mounted with
-rescue=nologreplay and ext4 with noload.  --rw activates the VG and mounts
-read-write.
+rescue=nologreplay, XFS with norecovery and ext4 with noload.  --rw
+activates the VG and mounts read-write.
 """
 
 import json
@@ -225,7 +225,10 @@ def open_side(cfg: Config, password: bytes, offset: int, *, rw: bool,
             if rw:
                 opts = setup.VOLUME_OPTS.get(fs, "noatime,nodiscard")
             else:
-                opts = {"btrfs": "ro,nodiscard,rescue=nologreplay", "ext4": "ro,noload"}.get(fs, "ro")
+                # ext4: pd no longer creates it, but a migrated v1 install's
+                # `data` LV is ext4.
+                opts = {"btrfs": "ro,nodiscard,rescue=nologreplay", "xfs": "ro,norecovery",
+                        "ext4": "ro,noload"}.get(fs, "ro")
             mount(session, devs[lv], mnt / "volumes" / lv, fs, opts)
     except BaseException:
         session.close()

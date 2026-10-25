@@ -151,27 +151,27 @@ at 2.0 GiB, and XFS creeps slowly from 3.5 to 3.8 GiB. (Earlier runs reported bt
 6.5 GiB; that was the harness overshooting its fill target, because btrfs accounts space lazily.)
 
 * **btrfs** allocates data block groups first-fit from low device offsets and deletes empty block
-  groups; with the shutdown trim its footprint tracks live data. It's the default, and root volumes
-  must be btrfs (the boot path mounts their `@boot` and `@nix` subvolumes). Its weak spot is
+  groups; with the shutdown trim its footprint tracks live data. Root volumes are btrfs (the boot
+  path mounts their `@boot` and `@nix` subvolumes), and extra volumes may be. Its weak spot is
   rewriting parts of large files: copy-on-write writes the new data elsewhere, and an extent stays
   allocated until none of it is referenced (extent "bookending"), so the filesystem itself grows to
   more than twice its live data. `compress-force` caps extents at 128 KiB, which mostly fixes this at
   some CPU cost; `nodatacow`, or `chattr +C` on the directories holding such files, fixes it entirely,
   at the cost of checksums and compression for those files. `ssd` vs `nossd` doesn't matter;
   `ssd_spread` is slightly worse; `autodefrag` doesn't help.
-* **ext4** deliberately spreads allocations and metadata across block groups (the Orlov allocator).
-  With churn and no trim it reaches the whole volume; with the shutdown trim it's bounded by live data
-  plus each session's new writes (the ~5 GiB comes from writing about 5 GiB in a single session on an
-  8 GiB volume). In-place rewrites reuse mapped blocks, so it's ideal for that workload. It depends on
-  the trim more than the others.
-* **XFS** is better than ext4 everywhere here: it does well with rewrites and stays moderate under
-  churn without a trim.
+* **XFS** is the default for extra volumes (`[[volumes]]`). In-place rewrites reuse mapped blocks, so
+  it suits large files rewritten in place, and under churn it stays moderate even without a trim
+  (creeping slowly: 3.8 GiB after 200 cycles).
+* **ext4** isn't supported. It deliberately spreads allocations and metadata across block groups (the
+  Orlov allocator): with churn and no trim it reaches the whole volume, and even with the shutdown
+  trim a single session's writes spread it out (the ~5 GiB comes from writing about 5 GiB in one
+  session on an 8 GiB volume). XFS is as good for rewrites and better everywhere else.
 * **f2fs** has the smallest footprint in every column. Although it's log-structured, it reuses freed
   segments instead of advancing through fresh ones. This was measured on an 8 GiB volume only;
   f2fs's allocation policy (switching between appending and reusing segments) depends on free space,
   so it isn't established for large volumes, and its tooling is less mature than the others'.
 * **Without the shutdown trim** (or if it's skipped, e.g. after a crash), footprints are as in the
-  "no trim" columns: about 1.5× live data for btrfs under churn, the whole volume for ext4. The
+  "no trim" columns: about 1.5× live data for btrfs and 1.7× for XFS under churn. The
   hidden side's thin LVs are capped (§6.2), so it can't grow past its cap either way;
   the decoy is bounded only by the disk, and the frontier monitor (§10.2) warns as the gap shrinks.
 * **Thin snapshots** break these bounds, because copy-on-write allocates new chunks for shared data.
@@ -316,7 +316,7 @@ Under the plain dm-crypt layer, each side has one LVM PV and one VG containing:
 * a thin pool over the rest of the PV;
 * thin LVs: one btrfs root per installed OS. The btrfs roots have the subvolumes `@`, `@boot`, `@home`,
   `@home_snapshots`, `@nix`, `@snapshots`, `@var_cache`, `@var_lib_docker`, `@var_log`, `@var_tmp`.
-* optional extra thin LVs (`[[volumes]]` in the config, btrfs or ext4), e.g. for bulk data like v1's
+* optional extra thin LVs (`[[volumes]]` in the config, XFS by default, or btrfs), e.g. for bulk data like v1's
   ext4 `data` LV (§2.3 on choosing the filesystem). During setup they're mounted at
   `$PD_ROOT/volumes/<name>`.
 
@@ -494,7 +494,7 @@ Each side can hold several OSes in the same VG (e.g. Arch and NixOS).
 ## 9. Setup
 
 * **Throwaway environments only:** the tool VM for tests, and for real installs the RAM-only setup
-  UKI (`setupUki`: pd, LVM, cryptsetup, btrfs and ext4 tools, plus `pacstrap`, `nixos-install` and
+  UKI (`setupUki`: pd, LVM, cryptsetup, btrfs and XFS tools, plus `pacstrap`, `nixos-install` and
   `pd-net` for installing the OSes). Running setup on a daily-driver machine leaves traces of **both**
   sides:
   * LVM writes copies of every VG it touches to `/etc/lvm/archive/` and `/etc/lvm/backup/`;
@@ -511,7 +511,7 @@ Each side can hold several OSes in the same VG (e.g. Arch and NixOS).
   `pd rekey`, `pd usb`, `pd install-cpio`, `pd migrate-v1` (`python3 -m pd --help`).
 * **`pd open` / `pd close`** (`pd/opener.py`) work from the setup UKI or a live ISO (`pd.pyz`, a zipapp,
   with distribution tools). Read-only by default, using the boot environment's approach (read-only
-  mappings, thin LVs mapped from `thin_dump`, `rescue=nologreplay` for btrfs, `noload` for ext4);
+  mappings, thin LVs mapped from `thin_dump`, `rescue=nologreplay` for btrfs, `norecovery` for XFS);
   `--rw` activates the VG. Undo steps are recorded in `/run/pd/open.json` (no keys) for `pd close`.
 * **Re-initializing a decoy** is refused if the decoy password already opens a boot volume. With
   `--force`, `init-decoy` needs `--no-hidden` or `--hidden-offset` (and the hidden password); with a
@@ -589,7 +589,7 @@ go to another pd setup; never `dd` the disk.
   | `test_nixos` | a real NixOS initrd with `pd.nix` unlocks the disk and mounts `/sysroot` |
   | `test_arch` | a real Arch install (pacstrap, `pd` mkinitcpio hook) boots through pd (`PD_TEST_ARCH=1`, needs network) |
   | `test_monitor` | frontier monitor report and warning; no hidden-only files in the decoy |
-  | `test_churn` | btrfs and ext4 pool footprint under churn, with and without a shutdown trim |
+  | `test_churn` | btrfs, XFS and (unsupported) ext4 pool footprint under churn, with and without a shutdown trim |
   | `fs_survey.py` (not in the suite; `python3 -m tests.fs_survey`) | the §2.3 table: filesystems and btrfs options × workloads × trim |
   | `test_luks_equiv` | a v1 LUKS2 data region reads identically through plain dm-crypt with its volume key |
   | `test_migrate` | a v1-format disk migrated with `pd migrate-v1` boots both sides with v2 |
@@ -645,7 +645,7 @@ it.
 | D15 | Hidden-side frontier monitor | Prevents overwrites | agreed |
 | D16 | Hidden thin LVs capped by virtual size | Hard bound on the hidden footprint | agreed |
 | D17 | Nix-pinned build; rootless QEMU tests | Reproducible; no host root or host dm state | agreed |
-| D18 | A churn test decides the `data` LV's filesystem | ext4 may not reuse addresses | agreed; result in §2.3 and D30 |
+| D18 | A churn test decides the `data` LV's filesystem | ext4 may not reuse addresses | agreed; result in §2.3, D30 and D37 |
 | D19 | Decoy LVM is stock; the hidden side sits below the decoy's end-of-disk metadata, read back rather than assumed | Stock layout and stock history | agreed |
 | D20 | Decoy LVM history looks ordinary (stock commands, boot-time names, decoy hostname); no LVM archive or backup during setup | LVM metadata records commands, host, and device names | agreed |
 | D21 | Boot-environment btrfs mounts use `rescue=nologreplay` | Booting after an unclean shutdown | agreed |
@@ -662,13 +662,14 @@ Decisions made while implementing v2:
 | D27 | NVRAM cleanup writes efivarfs directly from busybox | static efibootmgr doesn't build; one tool fewer on the USB | agreed |
 | D28 | An empty password goes straight to the recovery shell, skipping Argon2 | Faster hidden boot; a mistyped real password still takes the normal path | agreed |
 | D29 | Keys are passed to cryptsetup as files (pipe fds), never on stdin | Plain mode hashes stdin keys; the boot scripts read raw key files | agreed |
-| D30 | Root LVs are btrfs; extra data volumes are btrfs by default and may be ext4 | With the shutdown trim both stay near live data; ext4 avoids copy-on-write reallocation for files rewritten in place, but depends on the trim more (§2.3) | agreed |
+| D30 | Root LVs are btrfs; extra data volumes are btrfs by default and may be ext4 | With the shutdown trim both stay near live data; ext4 avoids copy-on-write reallocation for files rewritten in place, but depends on the trim more (§2.3) | superseded by D37 |
 | D31 | Hidden-only features use a generic `hooks/` directory in the boot volume | Keeps hidden-specific code out of `late.sh`, which is identical on both sides | agreed |
 | D32 | Kernel modules in the boot initrd are uncompressed; GPU drivers omitted | busybox modprobe can't reliably load compressed modules; GPU firmware is over 1 GB | agreed |
 | D33 | Builds use `path:` flake references | Nix's libgit2 can't read reftable repositories | agreed |
 | D34 | Target OSes trim once at shutdown (NixOS `pd.trimOnShutdown`, default on; Arch unit in `target/arch/`); periodic fstrim disabled | Keeps footprints near live data (§2.3) | agreed |
 | D35 | A RAM-only setup UKI (`setupUki`) for running setup on real hardware | A throwaway environment with nothing to install | agreed |
-| D36 | Keep btrfs's default mount options; recommend `chattr +C` (or ext4) for files rewritten in place | The filesystem survey (§2.3): `ssd`/`nossd`/`autodefrag` make no difference, `ssd_spread` is worse, and only rewrites of large files are a problem for btrfs | proposed |
+| D36 | Keep btrfs's default mount options; recommend `chattr +C` (or an XFS volume) for files rewritten in place | The filesystem survey (§2.3): `ssd`/`nossd`/`autodefrag` make no difference, `ssd_spread` is worse, and only rewrites of large files are a problem for btrfs | proposed |
+| D37 | Extra volumes are XFS by default and may be btrfs; ext4 is dropped | The filesystem survey (§2.3): XFS matches ext4 on in-place rewrites and is much better under churn, with or without the trim | agreed |
 
 ---
 

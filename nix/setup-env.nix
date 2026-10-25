@@ -10,6 +10,13 @@ let
     cp -r ${src}/pd ${src}/plain ${src}/target $out/
   '';
 
+  # Only the XFS binaries setup needs: the full xfsprogs closure pulls in
+  # python3, dbus and ICU through xfs_scrub's helpers (~300 MiB).
+  xfsTools = pkgs.runCommand "xfs-tools" { } ''
+    mkdir -p $out/bin
+    cp ${pkgs.xfsprogs.bin}/bin/mkfs.xfs ${pkgs.xfsprogs.bin}/bin/xfs_repair $out/bin/
+  '';
+
   env = pkgs.buildEnv {
     name = "pd-setup-env";
     paths = with pkgs; [
@@ -18,7 +25,7 @@ let
       lvm2.bin
       thin-provisioning-tools
       btrfs-progs
-      e2fsprogs
+      xfsTools
       dosfstools
       util-linux
       coreutils

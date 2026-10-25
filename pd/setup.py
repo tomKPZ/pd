@@ -165,7 +165,7 @@ def create_root_fs(dev: str, cfg: Config) -> None:
 ROOT_OPTS = "noatime,lazytime,nodiscard,compress=zstd:3"
 
 
-VOLUME_OPTS = {"btrfs": ROOT_OPTS, "ext4": "noatime,lazytime,nodiscard"}
+VOLUME_OPTS = {"btrfs": ROOT_OPTS, "xfs": "noatime,lazytime,nodiscard"}
 
 
 @contextlib.contextmanager
@@ -235,10 +235,7 @@ def _create_lvm(dev: str, cfg: Config, *, hidden: bool, disk_bytes: int,
         if v.fs == "btrfs":
             cmd("mkfs.btrfs", "--quiet", "--force", "--nodiscard", "--csum=xxhash", dev)
         else:
-            # mkfs's discard on a fresh thin LV is absorbed by the pool
-            # (nopassdown) and lets mke2fs skip zeroing inode tables, which
-            # would otherwise allocate pool space across the whole volume.
-            cmd("mkfs.ext4", "-q", "-F", dev)
+            cmd("mkfs.xfs", "-q", "-f", "-K", dev)
 
 
 # --- Layout read-back ---------------------------------------------------------------

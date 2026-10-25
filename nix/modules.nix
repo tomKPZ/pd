@@ -6,7 +6,7 @@
   "aes" "aesni-intel" "xts" "cbc" "sha256" "sha512" "crc32c" "xxhash64" "blake2b"
 
   # Filesystems
-  "btrfs" "ext4" "efivarfs" "vfat" "nls-cp437" "nls-iso8859-1"
+  "btrfs" "efivarfs" "vfat" "nls-cp437" "nls-iso8859-1"
 
   # Storage controllers and disks
   "nvme" "vmd" "ahci" "ata-piix" "sata-nv" "sata-via" "sata-sis" "sata-uli"

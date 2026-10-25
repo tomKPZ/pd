@@ -50,7 +50,7 @@ class OpenClose(unittest.TestCase):
         self.assertIn("MARKER decoy", out)
         self.assertIn("MARKER hidden", out)
         self.assertRegex(out, r"ROOT-OPTS ro,")
-        self.assertIn("VOLUME ext4", out)
+        self.assertIn("VOLUME xfs", out)
         self.assertIn("AFTER-CLOSE 0 0 nodir", out)
 
     def test_read_write_open(self):

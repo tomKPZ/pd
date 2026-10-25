@@ -70,7 +70,7 @@ EOF
         self.assertLessEqual(int(sizes["root"]) + int(sizes["data"]), int(disk * fx.cfg.hidden_cap))
         self.assertLess(int(sizes["root"]), int(sizes["thinpool"]))
         # The extra volume exists with the configured filesystem.
-        self.assertIn("ext4", out)
+        self.assertIn("xfs", out)
 
 
 class TrimOnShutdown(unittest.TestCase):
