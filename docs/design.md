@@ -1,9 +1,8 @@
 # pd design (v2)
 
-**Status.** This is the target design, being implemented on branch `v2`. Where v1 (the current code)
-differs, the text says so; the complete as-built description of v1 is in [v1.md](v1.md). Statements
-marked *(verify)* describe expected behavior that the v2 test suite must confirm before anything
-relies on it.
+**Status.** This is the v2 design, implemented on branch `v2` and covered by the QEMU test suite
+(§11). Where v1 differs, the text says so; the complete as-built description of v1 is in
+[v1.md](v1.md). Statements marked *(verify)* describe behavior the test suite doesn't cover yet.
 
 **Contents**
 1. [Goals](#1-goals)
@@ -124,12 +123,16 @@ of distinct virtual chunks its filesystems have ever written.** That is a high-w
 filesystems' *address* footprint, not of how much they write.
 
 So safety also depends on each filesystem preferring to reuse low addresses it has already written:
-* **btrfs** allocates data block groups first-fit from low device offsets and deletes empty block groups,
-  so its address footprint should track peak usage *(verify: churn test)*. `btrfs balance` temporarily
-  allocates new block groups and raises the high-water mark.
-* **ext4** deliberately spreads directories across block groups (the Orlov allocator), so its address
-  footprint may creep toward the full virtual size under churn *(verify: churn test; if it creeps, the
-  `data` LV moves to btrfs)*. v1's `data` LV is ext4.
+* **ext4 is unsafe on pd (measured).** It deliberately spreads allocations across block groups (the
+  Orlov allocator). In the churn test (`tests/test_churn.py`: fill to 25%, delete half at random,
+  repeat), an 8 GiB ext4 volume using about 1 GiB had touched 7741 MiB of the pool, essentially all of
+  it, within 15 cycles. v1's `data` LV is ext4, so on v1 installs it can grow to the full disk.
+* **btrfs** allocates data block groups first-fit from low device offsets and deletes empty block
+  groups. In the same test, a btrfs volume peaking at about 4 GiB used had touched 5755 MiB of the pool
+  after 60 cycles (1.4× peak), with growth slowing. See §14 for the long-run result. `btrfs balance`
+  temporarily allocates new block groups and raises the high-water mark.
+* **So every filesystem on a pd thin LV is btrfs.** v2 creates no ext4 `data` LV; use a btrfs subvolume
+  instead.
 * **Thin snapshots** break the bound, because copy-on-write allocates new chunks for shared data. btrfs
   snapshots are fine.
 
@@ -168,12 +171,15 @@ could map out every block written since setup.)
 
 * **The decoy data region spans the rest of the disk**, because an ordinary install would. The hidden
   regions lie inside it, in space the decoy's pool hasn't allocated.
-* **What H is.** The decoy's LVM layout is stock (§6.1). Stock LVM is expected to place the thin pool's
-  metadata LVs (`tmeta` and the spare `pmspare`) at the end of the PV *(verify)*. The decoy writes to
-  those regions, so the hidden side must stay below them. **H** is the physical start of the lowest decoy
-  metadata segment near the end of the disk. Setup reads it back from the decoy's LVM metadata after
-  creating the decoy, rather than assuming it. If LVM puts the metadata at the front instead,
-  H = D − 1 MiB.
+* **What H is.** The decoy's LVM layout is stock (§6.1). Measured with LVM 2.03.41, stock placement
+  is `[swap][pmspare][pool data][tmeta]`: the spare metadata LV goes in front of the pool's data and
+  `tmeta` goes at the very end of the PV. The decoy writes to `tmeta`, so the hidden side must stay below
+  it. **H** is the physical start of the decoy metadata that lies after the pool's data. Setup reads it
+  back from the decoy's LVM metadata after creating the decoy, rather than assuming it. If there's none
+  (all metadata at the front), H = D − 1 MiB.
+* **Overlap check.** Before writing anything, hidden setup checks that no decoy LV other than the
+  pool's data lies between the start of the pool's main data segment and the top of the hidden boot
+  volume.
 * **Both plain volumes are 255 MiB (522240 sectors)**, so they differ only in their start sector: 2048
   for the decoy, (H − 255 MiB)/512 for the hidden side. That is what makes the hidden boot a one-number
   `sed`.
@@ -202,8 +208,8 @@ because v1 creates the pool with one data extent and then extends it.
 * **Salt.** A random 64-byte salt is stored on the boot USB, and both sides use it. Keeping the salt off
   the disk means the boot script derives one key and tries it on every disk, with no per-disk lookup and
   no alignment issues. The cost is that a USB belongs to one machine.
-* **Passwords must differ.** Setup enforces this, and checks that neither side's key opens the other
-  side's plain volume. (v1 instead appended a fixed suffix `a` to the salt for the hidden side. The
+* **Passwords must differ.** Setup enforces this, and checks that the two passwords don't derive the
+  same key. (v1 instead appended a fixed suffix `a` to the salt for the hidden side. The
   suffix is public, so it added nothing.)
 * **Changing a password** means re-creating that side's 255 MiB plain volume under the new key and
   copying its contents back. `data.key` and the data region stay as they are.
@@ -215,6 +221,10 @@ because v1 creates the pool with one data extent and then extends it.
   plain volume opens with the password alone.
 * **The hidden plain volume also stores the decoy's `data.key`,** so the hidden side can watch the
   decoy (§10.2).
+* **Keys reach cryptsetup as files, never on stdin.** In plain mode, cryptsetup hashes a key read from
+  stdin (`--key-file=-`) like a passphrase, but uses a key file's bytes directly. Setup passes keys as
+  the read end of a pipe (`--key-file=/proc/self/fd/N`), so they never touch disk and match what the
+  boot scripts read from tmpfs files.
 
 ---
 
@@ -226,19 +236,25 @@ is mounted read-only during boot and never mounted by the running OSes.
 
 ```
 late.sh                   stage-2 boot script
+thin-ro.sh                read-only thin LV mapping (§7.3)
 data.key                  this side's data-region key
-table.txt                 dm table for this side's data region (linear for the decoy, reversed for the hidden side)
+table.txt                 dm table for this side's data region, with DISK standing for the disk
 crypt.env                 cipher parameters handed to the target OS
-bin/                      static lvm (+ thin_check from pdata_tools), dmsetup, kexec, fzf, jq, detect_shift
+bin/                      static lvm, dmsetup, pdata_tools (thin_check, thin_dump), kexec, fzf, jq, detect_shift
 systems/<name>/env.sh     per-system settings: VG, root LV, kernel, initrd, cmdline
 systems/<name>/extra.sh   per-system hook (e.g. the NixOS generation menu)
 systems/default           symlink to the default system
+hooks/frontier.sh         hidden side only: the frontier monitor (§10.2)
+frontier.env              hidden side only: monitor threshold
 decoy.key, decoy.table    hidden side only: used by the frontier monitor
 ```
 
+`late.sh` sources every `hooks/*.sh` before handing over. The decoy has no `hooks/` directory; a test
+checks that none of the hidden-only files exist in the decoy's boot volume.
+
 Why split boot into early and late stages at all:
 1. **The USB reveals as little as possible.** It holds only what's needed to find and open a plain
-   volume: kernel, busybox, argon2, cryptsetup, efibootmgr. LVM, the thin tools, kexec, and every boot
+   volume: kernel, modules, busybox, argon2, cryptsetup. LVM, the thin tools, kexec, and every boot
    decision sit behind the password. This was the goal in 2024. It was given up when the static tools
    were dropped, and v2 restores it.
 2. **The hidden side's boot logic has to live somewhere invisible.** The hidden plain volume is the only
@@ -252,9 +268,9 @@ Why split boot into early and late stages at all:
 Under the plain dm-crypt layer, each side has one LVM PV and one VG containing:
 * a linear `swap` LV (hibernation isn't supported);
 * a thin pool over the rest of the PV;
-* thin LVs: one btrfs root per installed OS, plus a shared `data` LV (ext4 in v1; v2's filesystem
-  depends on the churn test). The btrfs roots have the subvolumes `@`, `@boot`, `@home`,
+* thin LVs: one btrfs root per installed OS. The btrfs roots have the subvolumes `@`, `@boot`, `@home`,
   `@home_snapshots`, `@nix`, `@snapshots`, `@var_cache`, `@var_lib_docker`, `@var_log`, `@var_tmp`.
+  (v1 also had an ext4 `data` LV; ext4 is unsafe on pd, §2.3.)
 
 Mount options are `noatime,lazytime,nodiscard`; btrfs adds `ssd,autodefrag,compress=zstd:12`.
 
@@ -264,12 +280,12 @@ The decoy is created only with stock, ordinary commands:
 pvcreate
 vgcreate
 lvcreate -L … -n swap
-lvcreate --type thin-pool -l 100%FREE
-lvcreate -V … --thin
+lvcreate --type thin-pool -l 100%FREE --discards ignore -n thinpool
+lvcreate -V … -T …/thinpool -n <root>
 ```
-No explicit extent size, chunk size, or metadata size is given. For a 1 TB pool, stock LVM should pick
-512 KiB chunks and about 128 MiB of metadata *(verify)*, close to the values v1 set by hand. Thin LVs get
-the full pool size as their virtual size.
+No explicit extent size, chunk size, or metadata size is given; LVM picks them for the disk size. Thin
+LVs get the full pool size as their virtual size. `--discards ignore` is the one non-default option;
+it's an ordinary, documented setting.
 
 **Why it matters: LVM metadata records its own history.** The metadata area is a ring buffer that keeps
 many versions, and every version stores:
@@ -313,8 +329,11 @@ no NVRAM entry is needed. It contains:
 * **Kernel:** a nixpkgs kernel with the stock config, plus a broad set of storage, input, USB, and HID
   modules loaded through modalias coldplug. A missing keyboard driver means a machine that can't boot,
   so hardware coverage matters more than size.
-* **initrd:** static busybox, cryptsetup, argon2, efibootmgr, plus `/init`, `early.sh`, `early_env.sh`,
-  and `salt.txt`.
+* **initrd** (about 10 MB): static busybox, cryptsetup, argon2, and the kernel modules (stored
+  uncompressed, because busybox `modprobe` can't reliably load compressed ones), plus `/init`,
+  `early.sh`, and a second, per-install cpio with `early_env.sh` and `salt.txt`. GPU drivers are left
+  out (their firmware is over a gigabyte); the firmware framebuffer is enough for a text console.
+  `/sbin` links to `/bin`, because the kernel runs `/sbin/modprobe` to load crypto modules on demand.
 * **Command line:** includes `init_on_free=1`. Pages the boot environment frees (password buffers,
   Argon2 memory) are then zeroed before `kexec` hands RAM to the next kernel.
 
@@ -328,11 +347,15 @@ v1 differs: the UKI is built by the host's dracut from the host's kernel, with u
 tools.
 
 ### 7.2 early.sh (on the USB)
-1. Delete the `BootCurrent` NVRAM entry, i.e. the entry the firmware created for, or used to boot, the
-   USB.
-2. Prompt `Password:` without echo.
+`/init` mounts the pseudo-filesystems, loads drivers by modalias until no new ones appear, then runs
+`early.sh` and, if it returns, the recovery shell, in a single session (so no console output is lost
+when a session leader exits).
+1. Delete the `BootCurrent` NVRAM entry and remove it from `BootOrder`. This is done directly through
+   efivarfs with busybox, since efibootmgr doesn't build statically; one tool fewer on the USB.
+2. Prompt `Password:` with echo off (`stty -echo`). An empty password goes straight to the recovery
+   shell without running Argon2: that's the start of the hidden boot.
 3. Run `argon2`, writing the plain key to tmpfs.
-4. For each whole disk:
+4. For each whole disk in `/sys/block` (there's no udev):
    * `cryptsetup open --type plain --readonly --offset $PLAIN_OFFSET --size $PLAIN_SIZE …`;
    * mount btrfs with `ro,rescue=nologreplay`;
    * `exec` `late.sh` from it. Using `exec` frees early.sh's memory, password included, which
@@ -347,26 +370,35 @@ for the plain volume.)
 1. **Pick the system:** `$LATE` if set (used by tests); otherwise, if Shift is held, show a menu
    (`detect_shift` + `fzf`); otherwise `systems/default`.
 2. **Open the data region:** `dmsetup create --readonly` from `table.txt`, then
-   `cryptsetup open --type plain` with `data.key`, then activate the VG with every LV read-only
-   (`activation/read_only_volume_list`) *(verify that LVM allows this for thin pools)*.
-3. **Mount the boot files:** the root's `@boot` (and `@nix` for NixOS), read-only with
-   `rescue=nologreplay`. Then run `systems/<name>/extra.sh`.
-4. **Build the initrd:** copy the target initrd, pad it to a multiple of 4 bytes, and append a cpio
+   `cryptsetup open --type plain --readonly` with `data.key`.
+3. **Map the root LV read-only, without dm-thin.** The kernel refuses dm-thin in a read-only table
+   ("thin-pool: target type may not be included in a read-only table"), and activating the pool
+   read-write could write pool metadata. So `thin-ro.sh` reads the LVM layout with `lvm --readonly`
+   (no activation), maps the pool's `tmeta` and `tdata` as read-only linear devices, dumps the root LV's
+   block mappings with `thin_dump`, and builds an equivalent read-only table: `linear` onto `tdata`
+   for mapped blocks, `zero` for the rest. Every LVM call passes `--devices`, because on a hidden boot
+   with the frontier monitor both VGs share a name.
+4. **Mount the boot files:** the root's `@boot` (and `@nix` for NixOS) from that mapping, read-only
+   with `rescue=nologreplay`. Then run `systems/<name>/extra.sh` and any `hooks/*.sh`.
+5. **Build the initrd:** copy the target initrd, pad it to a multiple of 4 bytes, and append a cpio
    containing `/boot_tmp/{data.key, table.txt, crypt.env}`.
-5. **Hand over:** `kexec -l` the target kernel with that initrd and the system's command line, shred the
+6. **Hand over:** `kexec -l` the target kernel with that initrd and the system's command line, shred the
    temporary files, then `kexec -e`.
 
-**The boot environment never writes to the internal disk.** Every mapping it creates is read-only
-*(verify: a test runs the boot environment against a read-only drive)*. This has a consequence: btrfs
+**The boot environment never writes to the internal disk.** Every mapping it creates is read-only, and
+a test boots it with the disk attached read-only all the way to `kexec`. This has a consequence: btrfs
 refuses to replay a dirty log tree on read-only media (`btrfs_replay_log()`: "log replay required on RO
 media"), so after an unclean shutdown a plain `ro` mount would fail. With `rescue=nologreplay`, the mount
-succeeds, and the target OS replays the log when it mounts read-write.
+succeeds, and the target OS replays the log when it mounts read-write. A test leaves a dirty log tree in
+`@boot` (confirmed via `log_root` in the superblock) and boots. Any `rescue=` option also makes btrfs
+refuse transactions, which the kernel log shows as `state E`; that is expected.
 
 v1 differs: it has no `nologreplay`, and it activates LVs read-write on top of a read-only crypt device.
 
 ### 7.4 Target initrd hook
-One script, `hook.sh`, is shared by every target OS. NixOS runs it as a systemd initrd service, Arch as
-a mkinitcpio hook.
+One script, `target/hook.sh`, is shared by every target OS. NixOS runs it as a systemd initrd service
+(`target/nixos/pd.nix`, tested with a real NixOS initrd); Arch as a mkinitcpio hook (`target/arch/`,
+untested).
 1. Wait for devices to settle.
 2. **Find the disk by trial.** For each disk, create the `table.txt` mapping on it and open plain
    dm-crypt with `data.key`. Keep the disk whose decrypted data region starts with an LVM label
@@ -423,14 +455,16 @@ Nothing stops one side from overwriting the other if the two footprints together
 * **An overwrite is visible.** If the hidden side ever overwrote decoy data, the decoy would show btrfs
   checksum errors, which is both damaging and suspicious.
 
-### 10.2 Frontier monitor (planned)
-The hidden side holds the decoy's `data.key`. On a hidden boot, or from within the hidden OS, it opens
-the decoy's data region read-only and reads the decoy's VG and pool metadata (`thin_dump`/`thin_rmap`).
-It warns if:
-* the decoy's highest allocated chunk is within a threshold of the hidden region, or
-* any decoy LV segment intersects the hidden region. This also catches a changed decoy layout.
+### 10.2 Frontier monitor
+`hooks/frontier.sh` exists only in the hidden boot volume and runs on every hidden boot. It opens the
+decoy's data region read-only with the stored decoy `data.key`, finds the highest allocated data block of
+each pool with `thin_dump`, maps both through the LVM segments and the region tables to physical
+offsets, and prints `Free space between the two sides: N MiB.` Below `MIN_GAP_PERCENT` (default 10% of
+the disk, in `frontier.env`) it prints a warning and waits for Enter. It never writes to either side.
+Tested: 7379 MiB free on a fresh 8 GiB test disk; 543 MiB and a warning after writing 6.5 GiB to the
+decoy.
 
-It never writes to the decoy.
+*(Planned)* Also warn if any decoy LV segment intersects the hidden region.
 
 ### 10.3 Never clone the disk
 A snapshot adversary who compares two images can see "unused" space change. Backups of hidden data must
@@ -441,21 +475,31 @@ go to another pd setup; never `dd` the disk.
 ## 11. Build and test
 
 * **Build.** A Nix flake pins nixpkgs and builds:
-  * static busybox, cryptsetup, argon2, efibootmgr, lvm2 + thin-provisioning-tools, kexec-tools, fzf,
-    jq, and detect_shift;
-  * the kernel and its module set;
-  * the UKI template;
-  * the test VM.
-* **Test.** Tests run QEMU (KVM, OVMF) as an ordinary user against sparse image files. Nothing needs
-  root, and no device-mapper state is created on the host.
-* **Planned suite:**
-  * end-to-end decoy and hidden boots, including the recovery-shell `sed` and NVRAM deletion;
-  * decoy layout read-back and no-overlap checks;
-  * refusal of discards;
-  * the read-only boot environment, including `nologreplay` after a simulated crash;
-  * churn tests of filesystem address reuse, with the 2024 disk visualizer revived;
-  * the frontier monitor;
-  * LUKS→plain equivalence, for migration.
+  * static busybox, cryptsetup, argon2 (boot USB); static lvm2, thin-provisioning-tools, kexec-tools,
+    fzf, jq, and detect_shift (boot volume);
+  * the kernel and its module closure, the boot initrd, and the UKI pieces;
+  * the tool VM (kernel + tiny initrd that mounts the host's `/nix/store` read-only over 9p, so tools
+    aren't copied) and a fake target OS;
+  * a minimal NixOS system using `target/nixos/pd.nix`, for integration tests.
+
+  Build with `nix build "path:$PWD#testenv"`. The `path:` form is needed because Nix's libgit2 can't
+  read repositories using the reftable ref format.
+* **Test.** Tests run QEMU (KVM, OVMF) as an ordinary user against sparse image files. Setup runs as
+  root inside the tool VM; nothing needs root on the host, and no device-mapper state is created there.
+  Run `python3 -m unittest discover -s tests -t .`.
+* **Suite** (`tests/`):
+
+  | Test | Covers |
+  |---|---|
+  | `test_layout`, `test_placement` | layout arithmetic, reversed tables, hidden placement and overlap checks (unit tests) |
+  | `test_smoke` | the tool VM |
+  | `test_e2e` | decoy boot, hidden boot via the recovery-shell `sed`, wrong password, password not echoed, read-only disk |
+  | `test_safety` | boot after a crash with a dirty btrfs log; hidden thin LV cap |
+  | `test_uefi` | the real UKI from a USB stick under OVMF; NVRAM entry and `BootOrder` cleanup |
+  | `test_nixos` | a real NixOS initrd with `pd.nix` unlocks the disk and mounts `/sysroot` |
+  | `test_monitor` | frontier monitor report and warning; no hidden-only files in the decoy |
+  | `test_churn` | refusal of discards; btrfs and ext4 pool footprint under churn |
+  | `test_luks_equiv` | a v1 LUKS2 data region reads identically through plain dm-crypt with its volume key |
 
 ---
 
@@ -500,12 +544,12 @@ it.
 | D10 | Plain dm-crypt + `data.key` instead of LUKS | Fewer layers to explain, same decoupling of password and data key | agreed |
 | D11 | One shared target hook for all OSes | Uniform boot | agreed |
 | D12 | early.sh uses `cryptsetup --offset/--size`; the hidden `sed` edits `PLAIN_OFFSET` | No dmsetup on the USB; shorter manual path | agreed |
-| D13 | Minimal USB: kernel, busybox, argon2, cryptsetup, efibootmgr | Reveals little without a password | agreed |
+| D13 | Minimal USB: kernel, modules, busybox, argon2, cryptsetup | Reveals little without a password | agreed |
 | D14 | Delete `MOVE_PES` | Cosmetic; superseded by D19 | agreed |
 | D15 | Hidden-side frontier monitor | Prevents overwrites | agreed (roadmap) |
 | D16 | Hidden thin LVs capped by virtual size | Hard bound on the hidden footprint | agreed |
 | D17 | Nix-pinned build; rootless QEMU tests | Reproducible; no host root or host dm state | agreed |
-| D18 | A churn test decides the `data` LV's filesystem | ext4 may not reuse addresses | agreed |
+| D18 | A churn test decides the `data` LV's filesystem | ext4 may not reuse addresses | agreed; result: ext4 is unsafe, v2 has no ext4 LV (D30) |
 | D19 | Decoy LVM is stock; the hidden side sits below the decoy's end-of-disk metadata, read back rather than assumed | Stock layout and stock history | agreed |
 | D20 | Decoy LVM history looks ordinary (stock commands, boot-time names, decoy hostname); no LVM archive or backup during setup | LVM metadata records commands, host, and device names | proposed |
 | D21 | Boot-environment btrfs mounts use `rescue=nologreplay` | Booting after an unclean shutdown | agreed |
@@ -514,10 +558,25 @@ it.
 | D24 | OS installation through optional recipes | Separation of concerns | agreed |
 | D25 | The target hook finds the disk by trial | There's no udev on the USB | agreed |
 
+Decisions made while implementing v2 (status "implemented": not yet reviewed by the author):
+
+| # | Decision | Why | Status |
+|---|---|---|---|
+| D26 | The boot environment maps the root thin LV read-only from `thin_dump` output instead of activating the pool | dm-thin can't run in a read-only table; activating it read-write could write metadata | implemented |
+| D27 | NVRAM cleanup writes efivarfs directly from busybox | static efibootmgr doesn't build; one tool fewer on the USB | implemented |
+| D28 | An empty password goes straight to the recovery shell, skipping Argon2 | Faster hidden boot; a mistyped real password still takes the normal path | implemented |
+| D29 | Keys are passed to cryptsetup as files (pipe fds), never on stdin | Plain mode hashes stdin keys; the boot scripts read raw key files | implemented |
+| D30 | Every filesystem on a pd thin LV is btrfs | Measured: ext4 touches the whole pool under churn (§2.3) | implemented |
+| D31 | Hidden-only features use a generic `hooks/` directory in the boot volume | Keeps hidden-specific code out of `late.sh`, which is identical on both sides | implemented |
+| D32 | Kernel modules in the boot initrd are uncompressed; GPU drivers omitted | busybox modprobe can't reliably load compressed modules; GPU firmware is over 1 GB | implemented |
+| D33 | Builds use `path:` flake references | Nix's libgit2 can't read reftable repositories | implemented |
+
 ---
 
 ## 14. Open questions
 
-* Memorable offset (§3): adopt it?
+* Memorable offset (§3): adopt it? (Implemented as the `memorable_offset` config option, off by
+  default.)
+* btrfs long-run churn: does the footprint plateau? (200-cycle runs pending.)
 * Argon2 defaults: keep t=14, m=256 MiB, p=8, or raise memory?
 * Project name.
