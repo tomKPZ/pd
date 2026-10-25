@@ -29,6 +29,15 @@ Notes on status:
 Not done autonomously: anything involving real disks or USB sticks, pushing to the remote, external NixOS
 configuration repos, and running a migration.
 
+## Next
+
+* Decide whether to cap the decoy's thin LVs (design.md §14), then implement it.
+* A way to run setup on real hardware: e.g. a "setup" UKI that boots a RAM-only environment with pd
+  and its tools (the tool VM's initrd, with the closure copied in instead of shared over 9p).
+* Test the Arch hook with a real Arch install in a VM.
+* `pd usb`: read the salt back from an existing USB (D22).
+* Frontier monitor: also warn about decoy LV segments in the hidden region.
+
 ## Later / ideas
 
 * Safe decoy re-initialization: require the hidden offset or password, check for overlap before writing,
