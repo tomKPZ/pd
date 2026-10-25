@@ -21,6 +21,8 @@ VARIANTS = {
     "btrfs (nossd)": ("mkfs.btrfs -q -f --nodiscard", "noatime,nodiscard,nossd"),
     "btrfs (ssd_spread)": ("mkfs.btrfs -q -f --nodiscard", "noatime,nodiscard,ssd_spread"),
     "btrfs (nodatacow)": ("mkfs.btrfs -q -f --nodiscard", "noatime,nodiscard,ssd,nodatacow"),
+    "btrfs (compress-force)": ("mkfs.btrfs -q -f --nodiscard", "noatime,nodiscard,ssd,compress-force=zstd"),
+    "btrfs (autodefrag)": ("mkfs.btrfs -q -f --nodiscard", "noatime,nodiscard,ssd,autodefrag"),
     "ext4": ("mkfs.ext4 -q -F", "noatime,nodiscard"),
     "xfs": ("mkfs.xfs -q -f -K", "noatime,nodiscard"),
     "f2fs": ("mkfs.f2fs -q -f -t 0", "noatime,nodiscard"),

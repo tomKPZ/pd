@@ -68,17 +68,17 @@ class Churn(unittest.TestCase):
         return result
 
     def test_btrfs(self):
-        # Measured over 60 cycles the footprint stays under 2x peak usage,
-        # far below the ~60 GiB written.  It keeps creeping slowly over
-        # longer runs (200 cycles: ~80% of the volume); see design.md §2.3.
+        # Measured: about 1.5x peak usage after a few cycles, then flat
+        # (3.2 GiB at both 60 and 200 cycles), far below the ~60 GiB written;
+        # see design.md §2.3.
         r = self.run_fs("btrfs")
-        self.assertLess(r["pool_used"], 2 * r["peak_fs_used"] + (512 << 20))
+        self.assertLess(r["pool_used"], 1.5 * r["peak_fs_used"] + (512 << 20))
 
     def test_ext4(self):
-        # Measured: ext4 spreads allocations over the whole device, so its
-        # pool footprint reaches the full virtual size within ~15 cycles
-        # while using under 1 GiB.  ext4 is unsafe on pd; this test documents
-        # that and fails loudly if it ever stops being true.
+        # Measured: ext4 spreads allocations over the whole device, so without
+        # the shutdown trim its pool footprint reaches the full virtual size
+        # within ~15 cycles while using under 1 GiB.  This test documents that
+        # and fails loudly if it ever stops being true.
         r = self.run_fs("ext4")
         self.assertGreater(r["pool_used"], 0.9 * r["fs_size"])
 

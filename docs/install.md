@@ -74,6 +74,10 @@ fs = "ext4"                    # or "btrfs" (default); see design.md §2.3
 `@home_snapshots`, `@nix`, `@snapshots`, `@var_cache`, `@var_lib_docker`, `@var_log`, `@var_tmp`, and
 the boot path needs `@boot` (and `@nix` for NixOS).
 
+On btrfs, files that get rewritten in place (VM images, databases) make the filesystem grow to
+more than twice their size, and the side's footprint on the disk grows with it. Give them a directory
+with `chattr +C` (before creating the files), or put them on an ext4 volume (design.md §2.3).
+
 ## 3. Build the boot USB
 
 ```sh

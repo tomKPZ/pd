@@ -100,6 +100,7 @@ def rewrite_cycle():
                 for _ in range(4):
                     f.write(blob)  # 256 MiB per file
             files.append(path)
+            os.sync()  # btrfs accounts space lazily; don't overshoot the target
         os.sync()
     for _ in range(1024):
         path = rng.choice(files)
@@ -124,7 +125,9 @@ for cycle in range(cycles):
                      "fs_size": fs_size()})
         print(json.dumps(rows[-1]), flush=True)
         continue
-    # Fill to the target, spread over many directories.
+    # Fill to the target, spread over many directories.  Sync every 64 MiB:
+    # btrfs accounts space lazily, and statfs alone would overshoot.
+    unsynced = 0
     while fs_used() < target * fs_size():
         d = os.path.join(mnt, f"d{rng.randrange(64)}", f"e{rng.randrange(16)}")
         os.makedirs(d, exist_ok=True)
@@ -135,6 +138,10 @@ for cycle in range(cycles):
             off = rng.randrange(len(blob) - size)
             f.write(blob[off:off + size])
         files.append(path)
+        unsynced += size
+        if unsynced >= 64 << 20:
+            os.sync()
+            unsynced = 0
     os.sync()
     peak = max(peak, fs_used())
     # Delete about half, at random.

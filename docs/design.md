@@ -126,30 +126,53 @@ holes from the front. The footprint then stays near the live data plus one sessi
 in the *middle* of a session is harmful: it frees holes behind the cursor, and new writes go to fresh
 space beyond it.
 
-Measured (`tests/test_churn.py`: 8 GiB volume; each cycle fills to 25%, deletes half at random, and
-writes about 1 GiB; "high-water" is the highest allocated pool block, which is what decides a
-collision):
+Measured with `tests/fs_survey.py` (the same harness as `tests/test_churn.py`): an 8 GiB thin
+volume, 60 cycles, about 2 GiB of live data. *churn* fills to 25% with mixed file sizes (4 KiB to
+32 MiB) and deletes half at random each cycle. *rewrite* fills to 25% with 256 MiB files and then
+overwrites random 1 MiB ranges in place, about 1 GiB per cycle (VM images, databases). "Trim" means
+`fstrim` plus pool reactivation every 5 cycles, i.e. a shutdown. Each cell is the high-water mark
+(the highest allocated pool block, which is what decides a collision) at the end, in GiB, with the
+filesystem's own peak usage in parentheses:
 
-| Filesystem | No trim | `fstrim` + reactivation every 5 cycles |
-|---|---|---|
-| btrfs | 5.7 GiB after 60 cycles, 6.5 GiB (80% of the volume) after 200, still creeping | 4.2 GiB after the first session, settling at 3.6–3.8 GiB, below peak usage (~4 GiB) |
-| ext4 | 7.7 GiB (the whole volume) within 15 cycles | 4.8–5.0 GiB after the first session, then flat |
+| Filesystem (mount options) | churn, no trim | churn, trim | rewrite, no trim | rewrite, trim |
+|---|---|---|---|---|
+| btrfs (`ssd`, the default on SSDs) | 3.1 (2.1) | 2.6 (2.1) | 6.4 (4.5) | 5.6 (4.4) |
+| btrfs `nossd` | 3.2 (2.1) | 2.6 (2.1) | 6.5 (4.4) | 5.6 (4.4) |
+| btrfs `ssd_spread` | 3.6 (2.1) | 3.0 (2.1) | 6.6 (4.4) | 5.7 (4.3) |
+| btrfs `autodefrag` | 3.2 (2.1) | 2.6 (2.1) | 6.5 (4.4) | 5.5 (4.3) |
+| btrfs `compress-force=zstd` | 2.9 (2.1) | 2.6 (2.1) | 3.8 (2.0) | 3.2 (2.0) |
+| btrfs `nodatacow` | 3.1 (2.1) | 2.6 (2.1) | 2.0 (2.0) | 2.0 (2.0) |
+| ext4 | 7.6 (2.0) | 4.9 (2.0) | 2.1 (2.0) | 2.2 (2.0) |
+| XFS | 3.5 (2.0) | 2.8 (2.0) | 2.1 (2.2) | 2.1 (2.2) |
+| f2fs | 2.0 (2.0) | 1.9 (2.0) | 2.0 (2.2) | 2.0 (2.2) |
 
-(Ranges are from separate runs.)
+Over 200 churn cycles without a trim, btrfs stays at 3.2 GiB (flat after the first few cycles), f2fs
+at 2.0 GiB, and XFS creeps slowly from 3.5 to 3.8 GiB. (Earlier runs reported btrfs creeping to
+6.5 GiB; that was the harness overshooting its fill target, because btrfs accounts space lazily.)
 
 * **btrfs** allocates data block groups first-fit from low device offsets and deletes empty block
   groups; with the shutdown trim its footprint tracks live data. It's the default, and root volumes
-  must be btrfs (the boot path mounts their `@boot` and `@nix` subvolumes).
+  must be btrfs (the boot path mounts their `@boot` and `@nix` subvolumes). Its weak spot is
+  rewriting parts of large files: copy-on-write writes the new data elsewhere, and an extent stays
+  allocated until none of it is referenced (extent "bookending"), so the filesystem itself grows to
+  more than twice its live data. `compress-force` caps extents at 128 KiB, which mostly fixes this at
+  some CPU cost; `nodatacow`, or `chattr +C` on the directories holding such files, fixes it entirely,
+  at the cost of checksums and compression for those files. `ssd` vs `nossd` doesn't matter;
+  `ssd_spread` is slightly worse; `autodefrag` doesn't help.
 * **ext4** deliberately spreads allocations and metadata across block groups (the Orlov allocator).
-  With the shutdown trim it's bounded by live data plus each session's new writes, like btrfs; the
-  ~5 GiB above comes from writing about 5 GiB in a single session on an 8 GiB volume. Its metadata
-  stays wherever the first session put it. ext4 is a reasonable choice for data volumes holding large
-  files that are rewritten in place: an in-place overwrite reuses mapped blocks, while btrfs
-  copy-on-write allocates new ones (`chattr +C` gives btrfs the same behavior for chosen directories,
-  at the cost of checksums and compression). Without the shutdown trim, ext4 reaches the whole volume,
-  so it depends on the trim more than btrfs does.
-* **Without the shutdown trim** (or if it's skipped, e.g. after a crash), footprints creep as in the
-  first column. The hidden side's thin LVs are capped (§6.2), so it can't grow past its cap either way;
+  With churn and no trim it reaches the whole volume; with the shutdown trim it's bounded by live data
+  plus each session's new writes (the ~5 GiB comes from writing about 5 GiB in a single session on an
+  8 GiB volume). In-place rewrites reuse mapped blocks, so it's ideal for that workload. It depends on
+  the trim more than the others.
+* **XFS** is better than ext4 everywhere here: it does well with rewrites and stays moderate under
+  churn without a trim.
+* **f2fs** has the smallest footprint in every column. Although it's log-structured, it reuses freed
+  segments instead of advancing through fresh ones. This was measured on an 8 GiB volume only;
+  f2fs's allocation policy (switching between appending and reusing segments) depends on free space,
+  so it isn't established for large volumes, and its tooling is less mature than the others'.
+* **Without the shutdown trim** (or if it's skipped, e.g. after a crash), footprints are as in the
+  "no trim" columns: about 1.5× live data for btrfs under churn, the whole volume for ext4. The
+  hidden side's thin LVs are capped (§6.2), so it can't grow past its cap either way;
   the decoy is bounded only by the disk, and the frontier monitor (§10.2) warns as the gap shrinks.
 * **Thin snapshots** break these bounds, because copy-on-write allocates new chunks for shared data.
   btrfs snapshots are fine. `btrfs balance` allocates new block groups and raises the high-water mark
@@ -567,6 +590,7 @@ go to another pd setup; never `dd` the disk.
   | `test_arch` | a real Arch install (pacstrap, `pd` mkinitcpio hook) boots through pd (`PD_TEST_ARCH=1`, needs network) |
   | `test_monitor` | frontier monitor report and warning; no hidden-only files in the decoy |
   | `test_churn` | btrfs and ext4 pool footprint under churn, with and without a shutdown trim |
+  | `fs_survey.py` (not in the suite; `python3 -m tests.fs_survey`) | the §2.3 table: filesystems and btrfs options × workloads × trim |
   | `test_luks_equiv` | a v1 LUKS2 data region reads identically through plain dm-crypt with its volume key |
   | `test_migrate` | a v1-format disk migrated with `pd migrate-v1` boots both sides with v2 |
   | `test_rekey` | new passwords and a new salt on both sides; both boot with a new USB, the old password fails |
@@ -644,6 +668,7 @@ Decisions made while implementing v2:
 | D33 | Builds use `path:` flake references | Nix's libgit2 can't read reftable repositories | agreed |
 | D34 | Target OSes trim once at shutdown (NixOS `pd.trimOnShutdown`, default on; Arch unit in `target/arch/`); periodic fstrim disabled | Keeps footprints near live data (§2.3) | agreed |
 | D35 | A RAM-only setup UKI (`setupUki`) for running setup on real hardware | A throwaway environment with nothing to install | agreed |
+| D36 | Keep btrfs's default mount options; recommend `chattr +C` (or ext4) for files rewritten in place | The filesystem survey (§2.3): `ssd`/`nossd`/`autodefrag` make no difference, `ssd_spread` is worse, and only rewrites of large files are a problem for btrfs | proposed |
 
 ---
 
