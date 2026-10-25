@@ -1,0 +1,27 @@
+#!/bin/bash
+# mkinitcpio install hook for pd.  Install as /etc/initcpio/install/pd, with
+# target/hook.sh as /usr/lib/pd/hook.sh and target/arch/pd-hook as
+# /etc/initcpio/hooks/pd, then add "pd" to HOOKS before "lvm2":
+#   HOOKS=(base udev autodetect microcode modconf kms keyboard keymap
+#          consolefont block pd lvm2 filesystems fsck)
+# This targets the default busybox-based initramfs (not the systemd hook).
+
+build() {
+    map add_module 'dm-mod' 'dm-crypt'
+    add_all_modules '/crypto/'
+
+    add_binary 'cryptsetup'
+    add_binary 'dmsetup'
+    add_binary 'shred'
+    add_file '/usr/lib/pd/hook.sh'
+
+    # cryptsetup calls pthread_create(), which dlopen()s libgcc_s.so.1
+    add_binary '/usr/lib/libgcc_s.so.1'
+
+    add_runscript
+}
+
+help() {
+    echo 'Open a pd disk using the keys appended by the pd boot environment'
+}
+

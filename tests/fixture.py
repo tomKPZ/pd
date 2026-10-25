@@ -37,8 +37,8 @@ INSTALL = """
 set -eu
 side=$1
 root=$PD_ROOT/fake
-cp {env}/bzImage $root/boot/vmlinuz
-cp {env}/faketarget-initrd.cpio.zst $root/boot/initrd
+cp {kernel} $root/boot/vmlinuz
+cp {initrd} $root/boot/initrd
 mkdir -p $root/etc
 echo "$side" > $root/etc/pd-marker
 """
@@ -64,12 +64,16 @@ class Fixture:
         return vm.ToolVM(self.env, self.work)
 
 
-def make(size: int = 8 << 30) -> Fixture:
+def make(size: int = 8 << 30, kernel=None, initrd=None) -> Fixture:
+    """Set up a disk.  `kernel`/`initrd` are the target OS's boot files
+    (default: the fake target)."""
     env = vm.testenv()
+    kernel = kernel or env / "bzImage"
+    initrd = initrd or env / "faketarget-initrd.cpio.zst"
     work = vm.workdir()
     disk = vm.sparse_disk(work / "disk.img", size)
     (work / "pd.toml").write_text(CONFIG.format(salt=secrets.token_hex(32)))
-    (work / "install.sh").write_text(INSTALL.format(env=env))
+    (work / "install.sh").write_text(INSTALL.format(kernel=kernel, initrd=initrd))
     cfg = Config.load(work / "pd.toml")
     script = f"""
     python3 -m pd randomize --config pd.toml

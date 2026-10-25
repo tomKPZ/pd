@@ -1,0 +1,9 @@
+#!/usr/bin/ash
+# mkinitcpio runtime hook for pd; see pd-install.
+
+run_hook() {
+    modprobe -a -q dm-mod dm-crypt
+    udevadm settle
+    sh /usr/lib/pd/hook.sh
+}
+
