@@ -1,5 +1,5 @@
 {
-  description = "pd: plausible-deniability boot setup";
+  description = "Plain Disguise (pd): plausible-deniability boot setup";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 

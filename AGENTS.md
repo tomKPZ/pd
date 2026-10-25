@@ -1,6 +1,6 @@
 # Notes for coding agents
 
-pd builds a plausible-deniability boot setup: one disk holding a decoy system and a hidden system, built
+pd (Plain Disguise) builds a plausible-deniability boot setup: one disk holding a decoy system and a hidden system, built
 from stock Linux pieces (dm-crypt, dm-thin, LVM, btrfs, a UKI that `kexec`s the chosen OS). Read in this
 order: [README.md](README.md) → [docs/design.md](docs/design.md) →
 [docs/threat-model.md](docs/threat-model.md) → [docs/install.md](docs/install.md). Read

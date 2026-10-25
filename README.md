@@ -1,6 +1,7 @@
-# pd: plausible deniability for a whole Linux system
+# Plain Disguise: plausible deniability for a whole Linux system
 
-> "pd" is a working name, short for *plausible deniability*.
+> **Plain Disguise** (`pd`): the hidden system hides in plain sight, in what looks like the decoy's free
+> space, inside headerless *plain* dm-crypt volumes.
 
 pd sets up one disk with two complete, independent Linux installations:
 

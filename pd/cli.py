@@ -60,7 +60,7 @@ def runner(args):
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(prog="pd")
+    p = argparse.ArgumentParser(prog="pd", description="Plain Disguise: set up and maintain a pd disk")
     sub = p.add_subparsers(dest="command", required=True)
 
     sub.add_parser("salt", help="print a new random salt")

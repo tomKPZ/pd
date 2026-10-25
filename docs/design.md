@@ -1,4 +1,4 @@
-# pd design (v2)
+# Plain Disguise (pd) design (v2)
 
 **Status.** This is the v2 design, implemented on branch `v2` and covered by the QEMU test suite
 (§11). Where v1 differs, the text says so; the complete as-built description of v1 is in
@@ -740,6 +740,7 @@ Decisions made while implementing v2:
 | D37 | Extra volumes are XFS by default and may be btrfs; ext4 is dropped | The filesystem survey (§2.3): XFS matches ext4 on in-place rewrites and is much better under churn, with or without the trim | agreed |
 | D38 | Optional FIDO2: hmac-secret unwraps a random plain key from per-key slots on the USB (two per credential, random when unused); systemd-cryptenroll's defaults (PIN and touch, no user verification) | Stops offline password guessing; nothing hidden-specific on the USB; any of several keys works; a side without FIDO2 still boots (§4.1) | agreed |
 | D39 | Stock boot: `pd init-hidden --stock-decoy` adds a hidden side to a stock LUKS + LVM thin decoy; the hidden boot is typed in a live system (OpenSSL's Argon2id derives pd's key; `late.sh DISK` runs as on pd's USB); the salt may be the decoy's LUKS UUID | No pd USB to recognize; the hidden side and its boot logic are unchanged; nothing to bring but memory (stock-boot.md) | agreed |
+| D40 | The project is called Plain Disguise; the tools stay `pd`. The name appears only in the docs, the flake and the CLI help, never on the USB or in the decoy | It hides in plain sight, in plain dm-crypt volumes; files on the USB and in the decoy already say only "pd" | agreed |
 
 ---
 
@@ -748,4 +749,3 @@ Decisions made while implementing v2:
 * Decoy footprint creep without the shutdown trim (§2.3): a documented limitation rather than capping
   the decoy's thin LVs.
 * Argon2 defaults: keep t=14, m=256 MiB, p=8, or raise memory?
-* Project name.
