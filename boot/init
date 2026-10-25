@@ -1,0 +1,35 @@
+#!/bin/sh
+# PID 1 of the boot environment.
+
+export PATH=/bin
+
+mount -t proc proc /proc -o nosuid,noexec,nodev
+mount -t sysfs sysfs /sys -o nosuid,noexec,nodev
+mount -t devtmpfs devtmpfs /dev -o mode=0755,nosuid
+mkdir -p /dev/pts /run /tmp
+mount -t devpts devpts /dev/pts -o mode=0620,gid=5,nosuid,noexec
+mount -t tmpfs tmpfs /run -o mode=0755,nosuid,nodev
+mount -t tmpfs tmpfs /tmp -o mode=1777,nosuid,nodev
+[ -d /sys/firmware/efi/efivars ] &&
+    mount -t efivarfs efivarfs /sys/firmware/efi/efivars -o nosuid,noexec,nodev 2>/dev/null
+
+# Load drivers for the hardware present.  USB devices appear asynchronously,
+# so repeat until no new modules get loaded.
+coldplug() {
+    prev=-1
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        find /sys/devices -name modalias -exec cat {} + 2>/dev/null |
+            sort -u | xargs -r modprobe -a -q -b 2>/dev/null
+        count=$(wc -l </proc/modules)
+        [ "$count" -eq "$prev" ] && break
+        prev=$count
+        sleep 0.5
+    done
+}
+modprobe -a -q dm-mod dm-crypt btrfs 2>/dev/null
+coldplug
+
+setsid cttyhack /early.sh
+echo "Starting recovery shell. Exit to power off."
+setsid cttyhack sh -l
+poweroff -f

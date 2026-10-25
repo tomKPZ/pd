@@ -1,1 +1,5 @@
 detect_shift
+result
+.testenv
+__pycache__/
+*.pyc

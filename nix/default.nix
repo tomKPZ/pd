@@ -1,0 +1,135 @@
+{ pkgs, src }:
+let
+  inherit (pkgs) lib;
+  static = pkgs.pkgsStatic;
+
+  lvm2Static = (static.lvm2.override {
+    onlyLib = false;
+    udevSupport = false;
+  }).overrideAttrs (old: {
+    # Static builds produce no shared library for the "lib" output.
+    postInstall = (old.postInstall or "") + ''
+      mkdir -p $lib
+    '';
+  });
+
+  detectShift = static.stdenv.mkDerivation {
+    pname = "detect_shift";
+    version = "1";
+    src = src + "/tools";
+    dontConfigure = true;
+    buildPhase = ''
+      $CC -static -O2 -Wall -Wextra -Werror detect_shift.c -o detect_shift
+    '';
+    installPhase = ''
+      install -Dm755 detect_shift $out/bin/detect_shift
+    '';
+  };
+
+  # Copy statically linked binaries into one bin/ directory, stripped, and
+  # refuse anything that is dynamically linked.
+  staticBin = name: bins: pkgs.runCommand name { nativeBuildInputs = [ pkgs.binutils pkgs.file ]; } ''
+    mkdir -p $out/bin
+    ${lib.concatMapStrings (b: ''
+      cp -L ${b} $out/bin/$(basename ${b} .static)
+    '') bins}
+    chmod -R u+w $out/bin
+    for f in $out/bin/*; do
+      strip --strip-all "$f"
+      if file "$f" | grep -q 'dynamically linked'; then
+        echo "$f is dynamically linked" >&2
+        exit 1
+      fi
+    done
+  '';
+
+  # Tools on the boot USB.  Keep this list minimal: anything here is visible
+  # to someone who has the USB but no password.
+  bootTools = staticBin "pd-boot-tools" [
+    "${static.busybox}/bin/busybox"
+    "${lib.getBin static.cryptsetup}/bin/cryptsetup"
+    "${static.libargon2}/bin/argon2"
+  ];
+
+  # Tools stored in the encrypted boot volume, used by late.sh.
+  plainTools = staticBin "pd-plain-tools" [
+    "${lvm2Static}/sbin/lvm.static"
+    "${lvm2Static}/sbin/dmsetup.static"
+    "${static.thin-provisioning-tools}/bin/pdata_tools"
+    "${static.kexec-tools}/bin/kexec"
+    "${lib.getBin static.jq}/bin/jq"
+    "${static.fzf}/bin/fzf"
+    "${detectShift}/bin/detect_shift"
+  ];
+
+  kernel = pkgs.linuxPackages.kernel;
+
+  # Broad hardware coverage: a missing keyboard or storage driver means a
+  # machine that cannot boot.
+  rootModules = import ./modules.nix;
+
+  modulesClosure = pkgs.makeModulesClosure {
+    kernel = pkgs.aggregateModules [ kernel.modules ];
+    firmware = pkgs.linux-firmware;
+    inherit rootModules;
+    allowMissing = true;
+  };
+
+  # The boot environment's initrd, without per-install files (salt and
+  # early_env.sh, which `pd usb` appends as a second cpio).
+  bootInitrd = pkgs.runCommand "pd-boot-initrd.cpio.zst" {
+    nativeBuildInputs = [ pkgs.cpio pkgs.zstd pkgs.findutils ];
+  } ''
+    root=$PWD/root
+    mkdir -p $root/{bin,dev,proc,sys,run,tmp,mnt,etc,lib}
+    cp ${bootTools}/bin/* $root/bin/
+    for applet in $($root/bin/busybox --list); do
+      [ -e $root/bin/$applet ] || ln -s busybox $root/bin/$applet
+    done
+    cp -r ${modulesClosure}/lib/modules $root/lib/
+    if [ -d ${modulesClosure}/lib/firmware ]; then
+      cp -r ${modulesClosure}/lib/firmware $root/lib/
+    fi
+    install -m755 ${src}/boot/init $root/init
+    install -m755 ${src}/boot/early.sh $root/early.sh
+    chmod -R u+w $root
+    (cd $root && find . -print0 | sort -z |
+      cpio --null -o -H newc --reproducible --owner=0:0 --quiet) |
+      zstd -19 -T0 -q >$out
+  '';
+
+  # Contents of the encrypted boot volume, minus per-install files.
+  plainTree = pkgs.runCommand "pd-plain-tree" { } ''
+    mkdir -p $out/bin
+    cp ${plainTools}/bin/* $out/bin/
+    ln -s pdata_tools $out/bin/thin_check
+    ln -s pdata_tools $out/bin/thin_dump
+    ln -s pdata_tools $out/bin/thin_rmap
+    install -m755 ${src}/plain/late.sh $out/late.sh
+    cp -r ${src}/plain/systems $out/systems
+  '';
+  toolvm = import ./toolvm.nix { inherit pkgs kernel modulesClosure plainTree bootTools; };
+
+  # Everything the test harness needs, at fixed names.
+  testenv = pkgs.linkFarm "pd-testenv" [
+    { name = "bzImage"; path = "${kernel}/bzImage"; }
+    { name = "boot-initrd.cpio.zst"; path = bootInitrd; }
+    { name = "toolvm-initrd.cpio.zst"; path = toolvm.initrd; }
+    { name = "toolenv"; path = toolvm.toolEnv; }
+    { name = "plain"; path = plainTree; }
+    { name = "boot-tools"; path = bootTools; }
+    { name = "stub.efi"; path = "${pkgs.systemd}/lib/systemd/boot/efi/linuxx64.efi.stub"; }
+    { name = "ukify"; path = pkgs.systemdUkify; }
+    { name = "ovmf"; path = pkgs.OVMF.fd; }
+    { name = "busybox"; path = pkgs.pkgsStatic.busybox; }
+  ];
+in
+{
+  inherit testenv toolvm;
+  inherit bootTools plainTools bootInitrd plainTree modulesClosure detectShift lvm2Static;
+  kernelImage = "${kernel}/bzImage";
+  kernel = kernel;
+  ukify = pkgs.systemdUkify;
+  stub = "${pkgs.systemd}/lib/systemd/boot/efi/linuxx64.efi.stub";
+  ovmf = pkgs.OVMF.fd;
+}

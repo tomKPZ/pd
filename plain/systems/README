@@ -1,0 +1,2 @@
+Per-system boot settings: systems/<name>/env.sh and optional extra.sh.
+`pd init` writes env.sh for each installed system.
