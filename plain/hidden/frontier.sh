@@ -72,6 +72,34 @@ frontier_check() {
     pool_ranges "$VG" /dev/mapper/fr-decoy /run/fr-decoy-region.table /run/fr-decoy.ranges
     pool_ranges "$VG" /dev/mapper/cryptlvm /run/fr-hidden-region.table /run/fr-hidden.ranges
 
+    # Decoy LVs other than the pool's data must stay out of the hidden
+    # region: between the start of the pool's main data segment and the top
+    # of the hidden boot volume (just above the hidden data region).
+    decoy_pe_start=$(lvm pvs --readonly --devices /dev/mapper/fr-decoy --noheadings --nosuffix \
+        --units s -o pe_start /dev/mapper/fr-decoy 2>/dev/null | tr -d ' ')
+    overlap=$(lvm lvs --readonly --devices /dev/mapper/fr-decoy --noheadings --nosuffix --units s -a \
+        -o lv_name,seg_pe_ranges,vg_extent_size "$VG" 2>/dev/null | awk \
+        -v pe_start="$decoy_pe_start" -v region=/run/fr-decoy-region.table -v hidden=/run/fr-hidden-region.table '
+        BEGIN {
+            # Decoy region: linear, one line.  Hidden top: highest mapped
+            # sector of its data region plus the boot volume (522240).
+            getline line < region; split(line, f, " "); base = f[5]
+            while ((getline line < hidden) > 0) {
+                split(line, f, " "); e = f[5] + f[2]; if (e > top) top = e
+            }
+            top += 522240
+        }
+        $2 ~ /^\/dev\// {
+            split($2, r, ":"); split(r[2], e, "-")
+            name = $1; gsub(/[][]/, "", name)
+            n++; lv[n] = name; lo[n] = base + pe_start + e[1] * $3; hi[n] = base + pe_start + (e[2] + 1) * $3
+            if (name ~ /_tdata$/ && e[2] - e[1] > big) { big = e[2] - e[1]; data_lo = lo[n] }
+        }
+        END {
+            for (i = 1; i <= n; i++)
+                if (lv[i] !~ /_tdata$/ && hi[i] > data_lo && lo[i] < top) print lv[i]
+        }' | sort -u | tr '\n' ' ')
+
     cryptsetup close fr-decoy
     dmsetup remove fr-decoy-raw
 
@@ -82,6 +110,11 @@ frontier_check() {
     rm -f /run/fr-*
 
     echo "Free space between the two sides: $gap MiB."
+    if [ -n "$overlap" ]; then
+        echo "WARNING: decoy volume(s) inside the hidden region: $overlap"
+        printf "Press Enter to continue booting. "
+        read -r _
+    fi
     if [ "$gap" -lt "$min" ]; then
         echo "WARNING: less than $MIN_GAP_PERCENT% of the disk separates the two sides."
         echo "Free space on one side, or the other side's data will be overwritten."

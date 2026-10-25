@@ -21,24 +21,28 @@ Notes on status:
 * M3: ext4 measured unsafe; btrfs creeps slowly toward its virtual size (design.md §2.3), which
   raises the open question of capping the decoy (§14). The disk visualizer is revived
   (`tests/visualize.py`, used by `tests/test_growth.py`).
-* D22: `pd usb` takes the salt from the config; reading it back from an existing USB isn't implemented.
+* D22: `pd usb --salt-from OLD.EFI` reads the salt back from an existing UKI.
 * M6: NixOS module tested with a real NixOS initrd; Arch hook written but untested (needs an Arch
   install in a VM); no full OS installs in tests yet.
-* M7: the decoy-segment overlap warning isn't implemented yet.
+* M7: the monitor also warns about decoy LVs inside the hidden region.
 
 Not done autonomously: anything involving real disks or USB sticks, pushing to the remote, external NixOS
 configuration repos, and running a migration.
 
 ## Next
 
-* Decide whether to cap the decoy's thin LVs (design.md §14), then implement it.
-* A way to run setup on real hardware: e.g. a "setup" UKI that boots a RAM-only environment with pd
-  and its tools (the tool VM's initrd, with the closure copied in instead of shared over 9p).
-* Test the Arch hook with a real Arch install in a VM.
-* `pd usb`: read the salt back from an existing USB (D22).
-* Frontier monitor: also warn about decoy LV segments in the hidden region.
+* A RAM-only "setup" UKI with pd and its tools built in, for running setup on real hardware (the tool
+  VM's initrd with the closure copied in instead of shared over 9p).
+* Test the Arch hook with a real Arch install in QEMU (pacman from nixpkgs installing from a pinned
+  archive.archlinux.org snapshot; no Arch host needed).
 
 ## Later / ideas
+
+* Investigate whether udev belongs in the boot UKI (`udevadm settle`, `/dev/disk/by-id`, dm/LVM
+  rules, thin management): what it would cost in size and shipped rules, and what it would buy over
+  the current polling and trial-by-disk approach.
+* Investigate btrfs options (allocation mode, block group size) and other filesystems for slower
+  footprint creep under churn (design.md §2.3).
 
 * Safe decoy re-initialization: require the hidden offset or password, check for overlap before writing,
   and never re-randomize.

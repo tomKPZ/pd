@@ -33,6 +33,7 @@ class Monitor(unittest.TestCase):
     def test_reports_then_warns(self):
         b, gap = self.hidden_boot("monitor-1")
         b.expect("PD-TARGET: marker=hidden")
+        self.assertNotIn("inside the hidden region", b.child.before)
         # Fresh 8 GiB disk: most of it is free.
         self.assertGreater(gap, 6000)
         self.assertLess(gap, 8192)

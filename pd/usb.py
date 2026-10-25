@@ -46,6 +46,23 @@ def install_cpio(cfg: Config) -> bytes:
     return buf.getvalue()
 
 
+def read_salt(uki: pathlib.Path) -> str:
+    """Recover the salt from an existing UKI (or initrd).  The per-install
+    cpio is stored uncompressed, so salt.txt can be found by its newc header."""
+    data = pathlib.Path(uki).read_bytes()
+    name = b"salt.txt\0"
+    i = data.find(name)
+    while i != -1:
+        hdr = data[i - 110:i]
+        if hdr.startswith(b"070701") and int(hdr[94:102], 16) == len(name):
+            size = int(hdr[54:62], 16)
+            start = i + len(name)
+            start += -(start - (i - 110)) % 4
+            return data[start:start + size].decode()
+        i = data.find(name, i + 1)
+    raise ValueError(f"no salt.txt found in {uki}")
+
+
 def build_uki(cfg: Config, env: pathlib.Path, out: pathlib.Path, cmdline: str = BOOT_CMDLINE) -> None:
     from pd.util import cmd
     cpio = out.with_suffix(".install.cpio")

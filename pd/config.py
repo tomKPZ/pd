@@ -32,7 +32,7 @@ class System:
 @dataclasses.dataclass
 class Config:
     disk: str
-    salt: str
+    salt: str = ""
     vg: str = "sysvg"
     hostname: str | None = None  # set during setup, since LVM records it
     swap_size: int = 64 << 20
@@ -69,7 +69,11 @@ class Config:
             cfg.subvolumes = subvols
         if cfg.default is None and cfg.systems:
             cfg.default = cfg.systems[0].name
-        if not re.fullmatch(r"[0-9a-fA-F]{16,}", cfg.salt):
-            raise ValueError("salt must be hex (use `pd salt` to generate one)")
+        if cfg.salt:
+            cfg.check_salt()
         return cfg
+
+    def check_salt(self) -> None:
+        if not re.fullmatch(r"[0-9a-fA-F]{16,}", self.salt):
+            raise ValueError("salt must be hex (use `pd salt` to generate one)")
 

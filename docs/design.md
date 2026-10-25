@@ -134,10 +134,15 @@ So safety also depends on each filesystem preferring to reuse low addresses it h
   `nossd` it was slightly lower (6.1 GiB after 200). The growth slows but doesn't stop, so over a long
   enough life a btrfs volume's footprint approaches its virtual size. `btrfs balance` allocates new
   block groups and makes it worse.
-* **So every filesystem on a pd thin LV is btrfs,** and v2 creates no ext4 `data` LV. But the only hard
-  bound on a side's footprint is the total virtual size of its thin LVs. The hidden side is capped this
-  way (§6.2); the decoy's thin LVs span the whole pool, so the decoy is bounded only by the disk (see
-  §14).
+* **So every filesystem on a pd thin LV is btrfs,** and v2 creates no ext4 `data` LV.
+* **Documented limitation:** the only hard bound on a side's footprint is the total virtual size of its
+  thin LVs. The hidden side is capped this way (§6.2). The decoy's thin LVs span the whole pool, so a
+  decoy with heavy, long-term churn can creep toward the hidden side even while storing little; the
+  frontier monitor (§10.2) warns before that happens. Rebooting doesn't help here: resetting dm-thin's
+  allocation cursor only matters when blocks have been freed, which never happens without discards.
+  The footprint is set by how btrfs reuses its own address space. In practice the creep is slow (25×
+  the volume size written to reach 80% in the test), so it matters mainly for small disks or heavy
+  write workloads.
 * **Thin snapshots** break the bound, because copy-on-write allocates new chunks for shared data. btrfs
   snapshots are fine.
 
@@ -395,7 +400,20 @@ a test boots it with the disk attached read-only all the way to `kexec`. This ha
 refuses to replay a dirty log tree on read-only media (`btrfs_replay_log()`: "log replay required on RO
 media"), so after an unclean shutdown a plain `ro` mount would fail. With `rescue=nologreplay`, the mount
 succeeds, and the target OS replays the log when it mounts read-write. A test leaves a dirty log tree in
-`@boot` (confirmed via `log_root` in the superblock) and boots. Any `rescue=` option also makes btrfs
+`@boot` (confirmed via `log_root` in the superblock) and boots.
+
+A dirty log tree is common: any `fsync` anywhere in the filesystem (not just in `@boot`) followed by a
+crash or power loss leaves one, and mounting any subvolume needs it replayed. Measured on a crashed
+test disk:
+
+| Device | Mount options | Result |
+|---|---|---|
+| read-only | `ro` | fails ("can't read superblock"); the boot would stop |
+| read-only | `ro,rescue=nologreplay` | mounts; nothing written |
+| writable | `ro` | mounts, **but replays the log and writes to the disk** (`log_root` becomes 0) |
+
+The last row is v1's situation (LVs activated read-write): after a crash, v1's boot environment
+writes to the internal disk despite mounting `ro`. Any `rescue=` option also makes btrfs
 refuse transactions, which the kernel log shows as `state E`; that is expected.
 
 v1 differs: it has no `nologreplay`, and it activates LVs read-write on top of a read-only crypt device.
@@ -442,7 +460,7 @@ Each side can hold several OSes in the same VG (e.g. Arch and NixOS).
   own tools, helped by optional recipes (`recipes/arch`, `recipes/nixos`).
 * **Building the USB.** `pd usb` combines the Nix-built UKI template with a small per-install cpio (salt
   and `early_env.sh`). A later rebuild, e.g. for a kernel update, reads the salt back from the existing
-  USB. Per-install values therefore never need to live in the repo or in `/nix/store`.
+  USB (`pd usb --salt-from OLD.EFI`). Per-install values therefore never need to live in the repo or in `/nix/store`.
 * **Per-install configuration** (disk, VG names, sizes, Argon2 parameters) is a TOML file kept outside
   the repo.
 * **The hidden offset is printed once.** It must not be written on the USB or anywhere in the decoy.
@@ -469,7 +487,8 @@ the disk, in `frontier.env`) it prints a warning and waits for Enter. It never w
 Tested: 7379 MiB free on a fresh 8 GiB test disk; 543 MiB and a warning after writing 6.5 GiB to the
 decoy.
 
-*(Planned)* Also warn if any decoy LV segment intersects the hidden region.
+It also warns (and waits) if any decoy LV other than the pool's data lies inside the hidden region, e.g.
+after someone changed the decoy's LVM layout.
 
 ### 10.3 Never clone the disk
 A snapshot adversary who compares two images can see "unused" space change. Backups of hidden data must
@@ -582,11 +601,7 @@ Decisions made while implementing v2 (status "implemented": not yet reviewed by 
 
 * Memorable offset (§3): adopt it? (Implemented as the `memorable_offset` config option, off by
   default.)
-* **Cap the decoy too?** Measured btrfs footprints keep creeping toward the thin LV's virtual size
-  (§2.3), so a full-size decoy LV will eventually reach the hidden side however little it stores. The
-  pool must span the disk for plausibility, but a thin LV smaller than its pool is an ordinary setup
-  (room left for snapshots or other LVs). Giving the decoy's thin LVs a total virtual size of, say, 55%
-  of the disk and the hidden side 40% would make the two footprints provably disjoint. The cost is a
-  decoy filesystem that reports less than the disk's size.
+* Decoy footprint creep (§2.3): kept as a documented limitation rather than capping the decoy's thin
+  LVs. Whether btrfs options or other filesystems behave better is on the roadmap.
 * Argon2 defaults: keep t=14, m=256 MiB, p=8, or raise memory?
 * Project name.

@@ -78,6 +78,8 @@ def main(argv=None) -> int:
     u.add_argument("--env", required=True, help="path to the built testenv/default output")
     u.add_argument("--output", required=True)
     u.add_argument("--cmdline", default=None)
+    u.add_argument("--salt-from", default=None,
+                   help="take the salt from an existing UKI instead of the config")
 
     c = sub.add_parser("install-cpio", help="write the per-install initrd cpio")
     c.add_argument("--config", required=True)
@@ -91,6 +93,10 @@ def main(argv=None) -> int:
 
     from pd.config import Config
     cfg = Config.load(args.config)
+    if getattr(args, "salt_from", None):
+        from pd import usb
+        cfg.salt = usb.read_salt(pathlib.Path(args.salt_from))
+    cfg.check_salt()
 
     if args.command == "randomize":
         from pd import setup
