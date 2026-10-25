@@ -17,6 +17,7 @@ for dev in /sys/block/*; do
     case "$dev" in /dev/loop* | /dev/ram* | /dev/dm-* | /dev/sr* | /dev/zram*) continue ;; esac
     [ -b "$dev" ] || continue
     sed "s|DISK|$dev|g" "$H/table.txt" | dmsetup create cryptlvm-raw 2>/dev/null || continue
+    dmsetup mknodes cryptlvm-raw
     if cryptsetup open --type plain --batch-mode $CRYPT_ARGS \
         --key-file "$H/data.key" /dev/mapper/cryptlvm-raw cryptlvm 2>/dev/null; then
         label=$(dd if=/dev/mapper/cryptlvm bs=512 skip=1 count=1 2>/dev/null | head -c 8)
@@ -36,3 +37,4 @@ if [ -z "$found" ]; then
     echo "pd: no disk matched the boot keys" >&2
     exit 1
 fi
+

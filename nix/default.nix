@@ -68,12 +68,22 @@ let
   # machine that cannot boot.
   rootModules = import ./modules.nix;
 
-  modulesClosure = pkgs.makeModulesClosure {
-    kernel = pkgs.aggregateModules [ kernel.modules ];
-    firmware = pkgs.linux-firmware;
-    inherit rootModules;
-    allowMissing = true;
-  };
+  # busybox modprobe can't reliably load compressed modules, so decompress
+  # them and regenerate the dependency files.
+  modulesClosure = let
+    closure = pkgs.makeModulesClosure {
+      kernel = pkgs.aggregateModules [ kernel.modules ];
+      firmware = pkgs.linux-firmware;
+      inherit rootModules;
+      allowMissing = true;
+    };
+  in pkgs.runCommand "pd-modules" { nativeBuildInputs = [ pkgs.xz pkgs.kmod ]; } ''
+    cp -r ${closure} $out
+    chmod -R u+w $out
+    find $out/lib/modules -name '*.ko.xz' -exec xz -d {} +
+    ver=$(ls $out/lib/modules)
+    depmod -b $out -a $ver
+  '';
 
   # The boot environment's initrd, without per-install files (salt and
   # early_env.sh, which `pd usb` appends as a second cpio).
@@ -83,6 +93,8 @@ let
     root=$PWD/root
     mkdir -p $root/{bin,dev,proc,sys,run,tmp,mnt,etc,lib}
     cp ${bootTools}/bin/* $root/bin/
+    # The kernel runs /sbin/modprobe to load crypto algorithms on demand.
+    ln -s bin $root/sbin
     for applet in $($root/bin/busybox --list); do
       [ -e $root/bin/$applet ] || ln -s busybox $root/bin/$applet
     done
@@ -106,9 +118,12 @@ let
     ln -s pdata_tools $out/bin/thin_dump
     ln -s pdata_tools $out/bin/thin_rmap
     install -m755 ${src}/plain/late.sh $out/late.sh
+    install -m644 ${src}/plain/thin-ro.sh $out/thin-ro.sh
     cp -r ${src}/plain/systems $out/systems
   '';
   toolvm = import ./toolvm.nix { inherit pkgs kernel modulesClosure plainTree bootTools; };
+
+  faketarget = import ./faketarget.nix { inherit pkgs modulesClosure bootTools plainTools src; };
 
   # Everything the test harness needs, at fixed names.
   testenv = pkgs.linkFarm "pd-testenv" [
@@ -122,6 +137,7 @@ let
     { name = "ukify"; path = pkgs.systemdUkify; }
     { name = "ovmf"; path = pkgs.OVMF.fd; }
     { name = "busybox"; path = pkgs.pkgsStatic.busybox; }
+    { name = "faketarget-initrd.cpio.zst"; path = faketarget; }
   ];
 in
 {

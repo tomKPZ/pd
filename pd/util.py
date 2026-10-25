@@ -37,6 +37,11 @@ def mountpoint(prefix: str = "pd-"):
     try:
         yield path
     finally:
+        # Remove the (now empty) mount point directories, deepest first.
+        # rmdir refuses non-empty directories, so nothing else can be lost.
+        for d in sorted((p for p in path.rglob("*") if p.is_dir() and not p.is_symlink()),
+                        key=lambda p: len(p.parts), reverse=True):
+            d.rmdir()
         path.rmdir()
 
 
@@ -52,6 +57,8 @@ def mounted(device, target: pathlib.Path, fstype: str, options: str):
 @contextlib.contextmanager
 def dm_device(name: str, table: str, readonly: bool = False):
     cmd("dmsetup", "create", name, *(["--readonly"] if readonly else []), input=table.encode())
+    # Without udev, nothing else creates the /dev/mapper node.
+    cmd("dmsetup", "mknodes", name)
     try:
         yield pathlib.Path("/dev/mapper") / name
     finally:
@@ -61,7 +68,7 @@ def dm_device(name: str, table: str, readonly: bool = False):
 @contextlib.contextmanager
 def plain_crypt(name: str, device, key: bytes, crypt_args: list[str], *,
                 offset: int | None = None, size: int | None = None, readonly: bool = False):
-    """Open plain dm-crypt.  The key goes through stdin, never a file."""
+    """Open plain dm-crypt.  The key goes through a pipe, never a file."""
     extra = []
     if offset is not None:
         extra.append(f"--offset={offset}")
@@ -69,8 +76,17 @@ def plain_crypt(name: str, device, key: bytes, crypt_args: list[str], *,
         extra.append(f"--size={size}")
     if readonly:
         extra.append("--readonly")
-    cmd("cryptsetup", "open", "--type=plain", "--batch-mode", *crypt_args, *extra,
-        "--key-file=-", device, name, input=key)
+    # cryptsetup hashes a plain-mode key read from stdin ("-") like a
+    # passphrase, but uses a key file's bytes directly.  Pass the key as a
+    # file: the read end of a pipe.
+    r, w = os.pipe()
+    try:
+        os.write(w, key)
+        os.close(w)
+        cmd("cryptsetup", "open", "--type=plain", "--batch-mode", *crypt_args, *extra,
+            f"--key-file=/proc/self/fd/{r}", device, name, pass_fds=(r,))
+    finally:
+        os.close(r)
     try:
         yield pathlib.Path("/dev/mapper") / name
     finally:
@@ -94,3 +110,4 @@ class Argon2Params:
 
     def shell(self) -> str:
         return " ".join(self.args())
+

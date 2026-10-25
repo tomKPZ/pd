@@ -24,13 +24,15 @@ fi
 # Open the data region.  Every layer is read-only: nothing here may write to
 # the disk.
 sed "s|DISK|$disk|g" "$B/table.txt" | dmsetup create --readonly cryptlvm-raw
+dmsetup mknodes cryptlvm-raw
 cryptsetup open --type plain --readonly --batch-mode $CRYPT_ARGS \
     --key-file "$B/data.key" /dev/mapper/cryptlvm-raw cryptlvm
-lvm vgchange -ay -qq --ignoremonitoring --sysinit \
-    --config "activation { read_only_volume_list = [ \"$VG\" ] } backup { backup = 0 archive = 0 }" "$VG"
+. "$B/thin-ro.sh"
+thin_ro_open "$VG" "$LV_ROOT" root-ro
+ROOT_DEV=/dev/mapper/root-ro
 
 mkdir -p "$R/boot"
-mount -t btrfs -o ro,nodiscard,rescue=nologreplay,subvol=@boot "/dev/$VG/$LV_ROOT" "$R/boot"
+mount -t btrfs -o ro,nodiscard,rescue=nologreplay,subvol=@boot "$ROOT_DEV" "$R/boot"
 
 if [ -x "$B/systems/$SYSTEM/extra.sh" ]; then
     . "$B/systems/$SYSTEM/extra.sh"
@@ -50,3 +52,4 @@ cp "$B/data.key" "$B/table.txt" "$B/crypt.env" /run/handoff/boot_tmp/
 kexec -l "$R$KERNEL" --initrd=/run/initrd --command-line="$CMDLINE"
 shred -u /run/handoff/boot_tmp/* /run/initrd /run/pd/boot.key
 kexec -e
+

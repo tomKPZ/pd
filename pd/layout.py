@@ -115,3 +115,4 @@ def hidden_layout(top: int, memorable: bool = False) -> HiddenLayout:
 
 def hidden_boot_command(layout: HiddenLayout) -> str:
     return f"sed -i s/{sectors(DECOY_PLAIN_OFFSET)}/{layout.plain_offset_sectors}/ /early_env.sh"
+

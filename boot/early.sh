@@ -38,7 +38,10 @@ forget_boot_entry() {
 }
 
 read_password() {
-    IFS= read -rs -p "Password: " PASSWORD
+    printf "Password: "
+    stty -echo 2>/dev/null
+    IFS= read -r PASSWORD
+    stty echo 2>/dev/null
     echo
 }
 

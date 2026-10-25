@@ -49,6 +49,9 @@ let
     }
     global {
       use_lvmetad = 0
+      thin_check_executable = "${pkgs.thin-provisioning-tools}/bin/thin_check"
+      thin_dump_executable = "${pkgs.thin-provisioning-tools}/bin/thin_dump"
+      thin_repair_executable = "${pkgs.thin-provisioning-tools}/bin/thin_repair"
     }
   '';
 
@@ -84,6 +87,8 @@ let
     root=$PWD/root
     mkdir -p $root/{bin,dev,proc,sys,lib}
     cp ${pkgs.pkgsStatic.busybox}/bin/busybox $root/bin/
+    # The kernel runs /sbin/modprobe to load crypto algorithms on demand.
+    ln -s bin $root/sbin
     for applet in $($root/bin/busybox --list); do
       [ -e $root/bin/$applet ] || ln -s busybox $root/bin/$applet
     done
@@ -97,3 +102,4 @@ in
 {
   inherit toolEnv initrd;
 }
+

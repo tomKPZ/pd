@@ -106,7 +106,12 @@ class BootVM:
                 "-append", f"console=ttyS0 panic=-1 {cmdline}".strip(),
             ] + _disk_args(disks, interface)
         self.child = pexpect.spawn(args[0], args[1:], timeout=180, encoding="utf-8",
-                                   codec_errors="replace", logfile=log)
+                                   codec_errors="replace")
+        # Log only what the guest prints, not what the test types.
+        self.child.logfile_read = log
+        # Only the guest should echo; otherwise typed passwords show up in
+        # the log even when the guest hides them.
+        self.child.setecho(False)
 
     _tmp = None
 
@@ -141,3 +146,4 @@ def workdir(prefix: str = "pd-test-") -> pathlib.Path:
 def cleanup(path: pathlib.Path):
     if not os.environ.get("PD_KEEP_TEST_DIR"):
         shutil.rmtree(path, ignore_errors=True)
+

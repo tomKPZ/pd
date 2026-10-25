@@ -2,7 +2,7 @@
 # Missing modules are skipped (allowMissing), so the list can be generous.
 [
   # Device mapper and crypto
-  "dm-mod" "dm-crypt" "dm-thin-pool" "dm-snapshot"
+  "dm-mod" "dm-crypt" "dm-thin-pool" "dm-snapshot" "dm-zero"
   "aes" "aesni-intel" "xts" "cbc" "sha256" "sha512" "crc32c" "xxhash64" "blake2b"
 
   # Filesystems
