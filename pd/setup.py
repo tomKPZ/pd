@@ -165,10 +165,18 @@ def create_root_fs(dev: str, cfg: Config) -> None:
 ROOT_OPTS = "noatime,lazytime,nodiscard,compress=zstd:3"
 
 
+VOLUME_OPTS = {"btrfs": ROOT_OPTS, "ext4": "noatime,lazytime,nodiscard"}
+
+
 @contextlib.contextmanager
 def roots_mounted(cfg: Config, base: pathlib.Path):
-    """Mount every system's root (all subvolumes) under base/<system>."""
+    """Mount every system's root (all subvolumes) under base/<system>, and
+    extra volumes under base/volumes/<name>."""
     with contextlib.ExitStack() as stack:
+        for v in cfg.volumes:
+            target = base / "volumes" / v.name
+            target.mkdir(parents=True, exist_ok=True)
+            stack.enter_context(mounted(f"/dev/{cfg.vg}/{v.name}", target, v.fs, VOLUME_OPTS[v.fs]))
         for s in cfg.systems:
             dev = f"/dev/{cfg.vg}/{s.lv}"
             root = base / s.name
@@ -197,15 +205,28 @@ def create_lvm(dev: str, cfg: Config, *, hidden: bool, disk_bytes: int) -> None:
                           f"{cfg.vg}/thinpool"))
     if hidden:
         # Hard cap on the hidden footprint (see design.md §6.2).
-        per_lv = int(disk_bytes * cfg.hidden_cap) // len(cfg.systems)
-        size = min(pool, L.align_down(per_lv, L.MIB))
+        per_lv = int(disk_bytes * cfg.hidden_cap) // (len(cfg.systems) + len(cfg.volumes))
+        # LVM rounds sizes up to whole extents; round down first so the
+        # total stays within the cap.
+        extent = int(lvm_output("vgs", "--noheadings", "--units", "b", "--nosuffix",
+                                "-o", "vg_extent_size", cfg.vg))
+        size = min(pool, L.align_down(per_lv, extent))
     else:
         size = pool
-    for s in cfg.systems:
-        lvm("lvcreate", "-qq", "-V", f"{size}b", "-T", f"{cfg.vg}/thinpool", "-n", s.lv)
+    for name in [s.lv for s in cfg.systems] + [v.name for v in cfg.volumes]:
+        lvm("lvcreate", "-qq", "-V", f"{size}b", "-T", f"{cfg.vg}/thinpool", "-n", name)
     cmd("mkswap", "-q", f"/dev/{cfg.vg}/swap")
     for s in cfg.systems:
         create_root_fs(f"/dev/{cfg.vg}/{s.lv}", cfg)
+    for v in cfg.volumes:
+        dev = f"/dev/{cfg.vg}/{v.name}"
+        if v.fs == "btrfs":
+            cmd("mkfs.btrfs", "--quiet", "--force", "--nodiscard", "--csum=xxhash", dev)
+        else:
+            # mkfs's discard on a fresh thin LV is absorbed by the pool
+            # (nopassdown) and lets mke2fs skip zeroing inode tables, which
+            # would otherwise allocate pool space across the whole volume.
+            cmd("mkfs.ext4", "-q", "-F", dev)
 
 
 # --- Layout read-back ---------------------------------------------------------------

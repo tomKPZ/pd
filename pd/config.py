@@ -30,6 +30,17 @@ class System:
 
 
 @dataclasses.dataclass
+class Volume:
+    """An extra thin LV, e.g. for bulk data (like v1's `data` LV)."""
+    name: str
+    fs: str = "btrfs"  # "btrfs" or "ext4"
+
+    def __post_init__(self):
+        if self.fs not in ("btrfs", "ext4"):
+            raise ValueError(f"volume {self.name}: fs must be btrfs or ext4")
+
+
+@dataclasses.dataclass
 class Config:
     disk: str
     salt: str = ""
@@ -41,6 +52,7 @@ class Config:
     min_gap_percent: int = 10  # frontier monitor warns below this
     argon2: Argon2Params = dataclasses.field(default_factory=Argon2Params)
     systems: list[System] = dataclasses.field(default_factory=list)
+    volumes: list[Volume] = dataclasses.field(default_factory=list)
     default: str | None = None
     subvolumes: dict[str, str] = dataclasses.field(default_factory=lambda: {
         "@": "",
@@ -61,10 +73,11 @@ class Config:
             raw = tomllib.load(f)
         a = raw.pop("argon2", {})
         systems = [System(**s) for s in raw.pop("systems", [])]
+        volumes = [Volume(**v) for v in raw.pop("volumes", [])]
         if "swap_size" in raw:
             raw["swap_size"] = parse_size(raw["swap_size"])
         subvols = raw.pop("subvolumes", None)
-        cfg = Config(argon2=Argon2Params(**a), systems=systems, **raw)
+        cfg = Config(argon2=Argon2Params(**a), systems=systems, volumes=volumes, **raw)
         if subvols is not None:
             cfg.subvolumes = subvols
         if cfg.default is None and cfg.systems:

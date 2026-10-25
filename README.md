@@ -85,6 +85,10 @@ v2 works end to end in QEMU, but hasn't been used on real hardware yet. The work
    kernel = "/boot/default/kernel"
    initrd = "/boot/default/initrd"
    cmdline = ""
+
+   [[volumes]]          # optional extra thin LVs
+   name = "data"
+   fs = "ext4"          # or "btrfs" (default)
    ```
 3. In a throwaway environment (live ISO) with pd and its tools:
    `pd randomize --config pd.toml`, then `pd init-decoy --config pd.toml --run` and install the decoy

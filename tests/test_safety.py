@@ -60,14 +60,17 @@ EOF
         offset = fixture.hidden_offset_sectors(fx)
         script = f"""
         printf '%s\\n' '{fixture.HIDDEN_PW}' | python3 -m pd open --config pd.toml --rw --password-stdin \\
-            --offset {offset} --run 'lvm lvs --noheadings --units b --nosuffix -o lv_name,lv_size sysvg'
+            --offset {offset} --run 'lvm lvs --noheadings --units b --nosuffix -o lv_name,lv_size sysvg; findmnt -n -o FSTYPE $PD_ROOT/volumes/data'
         """
         _, out = vm.ToolVM(fx.env, fx.work).run(script, disks=[fx.disk])
         sizes = dict(line.split() for line in out.splitlines()
-                     if line.strip().startswith(("root ", "thinpool ")))
+                     if line.strip().startswith(("root ", "data ", "thinpool ")))
         disk = L.disk_size(fx.disk.stat().st_size)
-        self.assertLessEqual(int(sizes["root"]), int(disk * fx.cfg.hidden_cap))
+        # The cap covers all hidden thin LVs together.
+        self.assertLessEqual(int(sizes["root"]) + int(sizes["data"]), int(disk * fx.cfg.hidden_cap))
         self.assertLess(int(sizes["root"]), int(sizes["thinpool"]))
+        # The extra volume exists with the configured filesystem.
+        self.assertIn("ext4", out)
 
 
 class TrimOnShutdown(unittest.TestCase):

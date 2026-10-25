@@ -31,6 +31,10 @@ lv = "root"
 kernel = "/boot/vmlinuz"
 initrd = "/boot/initrd"
 cmdline = "console=ttyS0 panic=-1 root=/dev/sysvg/root rootflags=subvol=@"
+
+[[volumes]]
+name = "data"
+fs = "ext4"
 """
 
 INSTALL = """

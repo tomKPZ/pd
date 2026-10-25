@@ -136,10 +136,16 @@ collision):
 | ext4 | 7.7 GiB (the whole volume) within 15 cycles | 5.0 GiB after the first session, then flat |
 
 * **btrfs** allocates data block groups first-fit from low device offsets and deletes empty block
-  groups; with the shutdown trim its footprint tracks live data. Recommended.
+  groups; with the shutdown trim its footprint tracks live data. It's the default, and root volumes
+  must be btrfs (the boot path mounts their `@boot` and `@nix` subvolumes).
 * **ext4** deliberately spreads allocations and metadata across block groups (the Orlov allocator).
-  With the shutdown trim it's bounded, but by whatever its first session touched (its metadata never
-  moves), not by live data. Without the trim it reaches the whole volume. Use btrfs.
+  With the shutdown trim it's bounded by live data plus each session's new writes, like btrfs; the
+  4.8 GiB above comes from writing about 5 GiB in a single session on an 8 GiB volume. Its metadata
+  stays wherever the first session put it. ext4 is a reasonable choice for data volumes holding large
+  files that are rewritten in place: an in-place overwrite reuses mapped blocks, while btrfs
+  copy-on-write allocates new ones (`chattr +C` gives btrfs the same behavior for chosen directories,
+  at the cost of checksums and compression). Without the shutdown trim, ext4 reaches the whole volume,
+  so it depends on the trim more than btrfs does.
 * **Without the shutdown trim** (or if it's skipped, e.g. after a crash), footprints creep as in the
   first column. The hidden side's thin LVs are capped (§6.2), so it can't grow past its cap either way;
   the decoy is bounded only by the disk, and the frontier monitor (§10.2) warns as the gap shrinks.
@@ -281,7 +287,9 @@ Under the plain dm-crypt layer, each side has one LVM PV and one VG containing:
 * a thin pool over the rest of the PV;
 * thin LVs: one btrfs root per installed OS. The btrfs roots have the subvolumes `@`, `@boot`, `@home`,
   `@home_snapshots`, `@nix`, `@snapshots`, `@var_cache`, `@var_lib_docker`, `@var_log`, `@var_tmp`.
-  (v1 also had an ext4 `data` LV; ext4 is unsafe on pd, §2.3.)
+* optional extra thin LVs (`[[volumes]]` in the config, btrfs or ext4), e.g. for bulk data like v1's
+  ext4 `data` LV (§2.3 on choosing the filesystem). During setup they're mounted at
+  `$PD_ROOT/volumes/<name>`.
 
 Mount options are `noatime,lazytime,nodiscard`; btrfs adds `ssd,autodefrag,compress=zstd:12`.
 
@@ -593,7 +601,7 @@ Decisions made while implementing v2:
 | D27 | NVRAM cleanup writes efivarfs directly from busybox | static efibootmgr doesn't build; one tool fewer on the USB | agreed |
 | D28 | An empty password goes straight to the recovery shell, skipping Argon2 | Faster hidden boot; a mistyped real password still takes the normal path | agreed |
 | D29 | Keys are passed to cryptsetup as files (pipe fds), never on stdin | Plain mode hashes stdin keys; the boot scripts read raw key files | agreed |
-| D30 | Filesystems on pd thin LVs should be btrfs | Measured: ext4 touches the whole pool under churn without trim, and stays bounded by its first session with it (§2.3) | agreed |
+| D30 | Root LVs are btrfs; extra data volumes are btrfs by default and may be ext4 | With the shutdown trim both stay near live data; ext4 avoids copy-on-write reallocation for files rewritten in place, but depends on the trim more (§2.3) | agreed |
 | D31 | Hidden-only features use a generic `hooks/` directory in the boot volume | Keeps hidden-specific code out of `late.sh`, which is identical on both sides | agreed |
 | D32 | Kernel modules in the boot initrd are uncompressed; GPU drivers omitted | busybox modprobe can't reliably load compressed modules; GPU firmware is over 1 GB | agreed |
 | D33 | Builds use `path:` flake references | Nix's libgit2 can't read reftable repositories | agreed |
