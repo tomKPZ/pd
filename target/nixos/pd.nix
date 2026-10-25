@@ -12,6 +12,12 @@ in
 {
   options.pd = {
     enable = lib.mkEnableOption "booting from a pd disk";
+    v1Compat = lib.mkEnableOption ''
+      also accepting keys from a v1 boot USB (detached LUKS header in
+      /boot_tmp/header.dat), for the transition described in
+      docs/migration.md.  Remove the system's own v1 pd-unlock unit when
+      enabling this
+    '';
   };
 
   config = lib.mkIf cfg.enable {
@@ -43,8 +49,18 @@ in
       script = ''
         # Coldplug must enqueue devices before settling.
         udevadm settle --timeout=60
-        ${builtins.readFile ../hook.sh}
-      '';
+      '' + lib.optionalString cfg.v1Compat ''
+        if [ -e /boot_tmp/header.dat ]; then
+          test -b /boot_tmp/disk
+          dmsetup create dm-luks /boot_tmp/table.txt
+          rm -f /boot_tmp/disk
+          cryptsetup open --key-file=/boot_tmp/key.bin --keyfile-offset=64 \
+            --header=/boot_tmp/header.dat /dev/mapper/dm-luks luks
+          shred -u /boot_tmp/*
+          rmdir /boot_tmp
+          exit 0
+        fi
+      '' + builtins.readFile ../hook.sh;
     };
 
     # pd's boot environment reads the kernel, initrd and kernel parameters of

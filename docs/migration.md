@@ -36,10 +36,15 @@ What does change:
 
 ## Steps
 
-1. **Install the v2 target hook in every OS on both sides,** alongside the v1 one: NixOS imports
-   `target/nixos/pd.nix`; Arch adds the `pd` mkinitcpio hook. v1's hook only acts when
-   `/boot_tmp/header.dat` exists and v2's only when `/boot_tmp/data.key` exists, so both can be
-   installed at once. Rebuild the initrds and confirm each OS still boots with the v1 USB.
+1. **Install a transitional hook in every OS on both sides** that accepts both formats: v1 hands over
+   `/boot_tmp/header.dat`, v2 hands over `/boot_tmp/data.key`.
+   * NixOS: import `target/nixos/pd.nix` with `pd.enable = true; pd.v1Compat = true;` and **remove** the
+     system's own `pd-unlock` unit (both would run, and v1's `shred -u /boot_tmp/*` would destroy v2's
+     keys).
+   * Arch: guard the body of v1's `mycrypt` hook with `if [ -e /boot_tmp/header.dat ]; then … fi`, and
+     add the v2 `pd` hook after it.
+
+   Rebuild the initrds and confirm each OS still boots with the v1 USB.
 2. **Boot a throwaway environment** with pd, write a v2 config with a **new** salt (`pd salt`), and run:
    ```sh
    pd migrate-v1 --config pd.toml --v1-salt <v1 salt> --v1-hidden-offset <v1 hidden sector>
@@ -53,7 +58,7 @@ What does change:
       `table.txt` and `systems/*/env.sh`, replacing `extra.sh` with the v2 versions, and adding the
       frontier monitor to the hidden side.
 3. **Write the v2 USB** with the new salt (`pd usb`). Boot both sides.
-4. **Remove the v1 hook** from the target OSes.
+4. **Remove the v1 compatibility** (`pd.v1Compat`, or the guarded `mycrypt` hook).
 
 Rollback: keep the v1 USB until both sides boot with v2. The data regions are never modified, but the
 v1 boot volumes are overwritten in step 2, so the v1 USB stops working after it.
