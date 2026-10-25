@@ -50,15 +50,19 @@ class Uefi(unittest.TestCase):
         b.expect("recovery shell")
         b.expect("~ # ")
         g = "8be4df61-93ca-11d2-aa0d-00e098032b8c"
+        # The terminal echoes the command, so results are printed through
+        # variables and matched in a form that doesn't appear literally in it.
         b.sendline(
             f"v=/sys/firmware/efi/efivars; cur=$(od -An -tx1 -j4 -N2 $v/BootCurrent-{g} | "
-            "awk '{printf \"%s%s\", toupper($2), toupper($1)}'); "
-            f"echo CUR=$cur; [ -e $v/Boot$cur-{g} ] && echo ENTRY-PRESENT || echo ENTRY-GONE; "
-            f"od -An -tx1 -j4 -v $v/BootOrder-{g} | tr -s ' \\n' ' '; echo ORDER-END")
-        b.expect("ENTRY-(GONE|PRESENT)")
-        self.assertEqual(b.child.match.group(0), "ENTRY-GONE")
-        b.expect("ORDER-END")
-        cur = b.child.before
+            "awk '{printf \"%s%s\", $2, $1}'); "
+            f"e=gone; [ -e $v/Boot$(echo $cur | tr a-f A-F)-{g} ] && e=present; "
+            f"o=$(od -An -tx1 -j4 -v $v/BootOrder-{g} | tr -s ' \\n' ' '); "
+            "lo=${cur#??}; hi=${cur%??}; "
+            "case \" $o \" in *\" $lo $hi \"*) r=present ;; *) r=gone ;; esac; "
+            "echo \"NVRAM: entry_$e order_$r.\"")
+        b.expect(r"NVRAM: entry_(\w+) order_(\w+)\.")
+        self.assertEqual(b.child.match.group(1), "gone")
+        self.assertEqual(b.child.match.group(2), "gone")
         # Driving the real boot path proves the UKI works; the decoy itself is
         # covered by test_e2e.
 

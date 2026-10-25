@@ -230,10 +230,12 @@ def check_no_overlap(segments: list[dict], pe_start: int, hl: L.HiddenLayout) ->
         return (L.DATA_START + pe_start + s["first"] * ext,
                 L.DATA_START + pe_start + (s["last"] + 1) * ext)
 
-    # The bulk of the pool's data; anything in front of it is decoy front
-    # metadata.
-    bulk = max((s for s in segments if s["lv"].endswith("_tdata")),
-               key=lambda s: s["last"] - s["first"])
+    # The pool's data proper starts at the lowest tdata segment holding at
+    # least 10% of it (the one-extent trick leaves a tiny first segment).
+    # Only what lies in front of that is decoy front metadata.
+    tdata = sorted((s for s in segments if s["lv"].endswith("_tdata")), key=lambda s: s["first"])
+    total = sum(s["last"] - s["first"] + 1 for s in tdata)
+    bulk = next(s for s in tdata if (s["last"] - s["first"] + 1) * 10 >= total)
     tdata_start = rng(bulk)[0]
     for s in segments:
         if s["lv"].endswith("_tdata"):
