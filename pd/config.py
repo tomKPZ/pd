@@ -96,6 +96,10 @@ class Config:
         return cfg
 
     def check_salt(self) -> None:
-        if not re.fullmatch(r"[0-9a-fA-F]{16,}", self.salt):
-            raise ValueError("salt must be hex (use `pd salt` to generate one)")
+        # Hex from `pd salt`, or for stock boot (docs/stock-boot.md) something
+        # read back or typed at boot, such as the decoy's LUKS UUID.  Shell-safe
+        # characters only, since it's typed on a command line.
+        if not re.fullmatch(r"[0-9A-Za-z._-]{8,}", self.salt):
+            raise ValueError("salt must be at least 8 letters, digits, '.', '_' or '-' "
+                             "(use `pd salt` to generate one)")
 

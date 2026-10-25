@@ -97,20 +97,24 @@ class HiddenLayout:
         return reversed_table(self.data_start, self.data_end)
 
 
-def hidden_layout(top: int, memorable: bool = False) -> HiddenLayout:
+def hidden_layout(top: int, memorable: bool = False, bottom: int = DATA_START) -> HiddenLayout:
     """Place the hidden side below `top` (H: start of the decoy's end-of-disk
     metadata, or D - 1 MiB if there is none).
 
     With `memorable`, the plain volume's start sector is rounded down to a
-    multiple of 10**6 sectors so the offset is easy to remember.
+    multiple of 10**6 sectors so the offset is easy to remember.  `bottom`
+    is the lowest byte the hidden data region may cover: just above the
+    decoy's boot volume, or for a stock decoy the start of its pool's data
+    (docs/stock-boot.md).
     """
     plain = align_down(top - PLAIN_SIZE, ALIGN)
     if memorable:
         plain = align_down(sectors(plain), 10**6) * SECTOR
     data_end = plain
-    if data_end - DATA_START < REVERSE_CHUNK:
+    data_start = -(-bottom // ALIGN) * ALIGN
+    if data_end - data_start < REVERSE_CHUNK:
         raise ValueError("disk too small for a hidden side")
-    return HiddenLayout(plain_offset=plain, data_start=DATA_START, data_end=data_end)
+    return HiddenLayout(plain_offset=plain, data_start=data_start, data_end=data_end)
 
 
 def hidden_boot_command(layout: HiddenLayout) -> str:

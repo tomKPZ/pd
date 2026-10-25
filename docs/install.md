@@ -186,6 +186,12 @@ nixos-install --root $PD_ROOT/nixos              # or --flake <path>#<host>
 The module warns at build time about filesystems without `nodiscard` and about `services.fstrim`. Don't
 put `root=` in the kernel parameters: NixOS mounts root from `fileSystems."/"`.
 
+## Without pd's USB
+
+[stock-boot.md](stock-boot.md) describes a variant with no pd USB: the decoy is a stock LUKS + LVM thin
+install that boots on its own, `pd init-hidden --stock-decoy` adds the hidden side, and the hidden
+side is booted from a stock live system with commands typed from memory.
+
 ## FIDO2 security keys (optional)
 
 A FIDO2 security key with `hmac-secret` (e.g. any YubiKey 5 or Security Key) makes offline password

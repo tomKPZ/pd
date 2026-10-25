@@ -347,7 +347,8 @@ thin-ro.sh                read-only thin LV mapping (§7.3)
 data.key                  this side's data-region key
 table.txt                 dm table for this side's data region, with DISK standing for the disk
 crypt.env                 cipher parameters handed to the target OS
-bin/                      static lvm, dmsetup, pdata_tools (thin_check, thin_dump), kexec, fzf, jq, detect_shift
+bin/                      static lvm, dmsetup, pdata_tools (thin_check, thin_dump), kexec, fzf, jq, detect_shift,
+                          busybox (the scripts' userland, so they also run from a live system)
 systems/<name>/env.sh     per-system settings: VG, root LV, kernel, initrd, cmdline
 systems/<name>/extra.sh   per-system hook (e.g. the NixOS generation menu)
 systems/default           symlink to the default system
@@ -568,6 +569,9 @@ Each side can hold several OSes in the same VG (e.g. Arch and NixOS).
 * **pd's core stops at "this side's roots are mounted".** `pd init-decoy/init-hidden --run` opens a
   shell with each system's root at `$PD_ROOT/<system>`; the OS is installed with the distro's own tools
   ([install.md](install.md)).
+* **Stock decoy:** `pd init-hidden --stock-decoy DEVICE` puts the hidden side into a stock install's
+  LUKS + LVM thin layout instead of a pd decoy, opening the decoy only read-only; the hidden side is then
+  booted from a live system ([stock-boot.md](stock-boot.md)).
 * **Commands:** `pd salt`, `pd randomize`, `pd init-decoy`, `pd init-hidden`, `pd open`, `pd close`,
   `pd rekey`, `pd usb`, `pd install-cpio`, `pd migrate-v1` (`python3 -m pd --help`).
 * **`pd open` / `pd close`** (`pd/opener.py`) work from the setup UKI or a live ISO (`pd.pyz`, a zipapp,
@@ -650,6 +654,7 @@ go to another pd setup; never `dd` the disk.
   | `test_nixos` | a real NixOS initrd with `pd.nix` unlocks the disk and mounts `/sysroot` |
   | `test_arch` | a real Arch install (pacstrap, `pd` mkinitcpio hook) boots through pd (`PD_TEST_ARCH=1`, needs network) |
   | `test_monitor` | frontier monitor report and warning; no hidden-only files in the decoy |
+  | `test_stock` | stock boot: a stock LUKS + LVM thin decoy is left unchanged by `init-hidden --stock-decoy`, and the printed commands boot the hidden side from another VM |
   | `test_fido2` | enroll two emulated security keys for both sides, boot with either, wrong PIN, unknown key, rekey, remove |
   | `test_churn` | btrfs, XFS and (unsupported) ext4 pool footprint under churn, with and without a shutdown trim |
   | `fs_survey.py` (not in the suite; `python3 -m tests.fs_survey`) | the §2.3 table: filesystems and btrfs options × workloads × trim |
@@ -679,7 +684,7 @@ go to another pd setup; never `dd` the disk.
 | `pvmove` to tidy the pool layout (`MOVE_PES`) | Removed: cosmetic, and visible in LVM history. The decoy layout is now stock. |
 | rdseed as an extra entropy source | Removed: the kernel CSPRNG is enough. |
 | Secure Boot | Not planned: it ties the disk to one machine. |
-| Stock decoy boot + hidden boot typed from memory in a live ISO | Possible future variant, if the USB being recognizable matters ([threat-model.md](threat-model.md)). |
+| Stock decoy boot + hidden boot typed from memory in a live ISO | Documented as [stock boot](stock-boot.md); pd only sets up the hidden side (D39). |
 
 ---
 
@@ -733,6 +738,7 @@ Decisions made while implementing v2:
 | D36 | Keep btrfs's default mount options; recommend `chattr +C` (or an XFS volume) for files rewritten in place | The filesystem survey (§2.3): `ssd`/`nossd`/`autodefrag` make no difference, `ssd_spread` is worse, and only rewrites of large files are a problem for btrfs | proposed |
 | D37 | Extra volumes are XFS by default and may be btrfs; ext4 is dropped | The filesystem survey (§2.3): XFS matches ext4 on in-place rewrites and is much better under churn, with or without the trim | agreed |
 | D38 | Optional FIDO2: hmac-secret unwraps a random plain key from per-key slots on the USB (two per credential, random when unused); systemd-cryptenroll's defaults (PIN and touch, no user verification) | Stops offline password guessing; nothing hidden-specific on the USB; any of several keys works; a side without FIDO2 still boots (§4.1) | agreed |
+| D39 | Stock boot: `pd init-hidden --stock-decoy` adds a hidden side to a stock LUKS + LVM thin decoy; the hidden boot is typed in a live system (OpenSSL's Argon2id derives pd's key; `late.sh DISK` runs as on pd's USB); the salt may be the decoy's LUKS UUID | No pd USB to recognize; the hidden side and its boot logic are unchanged; nothing to bring but memory (stock-boot.md) | agreed |
 
 ---
 

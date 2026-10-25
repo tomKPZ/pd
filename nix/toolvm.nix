@@ -37,6 +37,8 @@ let
       gnutar
       iproute2
       fido2Hmac
+      # The stock-boot test derives the hidden key with OpenSSL, as a live system would.
+      openssl.bin
     ];
     pathsToLink = [ "/bin" "/sbin" "/lib" "/share" ];
   };

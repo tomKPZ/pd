@@ -117,6 +117,13 @@ def main(argv=None) -> int:
                    help="v1 Argon2 parameters t,m_log2,p (default 14,18,8)")
     m.add_argument("--password-stdin", action="store_true")
 
+    h = sub.choices["init-hidden"]
+    h.add_argument("--stock-decoy", metavar="DEVICE", default=None,
+                   help="the decoy is a stock LUKS + LVM thin install whose LUKS volume is on DEVICE "
+                        "(docs/stock-boot.md); its password is asked for as the decoy password")
+    h.add_argument("--decoy-header", default=None,
+                   help="with --stock-decoy: the decoy's detached LUKS header")
+
     d = sub.choices["init-decoy"]
     d.add_argument("--force", action="store_true",
                    help="re-create an existing decoy (never re-randomizes the disk)")
@@ -224,8 +231,25 @@ def main(argv=None) -> int:
             (pw,) = read_passwords(args, ["Decoy"])
             hidden = "none" if args.no_hidden else None
         setup.init_decoy(cfg, pw, runner(args), force=args.force, hidden=hidden)
+    elif args.command == "init-hidden" and args.stock_decoy:
+        from pd import setup
+        decoy, hidden = read_passwords(args, ["Decoy", "Hidden"])
+        hl = setup.init_hidden_stock(cfg, args.stock_decoy, args.decoy_header, decoy, hidden,
+                                     runner(args))
+        if cfg.salt == setup.luks_uuid(args.stock_decoy, args.decoy_header):
+            salt = (f'"$(cryptsetup luksUUID {args.decoy_header or args.stock_decoy})"')
+            note = "The salt is the decoy's LUKS UUID, read back at boot."
+        else:
+            salt = cfg.salt
+            note = "The salt isn't the decoy's LUKS UUID, so it's typed at boot."
+        # Printed once.  Never store it anywhere near the machine.
+        print(f"Hidden boot from a live system, as root (docs/stock-boot.md). {note}")
+        for line in setup.stock_boot_commands(cfg, hl, salt):
+            print(f"  {line}")
     elif args.command == "init-hidden":
         from pd import setup
+        if args.decoy_header:
+            raise SystemExit("--decoy-header needs --stock-decoy")
         decoy, hidden = read_passwords(args, ["Decoy", "Hidden"])
         hl = setup.init_hidden(cfg, decoy, hidden, runner(args))
         # Printed once.  Never store it on the USB or in the decoy.

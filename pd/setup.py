@@ -6,6 +6,7 @@ are inside the encrypted boot volumes, where they belong.
 """
 
 import contextlib
+import dataclasses
 import json
 import os
 import pathlib
@@ -123,13 +124,14 @@ def write_boot_volume(mnt: pathlib.Path, cfg: Config, data_key: bytes, table: st
     cmd("sync")
 
 
-def install_hidden_extras(mnt: pathlib.Path, cfg: Config, decoy_key: bytes, decoy_table: str) -> None:
+def install_hidden_extras(mnt: pathlib.Path, cfg: Config, decoy_key: bytes, decoy_table: str,
+                          frontier_env: str = "") -> None:
     """Hidden-only files: never copy these into the decoy."""
     write_file(mnt / "decoy.key", decoy_key, 0o600)
     write_file(mnt / "decoy.table", decoy_table)
     (mnt / "hooks").mkdir()
     shutil.copy(REPO / "plain" / "hidden" / "frontier.sh", mnt / "hooks" / "frontier.sh")
-    write_file(mnt / "frontier.env", f"MIN_GAP_PERCENT={cfg.min_gap_percent}\n")
+    write_file(mnt / "frontier.env", f"MIN_GAP_PERCENT={cfg.min_gap_percent}\n{frontier_env}")
     cmd("sync")
 
 
@@ -274,19 +276,20 @@ def decoy_top(segments: list[dict], pe_start: int, data_start: int, disk_bytes: 
     return min(after) if after else disk_bytes - L.ALIGN
 
 
-def check_no_overlap(segments: list[dict], pe_start: int, hl: L.HiddenLayout) -> None:
+def check_no_overlap(segments: list[dict], pe_start: int, hl: L.HiddenLayout,
+                     data_start: int = L.DATA_START) -> None:
     """The hidden side may only share space with the decoy pool's data.
 
     Decoy metadata at the front (PV header, swap, and on v1-style layouts the
     pool metadata) lies below the decoy's thin data and is only reachable by
     a hidden overflow, which would already have destroyed decoy data.  Decoy
     LVs must never intersect the hidden boot volume or the upper chunks of the
-    hidden data region.
+    hidden data region.  `data_start` is where the decoy's PV starts on the disk.
     """
     def rng(s):
         ext = s["extent"]
-        return (L.DATA_START + pe_start + s["first"] * ext,
-                L.DATA_START + pe_start + (s["last"] + 1) * ext)
+        return (data_start + pe_start + s["first"] * ext,
+                data_start + pe_start + (s["last"] + 1) * ext)
 
     # The pool's data proper starts at the lowest tdata segment holding at
     # least 10% of it (the one-extent trick leaves a tiny first segment).
@@ -437,15 +440,192 @@ def init_hidden(cfg: Config, decoy_password: bytes, password: bytes, run=None) -
     key = argon2(password, cfg.salt, cfg.argon2)
     if key == argon2(decoy_password, cfg.salt, cfg.argon2):
         raise RuntimeError("passwords derive the same key")
+    create_hidden(cfg, d, hl, key, decoy_key, decoy_table, "", run)
+    return hl
+
+
+def create_hidden(cfg: Config, d: int, hl: L.HiddenLayout, key: bytes, decoy_key: bytes,
+                  decoy_table: str, frontier_env: str, run=None) -> None:
     data_key = os.urandom(64)
     table = hl.data_table()
-    with boot_volume(disk, hl.plain_offset, key, create=True) as mnt:
+    with boot_volume(cfg.disk, hl.plain_offset, key, create=True) as mnt:
         write_boot_volume(mnt, cfg, data_key, table)
-        install_hidden_extras(mnt, cfg, decoy_key, decoy_table)
-    with data_region(disk, table, data_key, readonly=False) as dev:
+        install_hidden_extras(mnt, cfg, decoy_key, decoy_table, frontier_env)
+    with data_region(cfg.disk, table, data_key, readonly=False) as dev:
         create_lvm(dev, cfg, hidden=True, disk_bytes=d)
         with vg_active(cfg.vg):
             if run:
                 with mountpoint("mnt-") as base, roots_mounted(cfg, base):
                     run(base)
+
+
+# --- Stock decoy (docs/stock-boot.md) -------------------------------------------------
+#
+# The decoy is an ordinary install: LUKS (attached or detached header) holding
+# LVM with a thin pool.  pd only ever opens it read-only, to find where its
+# pool's data lies and to give the frontier monitor its key.
+
+STOCK_MAP = "pd-stock-decoy"
+
+# dm-crypt options that don't change what's on the disk.
+CRYPT_PERF_OPTS = {"same_cpu_crypt", "submit_from_crypt_cpus", "no_read_workqueue",
+                   "no_write_workqueue", "high_priority"}
+
+
+@dataclasses.dataclass
+class StockDecoy:
+    key: bytes              # the LUKS volume key
+    table: str              # the LUKS data area, as a linear table on DISK
+    crypt_args: list[str]   # plain-mode arguments that read it like the LUKS mapping
+    vg: str
+    pv_start: int           # disk offset of the LUKS data area, where the PV starts
+    segments: list[dict]
+    pe_start: int
+
+
+def crypt_plain_args(line: str) -> tuple[bytes, int, int, list[str]]:
+    """Parse a dm-crypt table line (`dmsetup table --showkeys`) into (key,
+    data offset in sectors, length in sectors, plain-mode cryptsetup
+    arguments that reproduce the mapping)."""
+    f = line.split()
+    if len(f) < 8 or f[2] != "crypt":
+        raise RuntimeError("the decoy's mapping isn't dm-crypt")
+    length, cipher, key, iv_offset, offset = int(f[1]), f[3], f[4], int(f[5]), int(f[7])
+    if key.startswith(":"):
+        raise RuntimeError("the decoy's volume key is in the kernel keyring and can't be read")
+    args = [f"--cipher={cipher}", f"--key-size={len(key) * 4}"]
+    for opt in f[9:9 + int(f[8])] if len(f) > 8 else []:
+        if opt.startswith("sector_size:"):
+            args.append(f"--sector-size={opt.split(':', 1)[1]}")
+        elif opt == "iv_large_sectors":
+            args.append("--iv-large-sectors")
+        elif opt == "allow_discards":
+            raise RuntimeError(
+                "the decoy's LUKS volume allows discards (a persistent flag), which reveals the disk's "
+                "used blocks.  On the decoy, clear it with `cryptsetup refresh --persistent NAME` "
+                "(without --allow-discards); see docs/stock-boot.md")
+        elif opt not in CRYPT_PERF_OPTS:
+            raise RuntimeError(f"unsupported dm-crypt option on the decoy: {opt}")
+    if iv_offset:
+        args.append(f"--skip={iv_offset}")
+    return bytes.fromhex(key), offset, length, args
+
+
+def partition_offset(device: str, disk: str) -> int:
+    """Byte offset of `device` on `disk`: 0 for the disk itself, else the
+    partition's start."""
+    dev = pathlib.Path(os.path.realpath(device)).name
+    whole = pathlib.Path(os.path.realpath(disk)).name
+    if dev == whole:
+        return 0
+    sysfs = pathlib.Path("/sys/class/block") / dev
+    if not (sysfs / "partition").exists() or sysfs.resolve().parent.name != whole:
+        raise RuntimeError(f"{device} is neither {disk} nor one of its partitions")
+    return int((sysfs / "start").read_text()) * L.SECTOR
+
+
+def luks_uuid(device: str, header: str | None) -> str:
+    return cmd_output("cryptsetup", "luksUUID", header or device)
+
+
+@contextlib.contextmanager
+def stock_decoy_opened(device: str, password: bytes, header: str | None):
+    """The decoy's LUKS volume, read-only, with the key in the dm table
+    (not the kernel keyring) so it can be read back."""
+    r, w = os.pipe()
+    try:
+        os.write(w, password)
+        os.close(w)
+        try:
+            cmd("cryptsetup", "open", "--readonly", "--disable-keyring", "--batch-mode",
+                *([f"--header={header}"] if header else []), f"--key-file=/proc/self/fd/{r}",
+                device, STOCK_MAP, pass_fds=(r,))
+        except subprocess.CalledProcessError:
+            raise RuntimeError(f"the decoy password doesn't open a LUKS volume on {device}")
+    finally:
+        os.close(r)
+    try:
+        yield pathlib.Path("/dev/mapper") / STOCK_MAP
+    finally:
+        cmd("cryptsetup", "close", STOCK_MAP)
+
+
+def check_plain_equivalent(table: str, key: bytes, args: list[str], luks_dev: pathlib.Path) -> None:
+    """The frontier monitor opens the decoy in plain mode: make sure that
+    reads the same as the LUKS mapping.  `table` maps the LUKS data area
+    relative to the LUKS device: while the LUKS mapping holds a partition,
+    the kernel refuses mappings of the whole disk."""
+    with dm_device("pd-stock-raw", table, readonly=True) as raw, \
+            plain_crypt("pd-stock-plain", raw, key, args, readonly=True) as plain:
+        with open(luks_dev, "rb") as a, open(plain, "rb") as b:
+            if a.read(4 * L.MIB) != b.read(4 * L.MIB):
+                raise RuntimeError("can't reproduce the decoy's encryption in plain mode "
+                                   "(the frontier monitor needs it)")
+
+
+def read_stock_decoy(cfg: Config, device: str, password: bytes, header: str | None) -> StockDecoy:
+    start = partition_offset(device, cfg.disk)
+    with stock_decoy_opened(device, password, header) as dev:
+        key, offset, length, args = crypt_plain_args(
+            cmd_output("dmsetup", "table", "--showkeys", STOCK_MAP))
+        vg = lvm_output("pvs", "--noheadings", "-o", "vg_name", dev)
+        if not vg:
+            raise RuntimeError(f"no LVM volume group inside the LUKS volume on {device}")
+        segs = lvm_segments(vg)
+        pe_start = pv_data_offset(str(dev))
+        pv_start = start + offset * L.SECTOR
+        table = L.linear_table(pv_start, pv_start + length * L.SECTOR)
+        # No LVM commands from here on: the plain mapping shows the same PV twice.
+        check_plain_equivalent(L.linear_table(offset * L.SECTOR, (offset + length) * L.SECTOR,
+                                              dev=device), key, args, dev)
+    return StockDecoy(key=key, table=table, crypt_args=args, vg=vg, pv_start=pv_start,
+                      segments=segs, pe_start=pe_start)
+
+
+def stock_hidden_layout(cfg: Config, sd: StockDecoy) -> L.HiddenLayout:
+    """The hidden side goes at the top of the decoy pool's data, and its data
+    region stays within it."""
+    tdata = [s for s in sd.segments if s["lv"].endswith("_tdata")]
+    if len(tdata) != 1:
+        raise RuntimeError(f"volume group {sd.vg} needs exactly one thin pool, with its data in one "
+                           "contiguous segment (as on a fresh install)")
+    seg = tdata[0]
+    lo = sd.pv_start + sd.pe_start + seg["first"] * seg["extent"]
+    hi = sd.pv_start + sd.pe_start + (seg["last"] + 1) * seg["extent"]
+    hl = L.hidden_layout(hi, memorable=cfg.memorable_offset, bottom=lo)
+    check_no_overlap(sd.segments, sd.pe_start, hl, data_start=sd.pv_start)
     return hl
+
+
+def init_hidden_stock(cfg: Config, device: str, header: str | None, decoy_password: bytes,
+                      password: bytes, run=None) -> L.HiddenLayout:
+    """Create the hidden side next to a stock decoy whose LUKS volume is on
+    `device` (cfg.disk or one of its partitions)."""
+    if decoy_password == password:
+        raise RuntimeError("the hidden password must differ from the decoy password")
+    set_hostname(cfg)
+    d = check_disk(cfg.disk)
+    sd = read_stock_decoy(cfg, device, decoy_password, header)
+    hl = stock_hidden_layout(cfg, sd)
+    key = argon2(password, cfg.salt, cfg.argon2)
+    frontier_env = f'DECOY_VG={sd.vg}\nDECOY_CRYPT_ARGS="{" ".join(sd.crypt_args)}"\n'
+    create_hidden(cfg, d, hl, key, sd.key, sd.table, frontier_env, run)
+    return hl
+
+
+def stock_boot_commands(cfg: Config, hl: L.HiddenLayout, salt_expr: str) -> list[str]:
+    """What to type, as root, in a live system to boot the hidden side
+    (docs/stock-boot.md).  `salt_expr` is the salt as typed, e.g.
+    "$(cryptsetup luksUUID /dev/nvme0n1p2)"."""
+    a = cfg.argon2
+    kdf = (f'openssl kdf -binary -keylen {a.length} -kdfopt pass:"$P" -kdfopt salt:{salt_expr} '
+           f'-kdfopt iter:{a.t} -kdfopt memcost:{1 << a.m_log2} -kdfopt lanes:{a.p} ARGON2ID')
+    short = {"--cipher": "-c", "--key-size": "-s"}
+    crypt = " ".join(" ".join((short.get(k, k), v)) for k, v in (arg.split("=", 1) for arg in CIPHER_ARGS))
+    return [
+        "read -rs P",
+        f"cryptsetup open -r --type plain {crypt} -o {hl.plain_offset_sectors} -d <({kdf}) "
+        f"{cfg.disk} cryptboot",
+        "unset P",
+        f"mkdir -p /mnt/boot && mount -o ro /dev/mapper/cryptboot /mnt/boot && /mnt/boot/late.sh {cfg.disk}",
+    ]

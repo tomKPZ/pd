@@ -1,15 +1,31 @@
 #!/bin/sh
 # Stage 2, run from the encrypted boot volume: open the data region, pick a
 # system, and kexec into its kernel with the keys appended to its initrd.
+#
+# Run by early.sh on pd's boot USB, or by hand as `late.sh DISK` from a live
+# system (docs/stock-boot.md).
 
 set -eu
 
 B=/mnt/boot
 R=/mnt/root
-export PATH="$B/bin:/bin"
+export PATH="$B/bin:$PATH"
 
+if [ $# -gt 0 ]; then
+    mkdir -p /run/pd
+    echo "$1" >/run/pd/disk
+fi
 disk=$(cat /run/pd/disk)
 . "$B/crypt.env"
+
+# On a live system, udev would probe the devices created below, and LVM could
+# activate the volume groups on them read-write.  Stop udev for the rest of
+# the session (kexec follows), and have libdevmapper make device nodes itself.
+if [ -d /run/systemd/system ]; then
+    systemctl stop systemd-udevd-control.socket systemd-udevd-kernel.socket \
+        systemd-udevd.service 2>/dev/null || true
+fi
+export DM_DISABLE_UDEV=1
 
 if [ -n "${LATE:-}" ]; then
     SYSTEM=$LATE
@@ -55,6 +71,7 @@ cp "$B/data.key" "$B/table.txt" "$B/crypt.env" /run/handoff/boot_tmp/
 (cd /run/handoff && find boot_tmp | cpio -o -H newc --quiet) >>/run/initrd
 
 kexec -l "$R$KERNEL" --initrd=/run/initrd --command-line="$CMDLINE"
-shred -u /run/handoff/boot_tmp/* /run/initrd /run/pd/boot.key
+shred -u /run/handoff/boot_tmp/* /run/initrd
+[ ! -e /run/pd/boot.key ] || shred -u /run/pd/boot.key
 kexec -e
 

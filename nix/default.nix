@@ -96,6 +96,7 @@ let
     "${lib.getBin static.jq}/bin/jq"
     "${static.fzf}/bin/fzf"
     "${detectShift}/bin/detect_shift"
+    "${static.busybox}/bin/busybox"
   ];
 
   kernel = pkgs.linuxPackages.kernel;
@@ -158,6 +159,12 @@ let
     ln -s pdata_tools $out/bin/thin_check
     ln -s pdata_tools $out/bin/thin_dump
     ln -s pdata_tools $out/bin/thin_rmap
+    # The scripts' userland, so they run the same on pd's USB and on a live
+    # system (docs/stock-boot.md), whatever awk or cpio that has.
+    for a in awk basename blockdev cat chmod cp cpio cut dd dirname find grep ls mkdir mount \
+        readlink rm sed shred sort stat tr; do
+      ln -s busybox $out/bin/$a
+    done
     install -m755 ${src}/plain/late.sh $out/late.sh
     install -m644 ${src}/plain/thin-ro.sh $out/thin-ro.sh
     cp -r ${src}/plain/systems $out/systems

@@ -6,7 +6,12 @@
 # written to either side.
 
 MIN_GAP_PERCENT=10
+# A stock decoy (docs/stock-boot.md) has its own VG name and LUKS cipher
+# settings; a pd decoy shares the hidden side's.
+DECOY_VG=
+DECOY_CRYPT_ARGS=
 [ -r "$B/frontier.env" ] && . "$B/frontier.env"
+: "${DECOY_VG:=$VG}" "${DECOY_CRYPT_ARGS:=$CRYPT_ARGS}"
 
 # map_ranges TABLE: read "start end" sector ranges on stdin, map them through
 # a linear dm TABLE (file), print the mapped "start end" ranges.
@@ -66,10 +71,10 @@ frontier_check() {
     sed "s|DISK|$disk|g" "$B/table.txt" >/run/fr-hidden-region.table
     dmsetup create --readonly fr-decoy-raw </run/fr-decoy-region.table
     dmsetup mknodes fr-decoy-raw
-    cryptsetup open --type plain --readonly --batch-mode $CRYPT_ARGS \
+    cryptsetup open --type plain --readonly --batch-mode $DECOY_CRYPT_ARGS \
         --key-file "$B/decoy.key" /dev/mapper/fr-decoy-raw fr-decoy
 
-    pool_ranges "$VG" /dev/mapper/fr-decoy /run/fr-decoy-region.table /run/fr-decoy.ranges
+    pool_ranges "$DECOY_VG" /dev/mapper/fr-decoy /run/fr-decoy-region.table /run/fr-decoy.ranges
     pool_ranges "$VG" /dev/mapper/cryptlvm /run/fr-hidden-region.table /run/fr-hidden.ranges
 
     # Decoy LVs other than the pool's data must stay out of the hidden
@@ -78,14 +83,14 @@ frontier_check() {
     decoy_pe_start=$(lvm pvs --readonly --devices /dev/mapper/fr-decoy --noheadings --nosuffix \
         --units s -o pe_start /dev/mapper/fr-decoy 2>/dev/null | tr -d ' ')
     overlap=$(lvm lvs --readonly --devices /dev/mapper/fr-decoy --noheadings --nosuffix --units s -a \
-        -o lv_name,seg_pe_ranges,vg_extent_size "$VG" 2>/dev/null | awk \
+        -o lv_name,seg_pe_ranges,vg_extent_size "$DECOY_VG" 2>/dev/null | awk \
         -v pe_start="$decoy_pe_start" -v region=/run/fr-decoy-region.table -v hidden=/run/fr-hidden-region.table '
         BEGIN {
             # Decoy region: linear, one line.  Hidden top: highest mapped
             # sector of its data region plus the boot volume (522240).
             getline line < region; split(line, f, " "); base = f[5]
             while ((getline line < hidden) > 0) {
-                split(line, f, " "); e = f[5] + f[2]; if (e > top) top = e
+                split(line, f, " "); end = f[5] + f[2]; if (end > top) top = end
             }
             top += 522240
         }

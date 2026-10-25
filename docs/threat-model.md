@@ -44,8 +44,9 @@ there.
 > [!WARNING]
 > **This repository is public.** An adversary who recognizes the USB's scripts as pd knows a hidden
 > system is *possible*. Because pd makes absence impossible to prove, a coercer who knows about pd may
-> simply keep coercing. pd remains a research project until there is a variant whose boot USB can't be
-> told apart from a stock setup ([design.md §12](design.md#12-alternatives-considered), last row).
+> simply keep coercing. [Stock boot](stock-boot.md) avoids pd's USB altogether: the decoy is a stock
+> install, and the hidden side is booted from a stock live system with commands typed from memory. Its
+> configuration can still hint at it ([stock-boot.md](stock-boot.md#what-could-give-you-away)).
 
 ### Offline password guessing
 Anyone with the USB and a disk image (A1 or A2) can guess passwords offline: the salt is on the USB, and
@@ -71,7 +72,7 @@ doesn't change coercion: a coercer demands the key along with the password.
 
 | Signal | Explanation or mitigation |
 |---|---|
-| pd's scripts on the USB | Recognizable now that the repo is public (see A2). |
+| pd's scripts on the USB | Recognizable now that the repo is public (see A2). [Stock boot](stock-boot.md) has no pd USB. |
 | No TRIM on an SSD | Common advice for encrypted SSDs; dm-crypt disables discards by default because they leak which blocks are in use. |
 | A shutdown `fstrim` unit in the decoy | An ordinary way to reclaim thin pool space; the pool's `nopassdown` mode is a documented LVM setting. |
 | A barely used decoy | Use the decoy regularly, with realistic data. A decoy with no activity for months, on a machine that is clearly used, is suspicious. |

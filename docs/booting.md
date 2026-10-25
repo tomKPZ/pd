@@ -43,6 +43,9 @@ echo a >> /salt.txt
 
 The edits only change the in-RAM copy of the boot environment. The USB is never written to.
 
+With [stock boot](stock-boot.md) there's no pd USB: the decoy boots on its own, and the hidden side
+is booted from a live system ([stock-boot.md §4](stock-boot.md#4-booting)).
+
 ## Recovery shell
 
 * It's a normal shell. Typing `exit` powers the machine off.
