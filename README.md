@@ -84,5 +84,5 @@ The details are in [docs/design.md](docs/design.md).
 5. Boot from the boot USB ([docs/booting.md](docs/booting.md)).
 
 Tests: `python3 -m unittest discover -s tests -t .` (about 15 minutes, needs KVM; see
-[AGENTS.md](AGENTS.md)). v1 is configured by editing the constants at the top of `v1/pd.py` and must be
+[AGENTS.md](AGENTS.md)). v1 (branch `main`) is configured by editing the constants at the top of its `pd.py` and must be
 run as root ([docs/v1.md](docs/v1.md)).

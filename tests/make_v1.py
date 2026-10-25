@@ -1,6 +1,6 @@
 """Build a v1-style pd disk inside the tool VM (for migration tests).
 
-Reproduces v1's on-disk format (v1/pd.py): 512-byte Argon2 output, plain
+Reproduces v1's on-disk format (pd.py on branch main): 512-byte Argon2 output, plain
 boot volume keyed with bytes 0-63, a detached LUKS2 header in it keyed with
 bytes 64-511, v1 tables written against /boot_tmp/disk, the hidden side at
 [D-256MiB, D-1MiB) with data reversed over [0, D-256MiB), and the hidden
