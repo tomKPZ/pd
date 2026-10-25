@@ -12,6 +12,7 @@
     {
       packages.${system} = {
         nixosTest = import ./nix/nixos-test.nix { inherit nixpkgs system; src = self; };
+        setupUki = pd.setupEnv.uki;
         inherit (pd) testenv bootTools plainTools bootInitrd plainTree modulesClosure detectShift kernel;
         default = pkgs.linkFarm "pd" [
           { name = "bzImage"; path = pd.kernelImage; }

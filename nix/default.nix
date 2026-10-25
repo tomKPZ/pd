@@ -123,6 +123,8 @@ let
   '';
   toolvm = import ./toolvm.nix { inherit pkgs kernel modulesClosure plainTree bootTools; };
 
+  setupEnv = import ./setup-env.nix { inherit pkgs kernel modulesClosure plainTree src; };
+
   faketarget = import ./faketarget.nix { inherit pkgs modulesClosure bootTools plainTools src; };
 
   # Everything the test harness needs, at fixed names.
@@ -138,10 +140,11 @@ let
     { name = "ovmf"; path = pkgs.OVMF.fd; }
     { name = "busybox"; path = pkgs.pkgsStatic.busybox; }
     { name = "faketarget-initrd.cpio.zst"; path = faketarget; }
+    { name = "setup-initrd.cpio.zst"; path = setupEnv.initrd; }
   ];
 in
 {
-  inherit testenv toolvm;
+  inherit testenv toolvm setupEnv;
   inherit bootTools plainTools bootInitrd plainTree modulesClosure detectShift lvm2Static;
   kernelImage = "${kernel}/bzImage";
   kernel = kernel;
