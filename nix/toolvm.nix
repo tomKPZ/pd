@@ -11,6 +11,8 @@ let
       thin-provisioning-tools
       btrfs-progs
       e2fsprogs
+      xfsprogs
+      f2fs-tools
       util-linux
       coreutils
       findutils
@@ -72,7 +74,7 @@ let
     mount -t devpts devpts /dev/pts
     mount -t tmpfs tmpfs /run
     mount -t tmpfs tmpfs /tmp
-    modprobe -a virtio_pci virtio_blk virtio_scsi virtio_net 9p 9pnet_virtio virtio_rng dm-mod dm-crypt dm-thin-pool btrfs ext4 efivarfs vfat nls_cp437 nls_iso8859-1 2>/dev/null
+    modprobe -a virtio_pci virtio_blk virtio_scsi virtio_net 9p 9pnet_virtio virtio_rng dm-mod dm-crypt dm-thin-pool btrfs ext4 xfs f2fs efivarfs vfat nls_cp437 nls_iso8859-1 2>/dev/null
     opts=trans=virtio,version=9p2000.L,msize=1048576
     mount -t 9p -o $opts,ro,cache=loose store /nix/store
     mount -t 9p -o $opts,ro src /src

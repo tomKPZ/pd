@@ -1,6 +1,3 @@
-import sys
+from pd.cli import entry
 
-from pd.cli import main
-
-sys.exit(main())
-
+entry()

@@ -61,7 +61,7 @@ class ToolVM:
 
     def run(self, script: str, disks=(), timeout: int = 900, hostname: str = "localhost",
             check: bool = True, log: pathlib.Path | None = None, network: bool = False,
-            cache: pathlib.Path | None = None) -> tuple[int, str]:
+            cache: pathlib.Path | None = None, readonly_disks: bool = False) -> tuple[int, str]:
         """network: QEMU user networking (outbound only).  cache: a host
         directory mounted read-write at /cache, kept across runs."""
         (self.work / "run.sh").write_text("set -euo pipefail\n" + script)
@@ -73,7 +73,7 @@ class ToolVM:
             "-virtfs", "local,path=/nix/store,mount_tag=store,security_model=none,readonly=on",
             "-virtfs", f"local,path={REPO},mount_tag=src,security_model=none,readonly=on",
             "-virtfs", f"local,path={self.work},mount_tag=work,security_model=none",
-        ] + _disk_args(disks)
+        ] + _disk_args(disks, readonly=readonly_disks)
         if network:
             args += ["-nic", "user,model=virtio-net-pci"]
         if cache:

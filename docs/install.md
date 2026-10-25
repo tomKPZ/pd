@@ -107,9 +107,12 @@ e.g. `sed -i s/2048/1945000000/ /early_env.sh`. **Remember the number; don't wri
 the hidden OSes, `exit`, and power off (`poweroff -f`).
 *(tested: `test_setup_env` runs randomize and init-decoy from the setup environment.)*
 
-Later maintenance from the setup environment:
-* `pd open --config pd.toml --rw [--offset N] --run` opens a side (the hidden side with `--offset` set
-  to its start sector) and mounts its roots.
+Later maintenance, from the setup environment or a live ISO (below):
+* `pd open --config pd.toml [--offset N] [--rw]` opens a side (the hidden side with `--offset` set to
+  its start sector) and mounts each system's root, as its full subvolume tree, at
+  `/mnt/pd/<system>`, and extra volumes at `/mnt/pd/volumes/<name>`. It's **read-only by default** and
+  then writes nothing to the disk (the same approach as the boot environment); `--rw` activates the
+  VG and mounts read-write. `pd close` undoes everything. `--run CMD` opens, runs CMD, and closes.
 * `pd rekey --config pd.toml [--offset N] [--new-salt S]` changes a side's password and/or the salt.
   With a new salt, rekey both sides, put the salt in `pd.toml`, and build a new boot USB.
 * `pd init-decoy --force --hidden-offset N` re-creates the decoy (its data is lost) while keeping the
@@ -178,6 +181,21 @@ nixos-install --root $PD_ROOT/nixos              # or --flake <path>#<host>
 ```
 The module warns at build time about filesystems without `nodiscard` and about `services.fstrim`. Don't
 put `root=` in the kernel parameters: NixOS mounts root from `fileSystems."/"`.
+
+## From a live ISO
+
+`pd open`, `pd close` and `pd rekey` also run from an ordinary live system such as Debian Live or
+Tails, with pd as a single file:
+```sh
+nix build "path:$PWD#pdPyz" --out-link pd.pyz     # on the build machine; copy pd.pyz and pd.toml over
+sudo apt install cryptsetup lvm2 thin-provisioning-tools btrfs-progs argon2   # on the live system
+sudo python3 pd.pyz open --config pd.toml          # read-only; --rw to change things
+sudo python3 pd.pyz close
+```
+Setting up a disk (`randomize`, `init-decoy`, `init-hidden`) needs the setup UKI, which also carries
+pd's boot-volume tools. A live system keeps no trace on the disk, but think about what it logs
+elsewhere (e.g. Tails' persistent storage, if enabled). *(tested: `test_open` runs `pd.pyz` in the
+tool VM; not yet on an actual Debian Live or Tails image.)*
 
 ## 6. Boot
 

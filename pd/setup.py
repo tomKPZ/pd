@@ -423,22 +423,3 @@ def init_hidden(cfg: Config, decoy_password: bytes, password: bytes, run=None) -
                 with mountpoint("mnt-") as base, roots_mounted(cfg, base):
                     run(base)
     return hl
-
-
-@contextlib.contextmanager
-def open_side(cfg: Config, password: bytes, offset: int, readonly: bool = True):
-    """Open an existing side and mount its roots (for maintenance and tests).
-
-    Read-only opening isn't supported yet: dm-thin can't run in a read-only
-    table (the boot environment uses plain/thin-ro.sh instead).
-    """
-    if readonly:
-        raise NotImplementedError("read-only open is not supported; pass --rw")
-    key = argon2(password, cfg.salt, cfg.argon2)
-    with boot_volume(cfg.disk, offset, key, create=False) as mnt:
-        data_key = (mnt / "data.key").read_bytes()
-        table = (mnt / "table.txt").read_text()
-    with data_region(cfg.disk, table, data_key, readonly=readonly):
-        with vg_active(cfg.vg, readonly=readonly):
-            with mountpoint("mnt-") as base, roots_mounted(cfg, base):
-                yield base

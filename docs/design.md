@@ -484,8 +484,12 @@ Each side can hold several OSes in the same VG (e.g. Arch and NixOS).
 * **pd's core stops at "this side's roots are mounted".** `pd init-decoy/init-hidden --run` opens a
   shell with each system's root at `$PD_ROOT/<system>`; the OS is installed with the distro's own tools
   ([install.md](install.md)).
-* **Commands:** `pd salt`, `pd randomize`, `pd init-decoy`, `pd init-hidden`, `pd open --rw`,
+* **Commands:** `pd salt`, `pd randomize`, `pd init-decoy`, `pd init-hidden`, `pd open`, `pd close`,
   `pd rekey`, `pd usb`, `pd install-cpio`, `pd migrate-v1` (`python3 -m pd --help`).
+* **`pd open` / `pd close`** (`pd/opener.py`) work from the setup UKI or a live ISO (`pd.pyz`, a zipapp,
+  with distribution tools). Read-only by default, using the boot environment's approach (read-only
+  mappings, thin LVs mapped from `thin_dump`, `rescue=nologreplay` for btrfs, `noload` for ext4);
+  `--rw` activates the VG. Undo steps are recorded in `/run/pd/open.json` (no keys) for `pd close`.
 * **Re-initializing a decoy** is refused if the decoy password already opens a boot volume. With
   `--force`, `init-decoy` needs `--no-hidden` or `--hidden-offset` (and the hidden password); with a
   hidden side, the new decoy pool's metadata goes at the front instead of stock placement (which would
@@ -567,6 +571,7 @@ go to another pd setup; never `dd` the disk.
   | `test_migrate` | a v1-format disk migrated with `pd migrate-v1` boots both sides with v2 |
   | `test_rekey` | new passwords and a new salt on both sides; both boot with a new USB, the old password fails |
   | `test_reinit` | re-initializing the decoy is refused without `--force`; with the hidden offset, both sides still boot |
+  | `test_open` | `pd.pyz open`/`close`: read-only with the disk attached read-only, hidden side, read-write, wrong password |
 
 ---
 

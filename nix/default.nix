@@ -70,7 +70,7 @@ let
 
   # busybox modprobe can't reliably load compressed modules, so decompress
   # them and regenerate the dependency files.
-  modulesClosure = let
+  mkModulesClosure = rootModules: let
     closure = pkgs.makeModulesClosure {
       kernel = pkgs.aggregateModules [ kernel.modules ];
       firmware = pkgs.linux-firmware;
@@ -84,6 +84,9 @@ let
     ver=$(ls $out/lib/modules)
     depmod -b $out -a $ver
   '';
+  modulesClosure = mkModulesClosure rootModules;
+  # The tool VM also needs filesystems pd itself doesn't use (for surveys).
+  toolModulesClosure = mkModulesClosure (rootModules ++ [ "xfs" "f2fs" ]);
 
   # The boot environment's initrd, without per-install files (salt and
   # early_env.sh, which `pd usb` appends as a second cpio).
@@ -132,7 +135,15 @@ let
     test -s $out/de.bmap
   '';
 
-  toolvm = import ./toolvm.nix { inherit pkgs kernel modulesClosure plainTree bootTools; };
+  # pd as a single file, for live ISOs: `python3 pd.pyz open ...`.
+  pdPyz = pkgs.runCommand "pd.pyz" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+    mkdir src
+    cp -r --no-preserve=mode ${src}/pd src/
+    rm -rf src/pd/__pycache__
+    python3 -m zipapp src -o $out -p "/usr/bin/env python3" -m "pd.cli:entry"
+  '';
+
+  toolvm = import ./toolvm.nix { inherit pkgs kernel plainTree bootTools; modulesClosure = toolModulesClosure; };
 
   setupEnv = import ./setup-env.nix { inherit pkgs kernel modulesClosure plainTree src; };
 
@@ -156,7 +167,7 @@ let
   ];
 in
 {
-  inherit testenv toolvm setupEnv;
+  inherit testenv toolvm setupEnv pdPyz;
   inherit bootTools plainTools bootInitrd plainTree modulesClosure detectShift lvm2Static;
   kernelImage = "${kernel}/bzImage";
   kernel = kernel;

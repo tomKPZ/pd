@@ -2,7 +2,11 @@
 target usage and delete a random part of it, and report how much of the thin
 pool the filesystem has touched compared with how much it actually uses.
 
-Usage: churn.py MOUNTPOINT POOL(vg/lv) CYCLES TARGET_FRACTION [REBOOT_EVERY]
+Usage: churn.py MOUNTPOINT POOL(vg/lv) CYCLES TARGET_FRACTION [REBOOT_EVERY [WORKLOAD]]
+
+WORKLOAD is "churn" (default: fill, delete half, repeat) or "rewrite" (fill
+once with large files, then overwrite random 1 MiB ranges of them in place,
+about 1 GiB per cycle, like VM images or databases).
 
 With REBOOT_EVERY=N, every N cycles simulate a shutdown with fstrim and a
 reboot: fstrim, unmount, deactivate and reactivate the pool (which resets
@@ -18,6 +22,7 @@ import sys
 
 mnt, pool, cycles, target = sys.argv[1], sys.argv[2], int(sys.argv[3]), float(sys.argv[4])
 reboot_every = int(sys.argv[5]) if len(sys.argv) > 5 else 0
+workload = sys.argv[6] if len(sys.argv) > 6 else "churn"
 rng = random.Random(1234)
 blob = os.urandom(64 << 20)  # incompressible source data
 
@@ -85,7 +90,40 @@ files = []
 seq = 0
 peak = 0
 rows = []
+def rewrite_cycle():
+    """Overwrite random 1 MiB ranges of existing files in place (~1 GiB)."""
+    global peak
+    if not files:
+        while fs_used() < target * fs_size():
+            path = os.path.join(mnt, f"big{len(files)}")
+            with open(path, "wb") as f:
+                for _ in range(4):
+                    f.write(blob)  # 256 MiB per file
+            files.append(path)
+        os.sync()
+    for _ in range(1024):
+        path = rng.choice(files)
+        size = os.path.getsize(path)
+        off = rng.randrange(size // (1 << 20)) << 20
+        with open(path, "r+b") as f:
+            f.seek(off)
+            src = rng.randrange(len(blob) - (1 << 20))
+            f.write(blob[src:src + (1 << 20)])
+    os.sync()
+    peak = max(peak, fs_used())
+
+
 for cycle in range(cycles):
+    if workload == "rewrite":
+        rewrite_cycle()
+        if reboot_every and (cycle + 1) % reboot_every == 0:
+            reboot()
+        used = pool_used()
+        rows.append({"cycle": cycle, "fs_used": fs_used(), "peak_fs_used": peak,
+                     "pool_used": used, "high_water": max(hw, used if not reboot_every else hw),
+                     "fs_size": fs_size()})
+        print(json.dumps(rows[-1]), flush=True)
+        continue
     # Fill to the target, spread over many directories.
     while fs_used() < target * fs_size():
         d = os.path.join(mnt, f"d{rng.randrange(64)}", f"e{rng.randrange(16)}")

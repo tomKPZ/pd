@@ -56,13 +56,17 @@ def main(argv=None) -> int:
         s.add_argument("--run", nargs="?", const="",
                        help="run a command (default: a shell) with the roots mounted")
 
-    o = sub.add_parser("open", help="open a side and run a command with its roots mounted")
+    o = sub.add_parser("open", help="open a side and mount it (read-only unless --rw)")
     o.add_argument("--config", required=True)
     o.add_argument("--offset", type=int, default=None,
                    help="boot volume start sector (default: the decoy's)")
-    o.add_argument("--rw", action="store_true", help="mount read-write")
+    o.add_argument("--rw", action="store_true", help="activate the VG and mount read-write")
+    o.add_argument("--mountpoint", default="/mnt/pd", help="where to mount (default /mnt/pd)")
     o.add_argument("--password-stdin", action="store_true")
-    o.add_argument("--run", nargs="?", const="")
+    o.add_argument("--run", nargs="?", const="",
+                   help="run a command (default: a shell) with the side open, then close it")
+
+    sub.add_parser("close", help="close what `pd open` opened")
 
     k = sub.add_parser("rekey", help="change a side's password and/or the salt")
     k.add_argument("--config", required=True)
@@ -106,6 +110,11 @@ def main(argv=None) -> int:
 
     if args.command == "salt":
         print(secrets.token_hex(64))
+        return 0
+    if args.command == "close":
+        from pd import opener
+        opener.close()
+        print("Closed.")
         return 0
 
     from pd.config import Config
@@ -160,12 +169,18 @@ def main(argv=None) -> int:
         print(f"  {L.hidden_boot_command(hl)}")
         print("  /early.sh")
     elif args.command == "open":
-        from pd import setup
-        (pw,) = read_passwords(args, ["Disk"])
+        from pd import opener
+        (pw,) = read_passwords(args, ["Password"])
         offset = L.DECOY_PLAIN_OFFSET if args.offset is None else args.offset * L.SECTOR
-        with setup.open_side(cfg, pw, offset, readonly=not args.rw) as base:
-            run = runner(args) or runner(argparse.Namespace(run=""))
-            run(base)
+        mnt = pathlib.Path(args.mountpoint)
+        session = opener.open_side(cfg, pw, offset, rw=args.rw, mnt=mnt)
+        if args.run is None:
+            print(f"Opened {'read-write' if args.rw else 'read-only'} at {mnt}.  `pd close` when done.")
+        else:
+            try:
+                runner(args)(mnt)
+            finally:
+                session.close()
     elif args.command == "usb":
         from pd import usb
         usb.build_uki(cfg, pathlib.Path(args.env), pathlib.Path(args.output),
@@ -177,6 +192,20 @@ def main(argv=None) -> int:
     return 0
 
 
+def run(argv=None) -> int:
+    """Entry point: errors pd anticipates are printed without a traceback."""
+    try:
+        return main(argv)
+    except RuntimeError as e:
+        print(f"pd: {e}", file=sys.stderr)
+        return 1
+
+
+def entry():
+    """Console entry point (also the zipapp's main)."""
+    sys.exit(run())
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    entry()
 
