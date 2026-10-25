@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-mount -t btrfs "/dev/$VG/$LV_ROOT" /mnt/luks/nix -o,defaults,nodiscard,ro,subvol=@nix
+mkdir /nix
+mount -t btrfs "/dev/$VG/$LV_ROOT" /nix -o,defaults,nodiscard,ro,subvol=@nix
 
 if /mnt/plain/detect_shift; then
     temp_file=$(mktemp)

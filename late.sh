@@ -2,11 +2,13 @@
 
 set -euo pipefail
 
-if /mnt/plain/detect_shift; then
-    cat <(echo default) <(find /mnt/luks/systems -maxdepth 1 -mindepth 1 | grep -v default | sort) |
-        SYSTEM=$(fzf --border --color=16 --color='border:-1' --layout=reverse --border-label="Boot System")
+if [ -n "${LATE:-}" ]; then
+    SYSTEM="$LATE"
+elif /mnt/plain/detect_shift; then
+    SYSTEM=$(cat <(echo default) <(ls /mnt/plain/systems | grep -v default | sort) |
+        fzf --border --color=16 --color='border:-1' --layout=reverse --border-label="Boot System")
 else
-    SYSTEM=/mnt/luks/systems/default
+    SYSTEM=default
 fi
 
 source "/mnt/plain/systems/$SYSTEM/env.sh"

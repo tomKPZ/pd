@@ -41,7 +41,7 @@ MOVE_PES = False
 REVERSE_CHUNK_SIZE = 256 * MIB
 TOOLS_ROOT = pathlib.Path("/")
 STATIC_SALT = True
-SALT = "mysalt"
+SALT = "20c93193dfa9b3966f8549c46f681a0bca5e4e26b955b8a0ff8f2c511eb7c4b983d844d28ec972eba3eca35350e5716d48607e551ed316c16d9c4ace84a13803"
 HIDDEN_SALT_SUFFIX = "a"
 # ARGON2_ITERATIONS = 2
 # ARGON2_M_KB_LOG2 = 15
@@ -58,8 +58,9 @@ BOOTSTRAP_KERNEL_PATH = pathlib.Path(
 BOOTSTRAP_CMDLINE = ["ro", "rd.break=pre-mount", "systemd.unit=rescue.target"]
 INSTALL = True
 INSTALL_OS = ["arch", "nixos"]
+DEFAULT_OS = "nixos"
 INSTALL_DEVICE = ""
-INSTALL_UKI = "default"
+INSTALL_UKI = True
 INSTALL_UKI_PATH = pathlib.Path("/mnt/EFI/BOOT/BOOTX64.EFI")
 TEST_DISK_SIZE = 4 * GIB
 RUN_QEMU = True
@@ -679,7 +680,6 @@ def install_nixos(root: pathlib.Path):
     )
 
 
-# TODO: remove boot_os
 def bootstrap_initrd(out_file: pathlib.Path, salt: str, boot_os: str, mods: list[str]):
     with temp_dir() as root:
         mkdirs(root / "usr" / "bin")
@@ -694,6 +694,8 @@ def bootstrap_initrd(out_file: pathlib.Path, salt: str, boot_os: str, mods: list
                 "ARGON_ARGS": " ".join(ARGON2_ARGS),
                 "CRYPT_ARGS": " ".join(CRYPT_ARGS),
             }
+            if boot_os:
+                env["LATE"] = boot_os
             for k, v in env.items():
                 print(f'export {k}="{v}"', file=early_env)
             print("read_password() {", file=early_env)
@@ -778,8 +780,11 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
         ]
         with cascade(header_stack, device) as (_, _, btrfs_meta):
             cmd("cp", SCRIPT_DIR / "late.sh", btrfs_meta)
+            cmd("cp", SCRIPT_DIR / "detect_shift", btrfs_meta)
             for install_os in INSTALL_OS:
-                with open(btrfs_meta / f"late_env_{install_os}.sh", "w") as late_env:
+                system_dir = btrfs_meta / "systems" / install_os
+                mkdirs(system_dir)
+                with open(system_dir / "env.sh", "w") as late_env:
                     print(f"VG={VG_NAME}", file=late_env)
                     print(f"LV_ROOT={LVM_ROOT_NAME[install_os]}", file=late_env)
                     print(f"KERNEL={KERNEL_PATH[install_os]}", file=late_env)
@@ -789,6 +794,10 @@ def init_volumes(device: pathlib.Path, salt: str, hidden: bool):
                         cmdline.append("console=ttyS0")
                     cmdline += CMDLINE[install_os]
                     print(f"CMDLINE='{' '.join(cmdline)}'", file=late_env)
+                extra = SCRIPT_DIR / "systems" / install_os / "extra.sh"
+                cmd("cp", extra, system_dir)
+            cmd("ln", "-s", DEFAULT_OS, btrfs_meta / "systems" / "default")
+
             with open(f"{btrfs_meta}/table.txt", "w") as table:
                 boot_disk = pathlib.Path("/boot_tmp/disk")
                 print(
@@ -869,9 +878,9 @@ def hidden_mods(disk_size: int) -> list[str]:
     ]
 
 
-def build_uki(salt: str, boot_os: str):
+def build_uki(salt: str):
     with temp_file(".cpio.xz") as initrd:
-        bootstrap_initrd(initrd, salt, boot_os, [])
+        bootstrap_initrd(initrd, salt, "", [])
         cmd(
             "ukify",
             "build",
@@ -892,7 +901,7 @@ def main() -> int:
     mods = []
     if INSTALL:
         if INSTALL_UKI:
-            build_uki(salt, INSTALL_UKI)
+            build_uki(salt)
         if INSTALL_DEVICE:
             install_device = pathlib.Path(INSTALL_DEVICE)
             setup_device(install_device, shred_key, salt)
@@ -913,7 +922,8 @@ def main() -> int:
                         for install_os in INSTALL_OS:
                             with temp_file(".cpio.xz") as hidden_initrd:
                                 mods = hidden_mods(TEST_DISK_SIZE) if hidden else []
-                                bootstrap_initrd(hidden_initrd, salt, install_os, mods)
+                                late_boot = f"/mnt/plain/systems/{install_os}"
+                                bootstrap_initrd(hidden_initrd, salt, late_boot, mods)
                                 run_qemu(disk_img, hidden_initrd)
     if DEBUG_TRACE_CMDS:
         print("Command trace:")
