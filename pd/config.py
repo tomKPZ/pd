@@ -51,7 +51,9 @@ class Config:
     # FIDO2 slots file (pd/fido2.py), relative to the config file.  Written by
     # `pd fido2 enroll`, put on the USB by `pd usb`.
     fido2: str | None = None
-    swap_size: int = 64 << 20
+    # Swap LV on each side, fixed at setup (the VG has no free space later).
+    # None: the RAM size of the machine running setup, like an installer; 0: no swap.
+    swap_size: int | None = None
     hidden_cap: float = 0.4  # fraction of the disk the hidden thin LVs may use
     memorable_offset: bool = True
     min_gap_percent: int = 10  # frontier monitor warns below this

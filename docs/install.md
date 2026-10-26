@@ -39,16 +39,16 @@ disk = "/dev/nvme0n1"          # the target disk, as seen from the setup environ
 salt = "…"                     # `python3 -m pd salt` (or `pd salt` in the setup environment)
 vg = "sysvg"                   # VG name, the same on both sides
 hostname = "laptop"            # optional: set during setup, since LVM records it (use the decoy's)
-swap_size = "8G"               # linear swap LV on each side
+swap_size = "16G"              # swap LV on each side, fixed at setup (default: this machine's RAM; "0": none)
 hidden_cap = 0.4               # hidden thin LVs may use at most this fraction of the disk, in total
 min_gap_percent = 10           # frontier monitor warns below this much free space between the sides
 memorable_offset = true        # round the hidden offset to a multiple of 10^6 sectors (default)
 keymap = "de"                  # optional console keymap for the password prompt (kbd names; default US)
 
-[argon2]                       # tune so a boot takes a few seconds on the target machine
-t = 14
-m_log2 = 18                    # memory = 2^m_log2 KiB (18 = 256 MiB)
-p = 8
+[argon2]                       # optional; the defaults take about 0.3 s (design.md §4)
+t = 1
+m_log2 = 20                    # memory = 2^m_log2 KiB (20 = 1 GiB)
+p = 4
 
 [[systems]]                    # one entry per OS on each side (both sides use the same list)
 name = "nixos"

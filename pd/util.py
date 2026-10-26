@@ -101,7 +101,9 @@ def argon2(password: bytes, salt: str, params: "Argon2Params") -> bytes:
 
 
 class Argon2Params:
-    def __init__(self, t: int = 14, m_log2: int = 18, p: int = 8, length: int = 64):
+    # Defaults: one pass over 1 GiB with 4 lanes, about 0.3 s on a current
+    # x86 machine (docs/design.md §4).
+    def __init__(self, t: int = 1, m_log2: int = 20, p: int = 4, length: int = 64):
         self.t, self.m_log2, self.p, self.length = t, m_log2, p, length
 
     def args(self) -> list[str]:

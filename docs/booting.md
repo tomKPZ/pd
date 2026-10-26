@@ -1,7 +1,7 @@
 # Booting
 
 This describes v2; v1 differences are noted. After you press Enter at the password prompt, Argon2 takes
-several seconds. That pause is expected.
+a moment (about 0.3 s with the default parameters).
 
 ## Decoy boot
 

@@ -8,6 +8,9 @@ MIB = 1024 * KIB
 GIB = 1024 * MIB
 
 ZERO_HEADER = 1 * MIB
+# The last MiB is zeroed and left unused too, so a backup GPT written by a
+# tool that "initializes" the disk can't land on the decoy's pool metadata.
+ZERO_TRAILER = 1 * MIB
 PLAIN_SIZE = 255 * MIB
 DATA_START = ZERO_HEADER + PLAIN_SIZE  # 256 MiB
 REVERSE_CHUNK = 256 * MIB
@@ -28,6 +31,11 @@ def align_down(n: int, a: int) -> int:
 def disk_size(raw_size: int) -> int:
     """D: usable disk size, rounded down to 1 MiB."""
     return align_down(raw_size, ALIGN)
+
+
+def data_end(d: int) -> int:
+    """End of the decoy's data region: D minus the zero trailer."""
+    return d - ZERO_TRAILER
 
 
 def linear_table(start: int, end: int, dev: str = "DISK") -> str:

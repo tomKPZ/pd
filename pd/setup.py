@@ -36,6 +36,18 @@ def lvm_output(*args) -> str:
     return cmd_output("lvm", *args, "--config", LVM_NO_ARCHIVE)
 
 
+def ram_size() -> int:
+    """This machine's RAM, rounded up to a whole GiB (MemTotal is a little less
+    than what's installed)."""
+    with open("/proc/meminfo") as f:
+        kib = next(int(line.split()[1]) for line in f if line.startswith("MemTotal:"))
+    return -(-kib * 1024 // L.GIB) * L.GIB
+
+
+def swap_size(cfg: Config) -> int:
+    return ram_size() if cfg.swap_size is None else cfg.swap_size
+
+
 def device_size(dev) -> int:
     return int(cmd_output("blockdev", "--getsize64", dev))
 
@@ -59,7 +71,11 @@ def randomize(disk: str) -> None:
 
 
 def zero_header(disk: str) -> None:
+    """Zero the first and the last MiB (L.ZERO_HEADER, L.ZERO_TRAILER)."""
     cmd("dd", "if=/dev/zero", f"of={disk}", "bs=1M", "count=1", "conv=fsync", "status=none")
+    end = L.disk_size(device_size(disk))
+    cmd("dd", "if=/dev/zero", f"of={disk}", "bs=1M", "count=1", f"seek={end // L.MIB - 1}",
+        "conv=fsync", "status=none")
 
 
 # --- Boot volume ---------------------------------------------------------------
@@ -205,16 +221,20 @@ def _create_lvm(dev: str, cfg: Config, *, hidden: bool, disk_bytes: int,
                 front_metadata: bool) -> None:
     lvm("pvcreate", "-qq", dev)
     lvm("vgcreate", "-qq", cfg.vg, dev)
-    lvm("lvcreate", "-qq", "-L", f"{cfg.swap_size}b", "-n", "swap", cfg.vg)
+    swap = swap_size(cfg)
+    if swap:
+        lvm("lvcreate", "-qq", "-L", f"{swap}b", "-n", "swap", cfg.vg)
     if front_metadata:
         # Create the pool with one extent, then extend it: this puts tmeta
         # and pmspare at the front of the PV, far from where the two sides
         # can meet.  (Stock placement would put them at the frontier.)
-        lvm("lvcreate", "-qq", "--type", "thin-pool", "-l", "1", "--discards", "nopassdown",
+        lvm("lvcreate", "-qq", "--type", "thin-pool", "-l", "1", "--discards", "nopassdown", "-Zn",
             "-n", "thinpool", cfg.vg)
         lvm("lvextend", "-qq", "-l", "+100%FREE", f"{cfg.vg}/thinpool")
     else:
-        lvm("lvcreate", "-qq", "--type", "thin-pool", "-l", "100%FREE", "--discards", "nopassdown",
+        # -Zn: don't zero new chunks (LVM suggests it for large chunks; the
+        # filesystems never read blocks they haven't written).
+        lvm("lvcreate", "-qq", "--type", "thin-pool", "-l", "100%FREE", "--discards", "nopassdown", "-Zn",
             "-n", "thinpool", cfg.vg)
     pool = int(lvm_output("lvs", "--noheadings", "--units", "b", "--nosuffix", "-o", "lv_size",
                           f"{cfg.vg}/thinpool"))
@@ -230,7 +250,8 @@ def _create_lvm(dev: str, cfg: Config, *, hidden: bool, disk_bytes: int,
         size = pool
     for name in [s.lv for s in cfg.systems] + [v.name for v in cfg.volumes]:
         lvm("lvcreate", "-qq", "-V", f"{size}b", "-T", f"{cfg.vg}/thinpool", "-n", name)
-    cmd("mkswap", "-q", f"/dev/{cfg.vg}/swap")
+    if swap:
+        cmd("mkswap", "-q", f"/dev/{cfg.vg}/swap")
     for s in cfg.systems:
         create_root_fs(f"/dev/{cfg.vg}/{s.lv}", cfg)
     for v in cfg.volumes:
@@ -265,7 +286,7 @@ def pv_data_offset(dev: str) -> int:
 
 def decoy_top(segments: list[dict], pe_start: int, data_start: int, disk_bytes: int) -> int:
     """H: the physical start of the decoy metadata that sits after the pool's
-    data, or D - 1 MiB if there is none."""
+    data, or the end of the decoy's data region (D - 1 MiB) if there is none."""
     def phys(extent: int, ext: int) -> int:
         return data_start + pe_start + extent * ext
 
@@ -273,7 +294,7 @@ def decoy_top(segments: list[dict], pe_start: int, data_start: int, disk_bytes: 
     tdata_end = max(phys(s["last"] + 1, s["extent"]) for s in tdata)
     after = [phys(s["first"], s["extent"]) for s in segments
              if not s["lv"].endswith("_tdata") and phys(s["first"], s["extent"]) >= tdata_end]
-    return min(after) if after else disk_bytes - L.ALIGN
+    return min(after) if after else L.data_end(disk_bytes)
 
 
 def check_no_overlap(segments: list[dict], pe_start: int, hl: L.HiddenLayout,
@@ -399,7 +420,7 @@ def init_decoy(cfg: Config, password: bytes, run=None, *, force: bool = False,
             raise RuntimeError("the decoy password must differ from the hidden password")
         hl = read_hidden_layout(cfg, offset, hidden_password)
     data_key = os.urandom(64)
-    table = L.linear_table(L.DATA_START, d)
+    table = L.linear_table(L.DATA_START, L.data_end(d))
     with boot_volume(disk, L.DECOY_PLAIN_OFFSET, key, create=True) as mnt:
         write_boot_volume(mnt, cfg, data_key, table)
     with data_region(disk, table, data_key, readonly=False) as dev:

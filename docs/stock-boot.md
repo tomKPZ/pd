@@ -77,10 +77,11 @@ cryptsetup open /dev/nvme0n1p2 cryptroot
 pvcreate /dev/mapper/cryptroot
 vgcreate vg0 /dev/mapper/cryptroot
 lvcreate -L 16G -n swap vg0                                       # optional
-lvcreate --type thin-pool -l 100%FREE --discards nopassdown -n pool vg0
+lvcreate --type thin-pool -l 100%FREE --discards nopassdown -Zn -n pool vg0
 lvcreate -V 900G -T vg0/pool -n root
 mkfs.btrfs /dev/vg0/root                                          # or mkfs.xfs
 ```
+`-Zn` skips zeroing new chunks, which LVM itself suggests for the large chunks it picks on big disks.
 `--discards nopassdown` keeps the pool from passing discards to LUKS even if LUKS were to allow them.
 The pool's default, `passdown`, is also safe as long as LUKS doesn't allow discards, because the kernel
 then can't pass them down.
@@ -176,12 +177,12 @@ discard settings are fixed (§1):
    read -rs P
    cryptsetup open -r --type plain -c aes-xts-plain64 -s 512 --sector-size 4096 -o OFFSET \
        -d <(openssl kdf -binary -keylen 64 -kdfopt pass:"$P" -kdfopt salt:SALT \
-            -kdfopt iter:14 -kdfopt memcost:262144 -kdfopt lanes:8 ARGON2ID) DISK cryptboot
+            -kdfopt iter:1 -kdfopt memcost:1048576 -kdfopt lanes:4 ARGON2ID) DISK cryptboot
    unset P
    mkdir -p /mnt/boot && mount -o ro /dev/mapper/cryptboot /mnt/boot && /mnt/boot/late.sh DISK
    ```
    `read` waits for the hidden password, without a prompt or echo. OpenSSL computes Argon2 on a single
-   core, so this takes a few seconds (2.6 s for pd's defaults on a fast x86 machine).
+   core, so this takes about a second with pd's defaults (pd's own boot USB uses all cores: about 0.3 s).
 3. `late.sh` takes over as on pd's USB:
    * hold Shift for the system menu;
    * the frontier monitor prints the space left between the two sides;
@@ -192,7 +193,7 @@ discard settings are fixed (§1):
 | `OFFSET` | `1945000000` | the hidden boot volume's start sector, printed by `pd init-hidden` |
 | `DISK` | `/dev/nvme0n1` | the whole disk |
 | `SALT` | `"$(cryptsetup luksUUID /dev/nvme0n1p2)"` | the decoy's LUKS UUID, read back; or your salt itself |
-| `14`, `262144`, `8` | | Argon2 passes, memory in KiB (2^`m_log2`) and lanes: pd's defaults, or your `[argon2]` |
+| `1`, `1048576`, `4` | | Argon2 passes, memory in KiB (2^`m_log2`) and lanes: pd's defaults, or your `[argon2]` |
 
 ### What to memorize
 
@@ -215,7 +216,7 @@ cryptboot`.
 **With OpenSSL older than 3.2**, derive the key with the `argon2` and `xxd` tools instead (e.g. `apt
 install argon2 xxd`, which downloads them; on Tails, through Tor):
 ```sh
--d <(printf %s "$P" | argon2 SALT -id -t 14 -m 18 -p 8 -l 64 -r | xxd -r -p)
+-d <(printf %s "$P" | argon2 SALT -id -t 1 -m 20 -p 4 -l 64 -r | xxd -r -p)
 ```
 
 ## 5. Maintenance

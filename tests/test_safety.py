@@ -1,5 +1,6 @@
 """Safety properties that need a real setup: booting after an unclean
-shutdown, and the hidden side's footprint cap."""
+shutdown, the hidden side's footprint cap, the disk's zeroed edges, and pool
+and swap settings."""
 
 import unittest
 
@@ -71,6 +72,42 @@ EOF
         self.assertLess(int(sizes["root"]), int(sizes["thinpool"]))
         # The extra volume exists with the configured filesystem.
         self.assertIn("xfs", out)
+
+
+    def test_disk_edges_and_pool_settings(self):
+        fx = self.fx
+        d = L.disk_size(fx.disk.stat().st_size)
+        # The first and last MiB stay zero (L.ZERO_HEADER, L.ZERO_TRAILER).
+        with open(fx.disk, "rb") as f:
+            self.assertEqual(f.read(L.ZERO_HEADER), bytes(L.ZERO_HEADER))
+            f.seek(d - L.ZERO_TRAILER)
+            self.assertEqual(f.read(L.ZERO_TRAILER), bytes(L.ZERO_TRAILER))
+        _, out = vm.ToolVM(fx.env, fx.work).run(f"""
+        printf '%s\\n' '{fixture.DECOY_PW}' | python3 -m pd open --config pd.toml --rw --password-stdin \\
+            --run 'dmsetup table cryptlvm-raw; lvm lvs --noheadings --binary -o lv_name,zero sysvg'
+        """, disks=[fx.disk])
+        # The decoy's data region ends where the zero trailer starts.
+        start, length, _, _, offset = next(l.split() for l in out.splitlines() if " linear " in l)
+        self.assertEqual((int(offset) + int(length)) * L.SECTOR, L.data_end(d))
+        # The pools don't zero new chunks.
+        zero = dict(l.split() for l in out.splitlines() if l.strip().startswith("thinpool "))
+        self.assertEqual(zero["thinpool"], "0")
+
+
+class SwapDefault(unittest.TestCase):
+    def test_swap_defaults_to_ram_size(self):
+        env = vm.testenv()
+        work = vm.workdir()
+        self.addCleanup(vm.cleanup, work)
+        _, out = vm.ToolVM(env, work).run("""
+        python3 -c 'from pd import setup; from pd.config import Config; print("SWAP", setup.swap_size(Config(disk="x")), setup.swap_size(Config(disk="x", swap_size=0)))'
+        awk '/MemTotal/ { print "MEM", $2 * 1024 }' /proc/meminfo
+        """)
+        swap, none = (int(x) for x in out.split("SWAP ", 1)[1].split()[:2])
+        mem = int(out.split("MEM ", 1)[1].split()[0])
+        self.assertEqual(none, 0)
+        self.assertEqual(swap % L.GIB, 0)
+        self.assertTrue(mem <= swap < mem + L.GIB)
 
 
 class TrimOnShutdown(unittest.TestCase):

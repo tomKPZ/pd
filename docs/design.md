@@ -150,6 +150,12 @@ Over 200 churn cycles without a trim, btrfs stays at 3.2 GiB (flat after the fir
 at 2.0 GiB, and XFS creeps slowly from 3.5 to 3.8 GiB. (Earlier runs reported btrfs creeping to
 6.5 GiB; that was the harness overshooting its fill target, because btrfs accounts space lazily.)
 
+**Chunk size doesn't matter.** These runs use 64 KiB pool chunks, which LVM picks for small disks; it
+picks 512 KiB for 1 TiB, 2 MiB for 4 TiB and 4 MiB for 8 TiB (keeping the pool metadata at 128 MiB,
+twice what a full pool needs), and the chunk size is fixed when the pool is created. Rerun with 512 KiB
+and 2 MiB chunks, btrfs and XFS footprints stay within a few percent of the 64 KiB numbers in every
+column.
+
 * **btrfs** allocates data block groups first-fit from low device offsets and deletes empty block
   groups; with the shutdown trim its footprint tracks live data. Root volumes are btrfs (the boot
   path mounts their `@boot` and `@nix` subvolumes), and extra volumes may be. Its weak spot is
@@ -197,9 +203,9 @@ could map out every block written since setup.)
 `D` is the disk size rounded down to 1 MiB. All offsets are physical.
 
 ```
-0      1 MiB         256 MiB                                                  H-255 MiB      H                  D
-|zeros | decoy plain | PV hdr, swap, decoy thin data →     ...     ← hidden thin data | hidden plain | decoy tmeta/pmspare |
-                     |<--------------------------- decoy data region [256 MiB, D) ------------------------------------->|
+0      1 MiB         256 MiB                                                  H-255 MiB      H             D-1 MiB    D
+|zeros | decoy plain | PV hdr, swap, decoy thin data →     ...     ← hidden thin data | hidden plain | decoy tmeta | zeros |
+                     |<------------------------ decoy data region [256 MiB, D-1 MiB) --------------------------->|
                      |<--------- hidden data region [256 MiB, H-255 MiB), reversed --------->|
 ```
 
@@ -207,18 +213,23 @@ could map out every block written since setup.)
 |---|---|---|
 | zero header | [0, 1 MiB) | zeros |
 | decoy plain volume | [1 MiB, 256 MiB) | plain dm-crypt (Argon2 key), btrfs |
-| decoy data region | [256 MiB, D) | plain dm-crypt (decoy `data.key`), LVM PV |
+| decoy data region | [256 MiB, D − 1 MiB) | plain dm-crypt (decoy `data.key`), LVM PV |
 | hidden data region | [256 MiB, H − 255 MiB), reversed in 256 MiB chunks | plain dm-crypt (hidden `data.key`), LVM PV |
 | hidden plain volume | [H − 255 MiB, H) | plain dm-crypt (Argon2 key), btrfs |
+| zero trailer | [D − 1 MiB, D) | zeros |
 
 * **The decoy data region spans the rest of the disk**, because an ordinary install would. The hidden
   regions lie inside it, in space the decoy's pool hasn't allocated.
+* **The last MiB stays zero, like the first.** A tool that "initializes" the disk (Windows Disk
+  Management offers to; gdisk's repairs do it) writes a backup GPT into the last sectors. Without the
+  trailer that would land on the decoy pool's `tmeta`, and a decoy that stops working is suspicious in
+  itself.
 * **What H is.** The decoy's LVM layout is stock (§6.1). Measured with LVM 2.03.41, stock placement
   is `[swap][pmspare][pool data][tmeta]`: the spare metadata LV goes in front of the pool's data and
   `tmeta` goes at the very end of the PV. The decoy writes to `tmeta`, so the hidden side must stay below
   it. **H** is the physical start of the decoy metadata that lies after the pool's data. Setup reads it
   back from the decoy's LVM metadata after creating the decoy, rather than assuming it. If there's none
-  (all metadata at the front), H = D − 1 MiB.
+  (all metadata at the front), H is the end of the decoy's data region, D − 1 MiB.
 * **Overlap check.** Before writing anything, hidden setup checks that no decoy LV other than the
   pool's data lies between the start of the pool's main data segment and the top of the hidden boot
   volume.
@@ -244,11 +255,17 @@ because v1 creates the pool with one data extent and then extends it.
 
 | Key | Derivation | Opens |
 |---|---|---|
-| plain key | Argon2id(password, salt), 64 bytes (defaults: t=14, m=256 MiB, p=8, v1.3), or with FIDO2 a random key unwrapped with a security key (§4.1) | the side's plain volume |
+| plain key | Argon2id(password, salt), 64 bytes (defaults: t=1, m=1 GiB, p=4, v1.3), or with FIDO2 a random key unwrapped with a security key (§4.1) | the side's plain volume |
 | `data.key` | 64 random bytes generated at setup, stored in the plain volume | the side's data region |
 
 * **Cipher.** Everything uses plain dm-crypt (aes-xts-plain64, 512-bit keys, 4096-byte sectors), so
   there's no header anywhere on disk to find.
+* **Argon2 parameters: a short boot, a long password.** The defaults (one pass over 1 GiB, 4 lanes)
+  take about 0.3 s on a current x86 machine, and about 1 s single-threaded through OpenSSL for stock boot
+  ([stock-boot.md](stock-boot.md)). One pass with a lot of memory is the most memory-hard setting per
+  second, which is what limits a GPU's parallel guessing. Making the KDF 10× slower buys about what one
+  more random character buys at 60×, so pd keeps boots fast and relies on password length.
+  `pd rekey --new-argon2 T,M_LOG2,P` changes them later (both sides, then a new USB).
 * **Salt.** A random 64-byte salt is stored on the boot USB, and both sides use it. Keeping the salt off
   the disk means the boot script derives one key and tries it on every disk, with no per-disk lookup and
   no alignment issues. The cost is that a USB belongs to one machine.
@@ -374,7 +391,9 @@ Why split boot into early and late stages at all:
 ## 6. The data region
 
 Under the plain dm-crypt layer, each side has one LVM PV and one VG containing:
-* a linear `swap` LV (hibernation isn't supported);
+* a linear `swap` LV (hibernation isn't supported). It can't grow later, since the pool takes the rest of
+  the VG, so by default it's the RAM size of the machine running setup, as an installer would choose
+  (`swap_size`; `"0"` for none);
 * a thin pool over the rest of the PV;
 * thin LVs: one btrfs root per installed OS. The btrfs roots have the subvolumes `@`, `@boot`, `@home`,
   `@home_snapshots`, `@nix`, `@snapshots`, `@var_cache`, `@var_lib_docker`, `@var_log`, `@var_tmp`.
@@ -392,12 +411,14 @@ The decoy is created only with stock, ordinary commands:
 pvcreate
 vgcreate
 lvcreate -L … -n swap
-lvcreate --type thin-pool -l 100%FREE --discards nopassdown -n thinpool
+lvcreate --type thin-pool -l 100%FREE --discards nopassdown -Zn -n thinpool
 lvcreate -V … -T …/thinpool -n <root>
 ```
 No explicit extent size, chunk size, or metadata size is given; LVM picks them for the disk size. Thin
-LVs get the full pool size as their virtual size. `--discards nopassdown` is the one non-default
-option; it's an ordinary, documented setting (reclaim thin pool space without trimming the device).
+LVs get the full pool size as their virtual size. Two options aren't defaults, both ordinary and
+documented: `--discards nopassdown` (reclaim thin pool space without trimming the device) and `-Zn`
+(don't zero new chunks, which LVM's own warning suggests for the large chunks it picks on big disks;
+the filesystems never read blocks they haven't written).
 
 **Why it matters: LVM metadata records its own history.** The metadata area is a ring buffer that keeps
 many versions, and every version stores:
@@ -741,11 +762,13 @@ Decisions made while implementing v2:
 | D38 | Optional FIDO2: hmac-secret unwraps a random plain key from per-key slots on the USB (two per credential, random when unused); systemd-cryptenroll's defaults (PIN and touch, no user verification) | Stops offline password guessing; nothing hidden-specific on the USB; any of several keys works; a side without FIDO2 still boots (§4.1) | agreed |
 | D39 | Stock boot: `pd init-hidden --stock-decoy` adds a hidden side to a stock LUKS + LVM thin decoy; the hidden boot is typed in a live system (OpenSSL's Argon2id derives pd's key; `late.sh DISK` runs as on pd's USB); the salt may be the decoy's LUKS UUID | No pd USB to recognize; the hidden side and its boot logic are unchanged; nothing to bring but memory (stock-boot.md) | agreed |
 | D40 | The project is called Plain Disguise; the tools stay `pd`. The name appears only in the docs, the flake and the CLI help, never on the USB or in the decoy | It hides in plain sight, in plain dm-crypt volumes; files on the USB and in the decoy already say only "pd" | agreed |
+| D41 | Swap defaults to the RAM size of the machine running setup (`swap_size`, `"0"` for none) | The swap LV can't grow after setup, and an installer would size it that way; the old 64 MiB default looked odd | agreed |
+| D42 | The last MiB of the disk is zeroed and unused; the decoy data region is [256 MiB, D − 1 MiB) | A backup GPT written by a tool that initializes the disk can't hit the decoy's pool metadata (§3) | agreed |
+| D43 | Argon2 defaults t=1, m=1 GiB, p=4 (about 0.3 s); `pd rekey --new-argon2` | Short boots, strong passwords: an extra random character is worth far more than a slower KDF; one pass over much memory is the most memory-hard per second (§4) | agreed |
+| D44 | Thin pools are created with `-Zn` | Zeroing new chunks only slows first writes (LVM warns about it for large chunks); chunk size measured not to affect footprints (§2.3) | agreed |
 
 ---
 
 ## 14. Open questions
 
-* Decoy footprint creep without the shutdown trim (§2.3): a documented limitation rather than capping
-  the decoy's thin LVs.
-* Argon2 defaults: keep t=14, m=256 MiB, p=8, or raise memory?
+None at the moment; what's left is in [roadmap.md](roadmap.md).

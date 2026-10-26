@@ -94,6 +94,9 @@ def main(argv=None) -> int:
                    help="boot volume start sector (default: the decoy's)")
     k.add_argument("--new-salt", default=None,
                    help="re-key under this salt (rekey both sides, then build a new USB)")
+    k.add_argument("--new-argon2", default=None, metavar="T,M_LOG2,P",
+                   help="re-key with these Argon2 parameters (rekey both sides, put them in the "
+                        "config's [argon2], then build a new USB)")
     k.add_argument("--password-stdin", action="store_true")
 
     f = sub.add_parser("fido2", help="enroll or remove FIDO2 security keys")
@@ -185,15 +188,25 @@ def main(argv=None) -> int:
         from pd import rekey
         if args.new_salt:
             Config(disk=cfg.disk, salt=args.new_salt).check_salt()
+        new_argon2 = None
+        if args.new_argon2:
+            from pd.util import Argon2Params
+            try:
+                t_, m_, p_ = (int(x) for x in args.new_argon2.split(","))
+            except ValueError:
+                raise SystemExit("--new-argon2 takes T,M_LOG2,P, e.g. 1,20,4")
+            new_argon2 = Argon2Params(t=t_, m_log2=m_, p=p_, length=cfg.argon2.length)
         old, new = read_passwords(args, ["Current", "New"])
         for w in rekey.rekey(cfg, rekey.default_offset(cfg, args.offset), old, new, args.new_salt,
-                             key_prompter(args)):
+                             key_prompter(args), new_argon2):
             print(f"Warning: {w}")
         print("Re-keyed.")
         if fido2.load(cfg):
             print("Build a new boot USB (`pd usb`): fido2.txt changed if this side uses FIDO2.")
-        if args.new_salt:
-            print("Re-key the other side with the same --new-salt, put the new salt in the config,")
+        if args.new_salt or new_argon2:
+            changed = " and ".join(x for x, v in (("--new-salt", args.new_salt),
+                                                  ("--new-argon2", new_argon2)) if v)
+            print(f"Re-key the other side with the same {changed}, update the config to match,")
             print("and build a new boot USB.")
     elif args.command == "fido2":
         from pd import rekey

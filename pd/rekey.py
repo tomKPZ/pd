@@ -14,7 +14,7 @@ from pd import fido2
 from pd import layout as L
 from pd import setup
 from pd.config import Config
-from pd.util import argon2
+from pd.util import Argon2Params, argon2
 
 
 def snapshot(root: pathlib.Path) -> dict[str, tuple[str, int, bytes]]:
@@ -73,7 +73,8 @@ def no_more_keys() -> bool:
 
 
 def rekey(cfg: Config, offset: int, old_password: bytes, new_password: bytes,
-          new_salt: str | None = None, next_key=no_more_keys) -> list[str]:
+          new_salt: str | None = None, next_key=no_more_keys,
+          new_argon2: Argon2Params | None = None) -> list[str]:
     """offset is the boot volume's start in bytes.  Returns warnings.
 
     A side without FIDO2 gets its boot volume re-created under the new
@@ -83,13 +84,13 @@ def rekey(cfg: Config, offset: int, old_password: bytes, new_password: bytes,
     in and returns False when there are no more.  The slots of keys that
     weren't plugged in are replaced with random bytes, since they would
     still open with the old password."""
-    if old_password == new_password and not new_salt:
+    if old_password == new_password and not new_salt and not new_argon2:
         raise RuntimeError("nothing to change")
     found = setup.find_boot_key(cfg, offset, old_password)
     if found is None:
         raise RuntimeError("the current password doesn't open a boot volume at that offset")
     old_key, slot = found
-    new_a = argon2(new_password, new_salt or cfg.salt, cfg.argon2)
+    new_a = argon2(new_password, new_salt or cfg.salt, new_argon2 or cfg.argon2)
     if slot is None:
         if new_a == old_key:
             raise RuntimeError("the new password and salt derive the same key")

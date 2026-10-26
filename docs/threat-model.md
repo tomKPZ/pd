@@ -50,8 +50,11 @@ there.
 
 ### Offline password guessing
 Anyone with the USB and a disk image (A1 or A2) can guess passwords offline: the salt is on the USB, and
-a guess is checked by trying to open a boot volume. Argon2 (256 MiB, 14 passes by default) makes each
-guess slow. With FIDO2 security keys enrolled ([design.md §4.1](design.md#41-fido2-security-keys-optional)),
+a guess is checked by trying to open a boot volume. Argon2 (1 GiB, one pass by default: about 0.3 s, and
+1 GiB of memory per guess, which limits how many guesses a GPU can run at once) makes each guess
+costly. The defaults favor a short boot over a slow KDF, so the password has to be correspondingly
+strong: each extra random character multiplies an attacker's work by the size of the character set
+(about 60–90), far more than any practical Argon2 setting. With FIDO2 security keys enrolled ([design.md §4.1](design.md#41-fido2-security-keys-optional)),
 each guess also needs the physical key, its PIN (the key locks after 8 wrong tries), and a touch. That
 doesn't change coercion: a coercer demands the key along with the password.
 
