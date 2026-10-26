@@ -17,7 +17,9 @@
 | 6. Boot | the target machine, booted from the boot stick | [booting.md](booting.md) |
 
 You need two USB sticks: a **setup stick**, used once and then wiped, and the **boot stick** you keep.
-Each needs a FAT32 EFI system partition. Installing the OSes needs a wired network.
+Each needs a FAT32 EFI system partition. Installing the OSes needs a wired network: the setup
+environment has drivers for common Intel, Realtek, Broadcom and Aquantia NICs and USB Ethernet
+adapters, but no Wi-Fi.
 
 ## 1. Build
 
@@ -124,7 +126,11 @@ Later maintenance, from the setup environment or a live ISO (below):
 
 ## 5. Install the OSes
 
-Run `pd-net` first to bring up wired networking with DHCP. Every OS on a pd disk needs:
+Run `pd-net` first to bring up wired networking with DHCP. It also sets up Arch's signing keys
+(shipped in the setup environment, pinned by hash), so `pacstrap` verifies every package; the mirror
+is Arch's own `geo.mirror.pkgbuild.com`, which `pacstrap` copies into the installed system.
+*(tested: `test_setup_env` with `PD_TEST_NET=1` gets a DHCP lease through an emulated Intel NIC and
+runs `pacstrap -K` with signature checks.)* Every OS on a pd disk needs:
 * **the pd unlock hook** in its initrd, which opens the disk with the keys pd hands over;
 * **`nodiscard`** on every filesystem, and **no periodic trim** (`fstrim.timer`, `services.fstrim`);
 * **one `fstrim` at shutdown**, which keeps each side's footprint near its live data

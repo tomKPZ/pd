@@ -10,7 +10,7 @@ NixOS configuration repos, and running a migration.
 
 | Item | Recommendation | Autonomous? |
 |---|---|---|
-| **Try pd on real hardware** | Do it next: QEMU can't show firmware quirks, real keyboards and storage controllers, or Argon2 timing. Rehearse on a spare disk: build `setupUki` and a boot stick, run setup, install a decoy and a hidden OS, boot both, crash one (pull the power) and boot again. | No: needs real hardware. |
+| **Try pd on real hardware** | Do it next, following [manual-testing.md](manual-testing.md): QEMU can't show firmware quirks, real keyboards, storage controllers and NICs, or Argon2 timing. It also covers the YubiKey and stock boot items below. | No: needs real hardware. |
 
 ## Later
 

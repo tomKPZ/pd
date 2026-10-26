@@ -221,7 +221,7 @@ class BootVM:
                  memory: str = "2G", interface: str = "virtio", log=None, uefi: dict | None = None,
                  readonly_disks: bool = False, network: bool = False,
                  extra_args: list[str] | None = None, qmp: pathlib.Path | None = None,
-                 security_key: pathlib.Path | None = None):
+                 security_key: pathlib.Path | None = None, nic: str = "virtio-net-pci"):
         """security_key: an emulated FIDO2 security key (with_security_key)."""
         self.env = env
         if uefi:
@@ -238,7 +238,7 @@ class BootVM:
                 "-append", f"console=ttyS0 panic=-1 init_on_free=1 {cmdline}".strip(),
             ] + _disk_args(disks, interface, readonly_disks)
         if network:
-            args += ["-nic", "user,model=virtio-net-pci"]
+            args += ["-nic", f"user,model={nic}"]
         if qmp:
             args += ["-qmp", f"unix:{qmp},server=on,wait=off"]
         args += extra_args or []

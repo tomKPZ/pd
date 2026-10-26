@@ -35,8 +35,9 @@ class SetupEnv(unittest.TestCase):
 
         log = open(work / "setup-env.log", "w")
         self.addCleanup(log.close)
+        # An emulated Intel NIC (e1000e), so a real-hardware driver has to be in the setup UKI.
         b = vm.BootVM(env, [env / "setup-initrd.cpio.zst"], [disk, payload], memory="4G", log=log,
-                      network=bool(os.environ.get("PD_TEST_NET")))
+                      network=bool(os.environ.get("PD_TEST_NET")), nic="e1000e")
         self.addCleanup(b.close)
         b.expect("pd setup environment", timeout=240)
         prompt = r"[#$] $"
@@ -52,11 +53,11 @@ class SetupEnv(unittest.TestCase):
         # The installers are present; nix knows its own store.
         run("command -v pacstrap nixos-install nix && nix-store --verify-path $(readlink -f $(command -v pd))")
         if os.environ.get("PD_TEST_NET"):
-            # Networking for installing OSes: DHCP, DNS, and TLS to an Arch mirror.
+            # Networking for installing OSes: DHCP, DNS, TLS to Arch's mirror, and
+            # pacstrap verifying signatures with the shipped keyring.
             run("pd-net")
-            run("printf '[options]\\nArchitecture=x86_64\\nSigLevel=Never\\nDBPath=/tmp/pacdb\\n"
-                "[core]\\nServer=https://archive.archlinux.org/repos/2026/10/20/$repo/os/$arch\\n' "
-                "> /tmp/p.conf && mkdir -p /tmp/pacdb && pacman --config /tmp/p.conf -Sy", timeout=300)
+            run("mkdir /tmp/archroot && pacstrap -K /tmp/archroot filesystem && test -s /tmp/archroot/etc/pacman.d/mirrorlist",
+                timeout=600)
         run("pd randomize --config payload/pd.toml")
         install = ("mkdir -p $PD_ROOT/fake/etc && cp /root/payload/vmlinuz $PD_ROOT/fake/boot/vmlinuz && "
                    "cp /root/payload/initrd $PD_ROOT/fake/boot/initrd && "

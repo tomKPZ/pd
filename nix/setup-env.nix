@@ -17,6 +17,46 @@ let
     cp ${pkgs.xfsprogs.bin}/bin/mkfs.xfs ${pkgs.xfsprogs.bin}/bin/xfs_repair $out/bin/
   '';
 
+  # Arch Linux's signing keys, so pacstrap verifies what it installs.  The
+  # keyring package is pinned by hash (fetched from archive.archlinux.org);
+  # bump it now and then.  pacman-key imports keyrings from pacman's own share/.
+  archKeyring = pkgs.runCommand "archlinux-keyring" {
+    src = pkgs.fetchurl {
+      url = "https://archive.archlinux.org/packages/a/archlinux-keyring/archlinux-keyring-20260909-1-any.pkg.tar.zst";
+      hash = "sha256-ao6hb1HTswXBgyLViEypWfEsMqPxhocwkP3BhGVgUpM=";
+    };
+    nativeBuildInputs = [ pkgs.gnutar pkgs.zstd ];
+  } ''
+    mkdir -p $out
+    tar --zstd -xf $src -C $out usr/share/pacman/keyrings
+  '';
+  pacmanArch = pkgs.pacman.overrideAttrs (old: {
+    postInstall = (old.postInstall or "") + ''
+      mkdir -p $out/share/pacman/keyrings
+      cp ${archKeyring}/usr/share/pacman/keyrings/* $out/share/pacman/keyrings/
+    '';
+  });
+  archInstallScripts = pkgs.arch-install-scripts.override { pacman = pacmanArch; };
+
+  # Arch's own geo-balanced mirror; pacstrap copies the mirror list into the
+  # installed system.
+  pacmanConf = pkgs.writeText "pacman.conf" ''
+    [options]
+    Architecture = auto
+    SigLevel = Required DatabaseOptional
+    LocalFileSigLevel = Optional
+    ParallelDownloads = 5
+
+    [core]
+    Include = /etc/pacman.d/mirrorlist
+
+    [extra]
+    Include = /etc/pacman.d/mirrorlist
+  '';
+  mirrorlist = pkgs.writeText "mirrorlist" ''
+    Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch
+  '';
+
   env = pkgs.buildEnv {
     name = "pd-setup-env";
     paths = with pkgs; [
@@ -42,8 +82,8 @@ let
       less
       pciutils
       # Installing the OSes (both need a wired network; see pd-net).
-      pacman
-      arch-install-scripts
+      pacmanArch
+      archInstallScripts
       nix
       nixos-install-tools
       gnutar
@@ -55,7 +95,14 @@ let
           dev=''${dev##*/}
           [ "$dev" = lo ] && continue
           ip link set "$dev" up
-          /bin/udhcpc -q -n -i "$dev" -s ${udhcpcScript} && exit 0
+          if /bin/udhcpc -q -n -i "$dev" -s ${udhcpcScript}; then
+            # Arch's keys for pacstrap (pacman.conf requires signatures).
+            if [ ! -d /etc/pacman.d/gnupg ]; then
+              { pacman-key --init && pacman-key --populate archlinux; } >/dev/null 2>&1 ||
+                echo "warning: couldn't set up the Arch keyring (pacstrap will fail)" >&2
+            fi
+            exit 0
+          fi
         done
         echo "no DHCP lease on any interface" >&2
         exit 1
@@ -170,6 +217,8 @@ let
     done
     install -m755 ${init} $root/init
     install -Dm644 ${lvmConf} $root/etc/lvm/lvm.conf
+    install -Dm644 ${pacmanConf} $root/etc/pacman.conf
+    install -Dm644 ${mirrorlist} $root/etc/pacman.d/mirrorlist
     install -Dm644 ${closure}/registration $root/etc/nix-registration
     chmod -R u+w $root
     (cd $root && find . -print0 | sort -z |

@@ -122,8 +122,15 @@ let
     depmod -b $out -a $ver
   '';
   modulesClosure = mkModulesClosure rootModules;
+  # Wired network drivers, so `pd-net` works on real machines (installing the
+  # OSes needs a network).  Setup UKI only: the boot USB never networks.
+  nicModules = [
+    "e1000e" "igb" "igc" "e1000" "r8169" "tg3" "bnx2" "alx" "atl1c" "atlantic" "sky2" "ixgbe"
+    # USB and USB-C Ethernet adapters and docks
+    "r8152" "cdc-ether" "cdc-ncm" "ax88179-178a" "asix" "usbnet"
+  ];
   # Setup formats extra volumes as XFS; the boot environment never mounts them.
-  setupModulesClosure = mkModulesClosure (rootModules ++ [ "xfs" ]);
+  setupModulesClosure = mkModulesClosure (rootModules ++ [ "xfs" ] ++ nicModules);
   # The tool VM also has ext4 and f2fs, for the filesystem survey.
   toolModulesClosure = mkModulesClosure (rootModules ++ [ "xfs" "ext4" "f2fs" ]);
 

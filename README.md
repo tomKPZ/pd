@@ -66,6 +66,7 @@ The details are in [docs/design.md](docs/design.md).
 | [docs/install.md](docs/install.md) | Building, configuring, setting up a disk, installing Arch and NixOS |
 | [docs/threat-model.md](docs/threat-model.md) | Adversaries, guarantees, what is out of scope, operational rules |
 | [docs/booting.md](docs/booting.md) | Decoy boot, hidden boot, boot menus, recovery |
+| [docs/manual-testing.md](docs/manual-testing.md) | Step-by-step validation on real hardware: pd's USB, a YubiKey, stock boot |
 | [docs/stock-boot.md](docs/stock-boot.md) | Without pd's USB: a stock decoy, and the hidden side booted from a live system |
 | [docs/v1.md](docs/v1.md) | Exact as-built description of v1 (what deployed installs run) |
 | [docs/migration.md](docs/migration.md) | Moving a v1 install to v2 |

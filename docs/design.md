@@ -671,7 +671,7 @@ go to another pd setup; never `dd` the disk.
   | `test_safety` | boot after a crash with a dirty btrfs log; hidden cap over roots and volumes; fstrim shrinks the pool but never reaches the disk |
   | `test_growth` | on an unrandomized disk, decoy writes at the front, hidden at the back, untouched gap between |
   | `test_uefi` | the real UKI from a USB stick under OVMF; NVRAM entry and `BootOrder` cleanup; no build-host os-release |
-  | `test_setup_env` | setup run from the RAM-only setup environment, then a boot; with `PD_TEST_NET=1`, its networking |
+  | `test_setup_env` | setup run from the RAM-only setup environment, then a boot; with `PD_TEST_NET=1`, DHCP through an emulated Intel NIC and a signature-checked `pacstrap` |
   | `test_nixos` | a real NixOS initrd with `pd.nix` unlocks the disk and mounts `/sysroot` |
   | `test_arch` | a real Arch install (pacstrap, `pd` mkinitcpio hook) boots through pd (`PD_TEST_ARCH=1`, needs network) |
   | `test_monitor` | frontier monitor report and warning; no hidden-only files in the decoy |
@@ -766,6 +766,8 @@ Decisions made while implementing v2:
 | D42 | The last MiB of the disk is zeroed and unused; the decoy data region is [256 MiB, D − 1 MiB) | A backup GPT written by a tool that initializes the disk can't hit the decoy's pool metadata (§3) | agreed |
 | D43 | Argon2 defaults t=1, m=1 GiB, p=4 (about 0.3 s); `pd rekey --new-argon2` | Short boots, strong passwords: an extra random character is worth far more than a slower KDF; one pass over much memory is the most memory-hard per second (§4) | agreed |
 | D44 | Thin pools are created with `-Zn` | Zeroing new chunks only slows first writes (LVM warns about it for large chunks); chunk size measured not to affect footprints (§2.3) | agreed |
+| D45 | The setup UKI has drivers for common wired NICs and USB Ethernet adapters (the boot USB has none) | `pd-net` needs them on real machines; the boot USB never networks | agreed |
+| D46 | The setup UKI ships Arch's keyring (pinned by hash) and a `pacman.conf` that requires signatures, with Arch's own mirror | `pacstrap` then verifies everything it installs; nixpkgs has no Arch keyring | agreed |
 
 ---
 

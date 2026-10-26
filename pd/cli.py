@@ -18,15 +18,17 @@ def stdin_line() -> bytes:
     return sys.stdin.buffer.readline().rstrip(b"\n")
 
 
-def read_passwords(args, names: list[str]) -> list[bytes]:
+def read_passwords(args, names: list[str], new: tuple[str, ...] = ()) -> list[bytes]:
+    """Prompt for each password in `names` ("Decoy password", ...).  Only
+    the ones in `new` are asked twice; the others are checked against the
+    disk anyway."""
     if args.password_stdin:
         return [stdin_line() for _ in names]
     out = []
     for n in names:
         while True:
-            a = getpass.getpass(f"{n} password: ")
-            b = getpass.getpass(f"Confirm {n} password: ")
-            if a == b:
+            a = getpass.getpass(f"{n}: ")
+            if n not in new or a == getpass.getpass(f"Confirm {n.lower()}: "):
                 out.append(a.encode())
                 break
             print("Passwords do not match.")
@@ -196,7 +198,7 @@ def main(argv=None) -> int:
             except ValueError:
                 raise SystemExit("--new-argon2 takes T,M_LOG2,P, e.g. 1,20,4")
             new_argon2 = Argon2Params(t=t_, m_log2=m_, p=p_, length=cfg.argon2.length)
-        old, new = read_passwords(args, ["Current", "New"])
+        old, new = read_passwords(args, ["Current password", "New password"], new=("New password",))
         for w in rekey.rekey(cfg, rekey.default_offset(cfg, args.offset), old, new, args.new_salt,
                              key_prompter(args), new_argon2):
             print(f"Warning: {w}")
@@ -227,7 +229,7 @@ def main(argv=None) -> int:
         from pd import migrate
         from pd.util import Argon2Params
         hidden = args.v1_hidden_offset is not None
-        pws = read_passwords(args, ["Decoy", "Hidden"] if hidden else ["Decoy"])
+        pws = read_passwords(args, ["Decoy password", "Hidden password"] if hidden else ["Decoy password"])
         params = migrate.V1_ARGON2
         if args.v1_argon2:
             t_, m_, p_ = (int(x) for x in args.v1_argon2.split(","))
@@ -238,15 +240,15 @@ def main(argv=None) -> int:
     if args.command == "init-decoy":
         from pd import setup
         if args.hidden_offset is not None:
-            pw, hpw = read_passwords(args, ["Decoy", "Hidden"])
+            pw, hpw = read_passwords(args, ["Decoy password", "Hidden password"], new=("Decoy password",))
             hidden = (args.hidden_offset * L.SECTOR, hpw)
         else:
-            (pw,) = read_passwords(args, ["Decoy"])
+            (pw,) = read_passwords(args, ["Decoy password"], new=("Decoy password",))
             hidden = "none" if args.no_hidden else None
         setup.init_decoy(cfg, pw, runner(args), force=args.force, hidden=hidden)
     elif args.command == "init-hidden" and args.stock_decoy:
         from pd import setup
-        decoy, hidden = read_passwords(args, ["Decoy", "Hidden"])
+        decoy, hidden = read_passwords(args, ["Decoy password", "Hidden password"], new=("Hidden password",))
         hl = setup.init_hidden_stock(cfg, args.stock_decoy, args.decoy_header, decoy, hidden,
                                      runner(args))
         if cfg.salt == setup.luks_uuid(args.stock_decoy, args.decoy_header):
@@ -263,7 +265,7 @@ def main(argv=None) -> int:
         from pd import setup
         if args.decoy_header:
             raise SystemExit("--decoy-header needs --stock-decoy")
-        decoy, hidden = read_passwords(args, ["Decoy", "Hidden"])
+        decoy, hidden = read_passwords(args, ["Decoy password", "Hidden password"], new=("Hidden password",))
         hl = setup.init_hidden(cfg, decoy, hidden, runner(args))
         # Printed once.  Never store it on the USB or in the decoy.
         print("Hidden boot: press Enter at the password prompt, then run:")
