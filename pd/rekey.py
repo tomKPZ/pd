@@ -78,12 +78,15 @@ def rekey(cfg: Config, offset: int, old_password: bytes, new_password: bytes,
     """offset is the boot volume's start in bytes.  Returns warnings.
 
     A side without FIDO2 gets its boot volume re-created under the new
-    Argon2 output.  A side with FIDO2 keeps its (random) boot volume key;
-    only its fido2.txt slots are re-wrapped under the new password, one
-    security key at a time: next_key() asks for the next one to be plugged
-    in and returns False when there are no more.  The slots of keys that
-    weren't plugged in are replaced with random bytes, since they would
-    still open with the old password."""
+    Argon2 output.  A side with FIDO2 gets a new random boot volume key too,
+    wrapped under the new password for each security key, one at a time:
+    next_key() asks for the next one to be plugged in and returns False
+    when there are no more.  (Keeping the old key would let an old copy of
+    fido2.txt, the old password and a security key still open the side.)
+    The slots of keys that weren't plugged in are replaced with random
+    bytes.  The new slots go to fido2.txt.new first and replace fido2.txt
+    once the boot volume is re-keyed; if that's interrupted, the boot
+    volume opens with fido2.txt.new (or, before the rewrite, fido2.txt)."""
     if old_password == new_password and not new_salt and not new_argon2:
         raise RuntimeError("nothing to change")
     found = setup.find_boot_key(cfg, offset, old_password)
@@ -97,11 +100,12 @@ def rekey(cfg: Config, offset: int, old_password: bytes, new_password: bytes,
         rewrite_boot_volume(cfg, offset, old_key, new_a)
         return []
     creds = fido2.load(cfg)
+    new_key = os.urandom(fido2.KEY_LEN)
     done: set[int] = set()
     while True:
         for dev, i in fido2.holders(creds).items():
             if i not in done:
-                creds[i].slots[slot] = fido2.wrap_for(new_a, old_key, dev, creds[i].id)
+                creds[i].slots[slot] = fido2.wrap_for(new_a, new_key, dev, creds[i].id)
                 done.add(i)
         if len(done) == len(creds) or not next_key():
             break
@@ -112,7 +116,16 @@ def rekey(cfg: Config, offset: int, old_password: bytes, new_password: bytes,
             c.slots[slot] = os.urandom(fido2.KEY_LEN)
             warnings.append(f"security key {i} wasn't plugged in; it no longer opens this side "
                             "(`pd fido2 enroll` to add it back)")
-    fido2.save(cfg, creds)
+    if not done:
+        raise RuntimeError("no enrolled security key was plugged in; nothing changed")
+    if not cfg.fido2:
+        raise RuntimeError("set `fido2 = \"fido2.txt\"` in the config")
+    path = pathlib.Path(cfg.fido2)
+    staged = path.with_name(path.name + ".new")
+    staged.write_text(fido2.dump(creds))
+    rewrite_boot_volume(cfg, offset, old_key, new_key)
+    os.replace(staged, path)
+    cfg.fido2_text = None
     return warnings
 
 

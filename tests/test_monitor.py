@@ -34,6 +34,7 @@ class Monitor(unittest.TestCase):
         b, gap = self.hidden_boot("monitor-1")
         b.expect("PD-TARGET: marker=hidden")
         self.assertNotIn("inside the hidden region", b.child.before)
+        self.assertNotIn("space reserved for this side", b.child.before)
         # Fresh 8 GiB disk: most of it is free.
         self.assertGreater(gap, 6000)
         self.assertLess(gap, 8192)
@@ -47,6 +48,10 @@ class Monitor(unittest.TestCase):
 
         b, gap2 = self.hidden_boot("monitor-2")
         self.assertLess(gap2, gap - 6000)
+        # The decoy is now above the hidden side's floor (design.md §10.5).
+        b.expect(r"WARNING: the decoy has data in the space reserved for this side \(\d+ MiB\)")
+        b.expect("Press Enter to continue booting")
+        b.sendline("")
         b.expect("WARNING: less than 10% of the disk separates the two sides")
         b.expect("Press Enter to continue booting")
         b.sendline("")

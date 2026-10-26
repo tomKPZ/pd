@@ -69,9 +69,14 @@ A migrated install without a hidden side can get one, like any v2 decoy. If the 
 nearly full, its allocations are spread over the whole disk, and `pd init-hidden` refuses until they're
 moved down:
 ```sh
-pd compact --config pd.toml          # decoy password; trims, then moves data below the hidden side's floor
+pd compact --config pd.toml --no-hidden   # decoy password; trims, moves data below the hidden side's floor,
+                                          # and refills the space above with random data
 pd init-hidden --config pd.toml --run
 ```
+The refill matters: the decoy's freed blocks still hold its old data, and its pool metadata still
+points at them, so hidden data written over them would show ([design.md
+§10.5](design.md#105-traces-of-the-decoys-old-data)). `pd init-hidden` does the same cleanup on any
+decoy from an earlier session, so even without compacting, it takes a while on a large disk.
 `pd compact` needs the decoy's filesystems to be btrfs, XFS or ext4 (it mounts them to trim) and LVM's
 spare metadata LV, which v1's pool has. *(tested: `test_compact` builds a v1 decoy that was nearly full,
 migrates it, compacts it, adds a hidden side and boots both.)*

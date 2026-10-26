@@ -5,6 +5,11 @@ side until its data is moved to the front.
 For a pd decoy and for a stock LUKS decoy: fill the decoy, delete most of it,
 check that init-hidden refuses, compact, check the remaining files, then
 create the hidden side and boot both sides.
+
+The fill files are marked (every 4 KiB block starts with PDMARK-), and
+tests/scan_marks.py counts marked blocks left in the decoy's pool data above
+the boundary: after compaction (or init-hidden on a used decoy) there must be
+none (design.md §10.5).
 """
 
 import re
@@ -12,14 +17,30 @@ import unittest
 
 from tests import fixture, test_stock, vm
 
+# write_marked FILE MIB: MIB of random data, each 4 KiB block starting with
+# the marker scan_marks.py looks for.
+MARKED = r"""
+write_marked() {{
+    python3 - "$1" "$2" <<'PY'
+import os, sys
+with open(sys.argv[1], "wb") as f:
+    for _ in range(int(sys.argv[2])):
+        b = bytearray(os.urandom(1 << 20))
+        for off in range(0, len(b), 4096):
+            b[off:off + 7] = b"PDMARK-"
+        f.write(b)
+PY
+}}
+"""
+
 # 90 incompressible 64 MiB files (5.6 GiB of an 8 GiB disk), then every file
 # but each sixth deleted: what's left (960 MiB) is spread over the pool, which
 # still maps everything (nothing trimmed yet).
-FILL = r"""
+FILL = MARKED + r"""
 fill() {{
     dir=$1
     i=0
-    while [ $i -lt {count} ]; do head -c 64M /dev/urandom > $dir/f$i; i=$((i + 1)); done
+    while [ $i -lt {count} ]; do write_marked $dir/f$i 64; i=$((i + 1)); done
     sync
     i=0
     while [ $i -lt {count} ]; do [ $((i % 6)) -eq 0 ] || rm $dir/f$i; i=$((i + 1)); done
@@ -53,7 +74,7 @@ class Compact(unittest.TestCase):
             --v1-argon2 1,12,1 --password-stdin
         printf '%s\n%s\n' '{dpw}' '{hpw}' | python3 -m pd init-hidden --config pd.toml --password-stdin \
             && echo HIDDEN-CREATED || echo HIDDEN-REFUSED
-        printf '%s\n' '{dpw}' | python3 -m pd compact --config pd.toml --password-stdin
+        printf '%s\n' '{dpw}' | python3 -m pd compact --config pd.toml --password-stdin --no-hidden
         printf '%s\n' '{dpw}' | python3 -m pd open --config pd.toml --password-stdin \
             --run 'cd fake/fill && sha256sum -c --quiet /work/sums.txt && echo SUMS-OK'
         printf '%s\n%s\n' '{dpw}' '{hpw}' | python3 -m pd init-hidden --config pd.toml --password-stdin \
@@ -107,7 +128,11 @@ class Compact(unittest.TestCase):
             --run 'sh /work/install.sh decoy && bash /work/fill.sh'
         printf '%s\\n%s\\n' '{dpw}' '{hpw}' | python3 -m pd init-hidden --config pd.toml --password-stdin \\
             && echo HIDDEN-CREATED || echo HIDDEN-REFUSED
-        printf '%s\\n' '{dpw}' | python3 -m pd compact --config pd.toml --password-stdin
+        printf '%s\\n' '{dpw}' | python3 -m pd compact --config pd.toml --password-stdin \\
+            || echo NEEDS-HIDDEN-FLAG
+        python3 /src/tests/scan_marks.py pd pd.toml '{dpw}' --floor | sed 's/^MARKS/BEFORE/'
+        printf '%s\\n' '{dpw}' | python3 -m pd compact --config pd.toml --password-stdin --no-hidden
+        python3 /src/tests/scan_marks.py pd pd.toml '{dpw}' --floor | sed 's/^MARKS/AFTER/'
         printf '%s\\n' '{dpw}' | python3 -m pd compact --config pd.toml --password-stdin --recover
         printf '%s\\n' '{dpw}' | python3 -m pd open --config pd.toml --password-stdin \\
             --run 'cd fake/home/t && sha256sum -c --quiet /work/sums.txt && echo SUMS-OK'
@@ -116,6 +141,10 @@ class Compact(unittest.TestCase):
         """, disks=[disk], timeout=1800, log=work / "compact.log")
         self.assertIn("HIDDEN-REFUSED", out)
         self.assertIn("Run `pd compact` on the decoy first", out)
+        self.assertIn("NEEDS-HIDDEN-FLAG", out)
+        self.assertGreater(int(re.search(r"^BEFORE (\d+)", out, re.M).group(1)), 1000)
+        self.assertEqual(int(re.search(r"^AFTER (\d+)", out, re.M).group(1)), 0)
+        self.assertIn("refilling", out)
         before, after, boundary = high_water(out)
         self.assertGreater(before, boundary)
         self.assertLessEqual(after, boundary)
@@ -141,7 +170,8 @@ with setup.data_region(cfg.disk, table, data_key, readonly=False) as dev:
             f.write(bytes(4096))
         print("DAMAGED", thinpool.check(devs["tmeta"]), thinpool.check(devs["spare"]))
 PY
-        printf '%s\\n' '{dpw}' | python3 -m pd compact --config pd.toml --password-stdin || echo COMPACT-REFUSED
+        printf '%s\\n' '{dpw}' | python3 -m pd compact --config pd.toml --password-stdin --no-hidden \\
+            || echo COMPACT-REFUSED
         printf '%s\\n' '{dpw}' | python3 -m pd compact --config pd.toml --password-stdin --recover
         printf '%s\\n' '{dpw}' | python3 -m pd open --config pd.toml --password-stdin \\
             --run 'cd fake/home/t && sha256sum -c --quiet /work/sums.txt && echo SUMS-OK'
@@ -178,6 +208,54 @@ PY
         b.expect("PD-TARGET: marker=hidden", timeout=120)
         b.close()
 
+    def test_used_decoy_is_cleaned(self):
+        """init-hidden on a decoy from an earlier session, which used (and
+        trimmed) the space the hidden side will occupy: it rewrites the
+        decoy's pool metadata and refills that space."""
+        env = vm.testenv()
+        work = vm.workdir()
+        self.addCleanup(vm.cleanup, work)
+        disk = vm.sparse_disk(work / "disk.img", 8 << 30)
+        (work / "pd.toml").write_text(fixture.CONFIG.format(salt="0123456789abcdef0123456789abcdef"))
+        (work / "install.sh").write_text(fixture.INSTALL.format(
+            kernel=env / "bzImage", initrd=env / "faketarget-initrd.cpio.zst"))
+        # 4.5 GiB of an 8 GiB disk reaches past the floor; deleted and
+        # trimmed, it leaves only stale traces there.  All on the XFS volume,
+        # with nothing written to the btrfs root meanwhile: btrfs's next
+        # commit would land up there (the pool allocates upwards) and stay.
+        (work / "fill.sh").write_text(MARKED.format() + """
+d=$PD_ROOT/volumes/data
+sync
+write_marked $d/keep 256
+write_marked $d/gone 4608
+sync
+rm $d/gone
+sync
+fstrim $d
+(cd $d && sha256sum keep > /work/sums.txt)
+""")
+        dpw, hpw = fixture.DECOY_PW, fixture.HIDDEN_PW
+        vm.ToolVM(env, work).run(f"""
+        printf '%s\\n' '{dpw}' | python3 -m pd init-decoy --config pd.toml --password-stdin \\
+            --run 'sh /work/install.sh decoy && bash /work/fill.sh'
+        """, disks=[disk], timeout=1800, log=work / "decoy.log")
+        # A new boot: the decoy wasn't created in it.
+        _, out = vm.ToolVM(env, work).run(f"""
+        python3 /src/tests/scan_marks.py pd pd.toml '{dpw}' --floor | sed 's/^MARKS/BEFORE/'
+        printf '%s\\n%s\\n' '{dpw}' '{hpw}' | python3 -m pd init-hidden --config pd.toml --password-stdin \\
+            --run 'sh /work/install.sh hidden' | tee hidden.txt
+        python3 /src/tests/scan_marks.py pd pd.toml '{dpw}' --floor | sed 's/^MARKS/AFTER/'
+        printf '%s\\n' '{dpw}' | python3 -m pd open --config pd.toml --password-stdin \\
+            --run 'cd volumes/data && sha256sum -c --quiet /work/sums.txt && echo SUMS-OK'
+        """, disks=[disk], timeout=1800, log=work / "hidden.log")
+        self.assertGreater(int(re.search(r"^BEFORE (\d+)", out, re.M).group(1)), 1000)
+        self.assertIn("rewriting the pool's metadata", out)
+        self.assertIn("refilling", out)
+        self.assertEqual(int(re.search(r"^AFTER (\d+)", out, re.M).group(1)), 0)
+        self.assertIn("SUMS-OK", out)
+        sed = re.search(r"(sed -i s/2048/\d+/ /early_env.sh)", (work / "hidden.txt").read_text()).group(1)
+        self.boot_both(env, work, disk, sed)
+
     def test_stock_decoy(self):
         env = vm.testenv()
         work = vm.workdir()
@@ -201,7 +279,12 @@ PY
         _, out = vm.ToolVM(env, work).run(f"""
         printf '%s\\n%s\\n' '{dpw}' '{hpw}' | python3 -m pd init-hidden --config pd.toml \\
             --stock-decoy /dev/vda2 --password-stdin && echo HIDDEN-CREATED || echo HIDDEN-REFUSED
-        printf '%s\\n' '{dpw}' | python3 -m pd compact --config pd.toml --stock-decoy /dev/vda2 --password-stdin
+        printf '%s\\n' '{dpw}' | python3 -m pd compact --config pd.toml --stock-decoy /dev/vda2 \\
+            --password-stdin --no-hidden | tee compact.txt
+        # The printed boundary is rounded down to a MiB: scan from the next one.
+        boundary=$(sed -n 's/.*(boundary \\([0-9]*\\) MiB).*/\\1/p' compact.txt)
+        python3 /src/tests/scan_marks.py stock /dev/vda2 '{dpw}' --boundary-mib $((boundary + 1)) \\
+            | sed 's/^MARKS/AFTER/'
         printf %s '{dpw}' | cryptsetup open --readonly --key-file - /dev/vda2 cryptroot
         lvm vgchange -ay -qq vg0
         mkdir -p /mnt/decoy && mount -o ro,norecovery /dev/vg0/root /mnt/decoy
@@ -214,6 +297,7 @@ PY
         """, disks=[disk], timeout=1800, log=work / "compact.log")
         self.assertIn("HIDDEN-REFUSED", out)
         self.assertIn("Run `pd compact --stock-decoy` first", out)
+        self.assertEqual(int(re.search(r"^AFTER (\d+)", out, re.M).group(1)), 0)
         before, after, boundary = high_water(out)
         self.assertGreater(before, boundary)
         self.assertLessEqual(after, boundary)

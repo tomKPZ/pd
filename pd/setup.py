@@ -12,6 +12,7 @@ import os
 import pathlib
 import shutil
 import subprocess
+import tempfile
 
 from pd import fido2
 from pd import layout as L
@@ -31,18 +32,42 @@ DATA_MAP = "cryptlvm"
 # While `pd move` has the old disk's data region open too, both carry a VG of
 # the same name; LVM commands then see only the device listed here.
 LVM_DEVICES: str | None = None
+_LVM_DIRS: dict[str, str] = {}
 
 
-def _devices() -> list[str]:
-    return ["--devices", LVM_DEVICES] if LVM_DEVICES else []
+def lvm_env() -> dict:
+    """LVM's settings for setup (no backup or archive files, and LVM_DEVICES)
+    as a private lvm.conf, rather than on the command line: LVM records each
+    command line in the on-disk metadata (design.md §6.1), and the decoy's
+    should look like ordinary commands."""
+    key = LVM_DEVICES or ""
+    if key not in _LVM_DIRS:
+        extra = LVM_NO_ARCHIVE
+        if LVM_DEVICES:
+            extra += f' devices {{ global_filter = [ "a|^{LVM_DEVICES}$|", "r|.*|" ] }}'
+        conf = cmd_output("lvm", "config", "--mergedconfig", "--config", extra)
+        d = pathlib.Path(tempfile.mkdtemp(prefix="pd-lvm-",
+                                          dir="/run" if os.access("/run", os.W_OK) else None))
+        (d / "lvm.conf").write_text(conf + "\n")
+        _LVM_DIRS[key] = str(d)
+    return dict(os.environ, LVM_SYSTEM_DIR=_LVM_DIRS[key])
 
 
 def lvm(*args, **kwargs):
-    return cmd("lvm", *args, *_devices(), "--config", LVM_NO_ARCHIVE, **kwargs)
+    return cmd("lvm", *args, env=lvm_env(), **kwargs)
 
 
 def lvm_output(*args) -> str:
-    return cmd_output("lvm", *args, *_devices(), "--config", LVM_NO_ARCHIVE)
+    return cmd_output("lvm", *args, env=lvm_env())
+
+
+def lvm_size(n: int) -> str:
+    """A size as a person would type it for lvcreate."""
+    if n % L.GIB == 0:
+        return f"{n // L.GIB}G"
+    if n % L.MIB == 0:
+        return f"{n // L.MIB}M"
+    return f"{n}b"
 
 
 def ram_size() -> int:
@@ -72,11 +97,38 @@ def randomize(disk: str) -> None:
     cmd("cryptsetup", "open", "--type=plain", "--batch-mode", *CIPHER_ARGS,
         "--key-file=/dev/urandom", disk, "pd-randomize")
     try:
-        cmd("dd", "if=/dev/zero", "of=/dev/mapper/pd-randomize", "bs=4M",
-            "oflag=direct", "status=progress", check=False)
+        fill_zeros("/dev/mapper/pd-randomize")
     finally:
         cmd("cryptsetup", "close", "pd-randomize")
     zero_header(disk)
+
+
+def fill_zeros(dev: str, start: int = 0, end: int | None = None, progress: bool = True) -> None:
+    """Write zeros over [start, end) of dev (all of it by default) and check
+    that every byte was written: a partial fill would leave old contents
+    that hidden data later stands out against."""
+    import mmap
+    size = device_size(dev) if end is None else end
+    chunk = 4 * L.MIB
+    buf = mmap.mmap(-1, chunk)  # page-aligned, for O_DIRECT
+    fd = os.open(dev, os.O_WRONLY | os.O_DIRECT)
+    try:
+        pos, next_report = start, start
+        while pos < size:
+            n = os.pwrite(fd, memoryview(buf)[:min(chunk, size - pos)], pos)
+            if n <= 0:
+                raise RuntimeError(f"writing {dev} stopped at {pos} of {size} bytes")
+            pos += n
+            if progress and pos >= next_report:
+                print(f"\r{pos * 100 // size}%", end="", flush=True)
+                next_report += size // 100 or size
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    if progress:
+        print()
+    if pos != size:
+        raise RuntimeError(f"wrote {pos} of {size} bytes to {dev}")
 
 
 def zero_header(disk: str) -> None:
@@ -229,23 +281,24 @@ def create_lvm(dev: str, cfg: Config, *, hidden: bool, disk_bytes: int,
 
 def _create_lvm(dev: str, cfg: Config, *, hidden: bool, disk_bytes: int,
                 front_metadata: bool) -> None:
-    lvm("pvcreate", "-qq", dev)
-    lvm("vgcreate", "-qq", cfg.vg, dev)
+    quiet = {"stdout": subprocess.DEVNULL}
+    lvm("pvcreate", dev, **quiet)
+    lvm("vgcreate", cfg.vg, dev, **quiet)
     swap = swap_size(cfg)
     if swap:
-        lvm("lvcreate", "-qq", "-L", f"{swap}b", "-n", "swap", cfg.vg)
+        lvm("lvcreate", "-L", lvm_size(swap), "-n", "swap", cfg.vg, **quiet)
     if front_metadata:
         # Create the pool with one extent, then extend it: this puts tmeta
         # and pmspare at the front of the PV, far from where the two sides
         # can meet.  (Stock placement would put them at the frontier.)
-        lvm("lvcreate", "-qq", "--type", "thin-pool", "-l", "1", "--discards", "nopassdown", "-Zn",
-            "-n", "thinpool", cfg.vg)
-        lvm("lvextend", "-qq", "-l", "+100%FREE", f"{cfg.vg}/thinpool")
+        lvm("lvcreate", "--type", "thin-pool", "-l", "1", "--discards", "nopassdown", "-Zn",
+            "-n", "thinpool", cfg.vg, **quiet)
+        lvm("lvextend", "-l", "+100%FREE", f"{cfg.vg}/thinpool", **quiet)
     else:
         # -Zn: don't zero new chunks (LVM suggests it for large chunks; the
         # filesystems never read blocks they haven't written).
-        lvm("lvcreate", "-qq", "--type", "thin-pool", "-l", "100%FREE", "--discards", "nopassdown", "-Zn",
-            "-n", "thinpool", cfg.vg)
+        lvm("lvcreate", "--type", "thin-pool", "-l", "100%FREE", "--discards", "nopassdown", "-Zn",
+            "-n", "thinpool", cfg.vg, **quiet)
     pool = int(lvm_output("lvs", "--noheadings", "--units", "b", "--nosuffix", "-o", "lv_size",
                           f"{cfg.vg}/thinpool"))
     if hidden:
@@ -259,7 +312,7 @@ def _create_lvm(dev: str, cfg: Config, *, hidden: bool, disk_bytes: int,
     else:
         size = pool
     for name in [s.lv for s in cfg.systems] + [v.name for v in cfg.volumes]:
-        lvm("lvcreate", "-qq", "-V", f"{size}b", "-T", f"{cfg.vg}/thinpool", "-n", name)
+        lvm("lvcreate", "-V", lvm_size(size), "-T", f"{cfg.vg}/thinpool", "-n", name, **quiet)
     if swap:
         cmd("mkswap", "-q", f"/dev/{cfg.vg}/swap")
     for s in cfg.systems:
@@ -323,6 +376,19 @@ def hidden_floor(cfg: Config, segments: list[dict], pe_start: int, data_start: i
     this decoy (segments and pe_start as for decoy_top)."""
     top = decoy_top(segments, pe_start, data_start, d)
     return floor_below(cfg, L.hidden_layout(top, memorable=cfg.memorable_offset), d)
+
+
+def created_this_boot(pool) -> bool:
+    """Was the pool created since this machine booted?  Then it's a decoy
+    from this setup session, which its OS has never run (and so never
+    trimmed): every block it ever wrote is still mapped, and nothing it wrote
+    lies outside its current mappings."""
+    with open("/proc/stat") as f:
+        btime = next(int(line.split()[1]) for line in f if line.startswith("btime "))
+    out = cmd_output("lvm", "lvs", "--readonly", "--devices", pool.pv, "--noheadings", "-o", "lv_time",
+                     "--config", 'report { time_format = "%s" } ' + LVM_NO_ARCHIVE,
+                     f"{pool.vg}/{pool.name}", stderr=subprocess.DEVNULL)
+    return int(out.strip()) >= btime
 
 
 def check_decoy_room(pool, region_table: str, floor: int) -> None:
@@ -502,12 +568,19 @@ def init_hidden(cfg: Config, decoy_password: bytes, password: bytes, run=None) -
         hl = L.hidden_layout(top, memorable=cfg.memorable_offset)
         from pd import thinpool
         pool = thinpool.find_pool(cfg.vg, f"/dev/mapper/{DATA_MAP}")
-        check_decoy_room(pool, decoy_table.replace("DISK", cfg.disk), floor_below(cfg, hl, d))
+        floor = floor_below(cfg, hl, d)
+        check_decoy_room(pool, decoy_table.replace("DISK", cfg.disk), floor)
+        fresh = created_this_boot(pool)
     check_no_overlap(segs, pe_start, hl)
     key = argon2(password, cfg.salt, cfg.argon2)
     if key == argon2(decoy_password, cfg.salt, cfg.argon2):
         raise RuntimeError("passwords derive the same key")
-    create_hidden(cfg, d, hl, key, decoy_key, decoy_table, "", run)
+    if not fresh:
+        # A decoy from an earlier session may have used (and trimmed) the
+        # space the hidden side will occupy (design.md §10.5).
+        from pd import compact
+        compact.clean_decoy(cfg, decoy_password, floor)
+    create_hidden(cfg, d, hl, key, decoy_key, decoy_table, f"FLOOR_SECTOR={floor // L.SECTOR}\n", run)
     return hl
 
 
@@ -543,6 +616,7 @@ CRYPT_PERF_OPTS = {"same_cpu_crypt", "submit_from_crypt_cpus", "no_read_workqueu
 class StockDecoy:
     key: bytes              # the LUKS volume key
     high_water: int         # disk byte just past the decoy pool's highest allocated block
+    fresh: bool             # its pool was created since this machine booted
     table: str              # the LUKS data area, as a linear table on DISK
     crypt_args: list[str]   # plain-mode arguments that read it like the LUKS mapping
     vg: str
@@ -649,10 +723,11 @@ def read_stock_decoy(cfg: Config, device: str, password: bytes, header: str | No
         with thinpool.mapped(pool, writable=False) as devs:
             u = thinpool.usage(thinpool.dump(devs["tmeta"]))
         high_water = thinpool.high_water_physical(pool, table.replace("DISK", cfg.disk), u)
+        fresh = created_this_boot(pool)
         # No LVM commands from here on: the plain mapping shows the same PV twice.
         check_plain_equivalent(L.linear_table(offset * L.SECTOR, (offset + length) * L.SECTOR,
                                               dev=device), key, args, dev)
-    return StockDecoy(key=key, high_water=high_water, table=table, crypt_args=args, vg=vg,
+    return StockDecoy(key=key, high_water=high_water, fresh=fresh, table=table, crypt_args=args, vg=vg,
                       pv_start=pv_start, segments=segs, pe_start=pe_start)
 
 
@@ -697,8 +772,15 @@ def init_hidden_stock(cfg: Config, device: str, header: str | None, decoy_passwo
     d = check_disk(cfg.disk)
     sd = read_stock_decoy(cfg, device, decoy_password, header)
     hl = stock_hidden_layout(cfg, sd)
+    floor = floor_below(cfg, hl, d)
     key = argon2(password, cfg.salt, cfg.argon2)
-    frontier_env = f'DECOY_VG={sd.vg}\nDECOY_CRYPT_ARGS="{" ".join(sd.crypt_args)}"\n'
+    if not sd.fresh:
+        # The decoy has been used: clear the traces of where its data used to
+        # be, above the floor (design.md §10.5).
+        from pd import compact
+        compact.compact_stock(cfg, device, header, decoy_password, do_trim=False, floor=floor)
+    frontier_env = (f'DECOY_VG={sd.vg}\nDECOY_CRYPT_ARGS="{" ".join(sd.crypt_args)}"\n'
+                    f"FLOOR_SECTOR={floor // L.SECTOR}\n")
     create_hidden(cfg, d, hl, key, sd.key, sd.table, frontier_env, run)
     return hl
 
@@ -717,5 +799,6 @@ def stock_boot_commands(cfg: Config, hl: L.HiddenLayout, salt_expr: str) -> list
         f"cryptsetup open -r --type plain {crypt} -o {hl.plain_offset_sectors} -d <({kdf}) "
         f"{cfg.disk} cryptboot",
         "unset P",
-        f"mkdir -p /mnt/boot && mount -o ro /dev/mapper/cryptboot /mnt/boot && /mnt/boot/late.sh {cfg.disk}",
+        f"mkdir -p /mnt/boot && mount -o ro,rescue=nologreplay /dev/mapper/cryptboot /mnt/boot && "
+        f"/mnt/boot/late.sh {cfg.disk}",
     ]

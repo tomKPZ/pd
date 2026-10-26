@@ -115,6 +115,12 @@ def main(argv=None) -> int:
                     help="don't fstrim the filesystems first (only blocks the pool knows are free move)")
     cp.add_argument("--recover", action="store_true",
                     help="after an interrupted compaction: restore the pool's metadata from the spare")
+    cph = cp.add_mutually_exclusive_group()
+    cph.add_argument("--no-hidden", action="store_true",
+                     help="(decoy) there is no hidden side yet: refill all free space above the boundary")
+    cph.add_argument("--hidden-offset", type=int, default=None,
+                     help="(decoy) the hidden side's start sector (asks for its password): the refill "
+                          "stops below it")
     cp.add_argument("--password-stdin", action="store_true")
 
     mv = sub.add_parser("move", help="move both sides to another disk (bigger or smaller)")
@@ -263,18 +269,30 @@ def main(argv=None) -> int:
         from pd import compact
         from pd.config import parse_size
         below = parse_size(args.below) if args.below else None
-        (pw,) = read_passwords(args, ["Decoy password" if args.stock_decoy or args.offset is None
-                                      else "Password"])
+        decoy = bool(args.stock_decoy) or args.offset is None
         if args.recover:
+            (pw,) = read_passwords(args, ["Decoy password" if decoy else "Password"])
             print(compact.recover_side(cfg, args, pw))
             return 0
+        if decoy and not (args.no_hidden or args.hidden_offset is not None):
+            raise SystemExit("compacting the decoy needs --no-hidden or --hidden-offset N")
+        if decoy and args.hidden_offset is not None:
+            pw, hpw = read_passwords(args, ["Decoy password", "Hidden password"])
+            hidden = (args.hidden_offset * L.SECTOR, hpw)
+        else:
+            (pw,) = read_passwords(args, ["Decoy password" if decoy else "Password"])
+            hidden = "none"
         if args.stock_decoy:
+            limit = (None if hidden == "none"
+                     else compact.hidden_low(cfg, hidden[0], hidden[1]) - L.REVERSE_CHUNK)
             before, after, n = compact.compact_stock(cfg, args.stock_decoy, args.decoy_header, pw,
-                                                     below=below, do_trim=not args.no_trim)
+                                                     below=below, do_trim=not args.no_trim,
+                                                     hidden_limit=limit)
         else:
             from pd import rekey
             before, after, n = compact.compact(cfg, rekey.default_offset(cfg, args.offset), pw,
-                                               below=below, do_trim=not args.no_trim)
+                                               below=below, do_trim=not args.no_trim,
+                                               hidden=hidden if decoy else None)
         mib = lambda blocks: blocks * before.block_size // L.MIB  # noqa: E731
         print(f"Data: {mib(before.mapped)} MiB.  Highest block: {mib(before.high_water)} MiB into the "
               f"pool before, {mib(after.high_water)} MiB after (boundary {mib(n)} MiB).")

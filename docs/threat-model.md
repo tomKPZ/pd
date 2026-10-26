@@ -61,7 +61,10 @@ doesn't change coercion: a coercer demands the key along with the password.
 ## Out of scope
 
 * **Snapshot adversaries.** Two or more disk images taken at different times show "free" space
-  changing. Never clone the disk. Back up hidden data only to another pd setup.
+  changing. Never clone the disk. Back up hidden data only to another pd setup. The boot USB counts
+  too: `fido2.txt` changes when the hidden side enrolls a security key or is re-keyed, while the
+  decoy's slots stay the same. Someone who kept a copy of an earlier USB can compare. Re-key or
+  enroll the decoy at the same time, and don't let old copies of the USB exist.
 * **Flash forensics.** SSD wear leveling, FTL mapping tables, chip-off analysis. If this matters, two
   mitigations:
   * a self-encrypting drive with a hardware security boundary, such as a FIPS 140-2 level 3 drive like
@@ -82,7 +85,8 @@ doesn't change coercion: a coercer demands the key along with the password.
 | SMART counters (power-on hours, power cycles, data written) exceed what the decoy's logs explain | "I reinstalled the OS" explains totals from before the decoy's install date. Keep that date plausible. |
 | Network-side evidence (DHCP leases, Wi-Fi logs, account activity) from times the decoy says the machine was off | Outside pd's control; be aware of it. |
 | Leftover traces on the machine that ran setup | Run setup only from the RAM-only setup UKI ([install.md](install.md)). Wipe the setup stick afterwards: it holds `pd.toml`. |
-| LVM metadata history in the decoy | v2 creates the decoy with stock commands and names ([design.md §6.1](design.md#61-decoy-stock-lvm)). A v1 decoy's history shows pd's unusual commands. |
+| LVM metadata history in the decoy | v2 creates the decoy with stock commands and names ([design.md §6.1](design.md#61-decoy-stock-lvm)). A v1 decoy's history shows pd's unusual commands. Each version also records the `uname` of the machine that ran the command: for a pd decoy, the setup environment's NixOS kernel. That marks the decoy as set up by pd, which the USB shows anyway, not the presence of a hidden side. |
+| The decoy's old data in the hidden side's space | Blocks the decoy freed keep their old contents, and its pool metadata keeps old pointers to them; hidden data written over them would show. `pd compact` and `init-hidden` on a used decoy clear these traces; keep the decoy's data below the hidden side's floor, which the frontier monitor checks ([design.md §10.5](design.md#105-traces-of-the-decoys-old-data)). |
 | Filesystem errors in the decoy | If the hidden side ever overwrote decoy blocks, the decoy would show checksum errors. Prevented by the hidden cap and the frontier monitor. |
 | `fido2.txt` on the USB, but the decoy doesn't use a security key | Points at a side that does. If the hidden side uses FIDO2, enroll the decoy too. |
 | A written-down hidden offset | Not a secret in itself, but a note of it next to the machine is a pointer saying "there is a hidden side". Keep it out of the decoy, off the USB, and away from the machine. |

@@ -126,13 +126,21 @@ class Fido2(unittest.TestCase):
         b.expect("No bootable disk found")
         b.close()
 
-        # Change the decoy password: both keys are re-wrapped, one at a time.
+        # Change the decoy password: both keys are re-wrapped, one at a time,
+        # around a new boot-volume key, so the old fido2.txt with the old
+        # password no longer opens it.
         _, out = fx.toolvm().run(WITH_KEYS + f"""
         wait_security_key
+        cp fido2.txt fido2.old
+        sed 's/^fido2 = "fido2.txt"/fido2 = "fido2.old"/' pd.toml > old.toml
         pd_with_keys '{dpw}\\n{NEW_DECOY}\\n{PIN}\\n' 1 rekey --config pd.toml
+        printf '%s\\n%s\\n' '{dpw}' {PIN} | python3 -m pd open --config old.toml --password-stdin \\
+            --run 'echo OLD-OPENED' || echo OLD-REFUSED
         """, disks=[fx.disk], security_keys=keys, log=fx.work / "rekey.log")
         self.assertIn("Re-keyed", out)
         self.assertNotIn("Warning", out)
+        self.assertIn("OLD-REFUSED", out)
+        self.assertNotIn("OLD-OPENED", out)
         cfg = Config.load(fx.work / "pd.toml")
         (fx.work / "install.cpio").write_bytes(usb.install_cpio(cfg))
         b = self.boot(fx, "decoy-new-password", keys[0])

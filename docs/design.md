@@ -193,7 +193,8 @@ For users: `df` doesn't show how much of the disk a side occupies. The pool's `d
 Setup first fills the whole disk with random data. It opens a throwaway plain dm-crypt mapping over the
 entire disk and writes zeros through it. cryptsetup reads that mapping's key from `/dev/urandom` itself,
 so the key never enters userspace. Everything either side writes later is ciphertext under other keys,
-which is indistinguishable from the fill.
+which is indistinguishable from the fill. The fill checks that every byte was written: a short fill
+would leave old contents where hidden data later stands out.
 
 (v1 generated this key in Python and printed it at the end, for debugging. Anyone holding that key
 could map out every block written since setup.)
@@ -338,9 +339,10 @@ at least two.
   working. Later, the first plugged-in key must be an enrolled one, to unwrap K. A security key
   without a credential gets one; its slot for the other side stays random until that side enrolls it
   too.
-* `pd rekey` on a FIDO2 side keeps K and re-wraps its slots under the new password, again one security
-  key at a time. The slots of keys that weren't plugged in are replaced with random bytes, since they
-  would still open with the old password.
+* `pd rekey` on a FIDO2 side generates a new random K, re-creates the boot volume under it, and wraps
+  it for each security key in turn (the first plugged-in key must be an enrolled one). A new K, not
+  just new slots, so an old `fido2.txt` with the old password stops working too. The slots of keys
+  that weren't plugged in are replaced with random bytes.
 * `pd fido2 remove N` and `pd fido2 list`.
 * After any change, build a new USB: `fido2.txt` is part of it. The config's `fido2` names the file.
 
@@ -424,14 +426,21 @@ the filesystems never read blocks they haven't written).
 
 **Why it matters: LVM metadata records its own history.** The metadata area is a ring buffer that keeps
 many versions, and every version stores:
-* the command that produced it (`description = "Created *after* executing '…'"`),
-* `creation_host`,
+* the full command line that produced it (`description = "Write from lvcreate -L 64m -n swap vg1."`),
+* `creation_host`, followed by a comment with the `uname` of the machine that ran the command,
 * the PV's device path.
 
 v1's decoy history shows things an ordinary install wouldn't: an explicit extent size, a one-extent pool
 followed by `lvextend`, `pvmove`s, and device names like `/dev/mapper/luks_test_<uuid>`. v2's history
 should look like an ordinary install. So setup also uses the device-mapper names the boot uses, and runs
-under the decoy's hostname.
+under the decoy's hostname. Its own LVM settings (no backup or archive files, and the device filter
+`pd move` needs) go into a private `lvm.conf` (`LVM_SYSTEM_DIR`), not onto the command line, which
+therefore holds only the commands above with human sizes.
+
+The `uname` comment does show the setup environment's kernel (a NixOS kernel of the version pd pins).
+That isn't hidden: a pd decoy is recognizable as pd anyway (the pd USB, a disk without a partition
+table), and the threat model only requires that nothing points to a *hidden* side. A stock decoy
+([stock-boot.md](stock-boot.md)) gets no LVM metadata from pd at all.
 
 ### 6.2 Hidden: metadata at the front, capped thin LVs
 Nobody sees the hidden VG, so its layout only has to be safe.
@@ -639,7 +648,8 @@ Tested: 7379 MiB free on a fresh 8 GiB test disk; 543 MiB and a warning after wr
 decoy.
 
 It also warns (and waits) if any decoy LV other than the pool's data lies inside the hidden region, e.g.
-after someone changed the decoy's LVM layout.
+after someone changed the decoy's LVM layout, and if the decoy's data is above the hidden side's floor
+(§10.5).
 
 ### 10.3 Never clone the disk
 A snapshot adversary who compares two images can see "unused" space change. Backups of hidden data must
@@ -658,17 +668,23 @@ metadata). `pd compact` then moves the decoy's data below the floor:
    segments) and runs `thin_shrink` (thin-provisioning-tools): every mapped block above the boundary is
    copied into a free block below it, and the metadata is rewritten to match. The pool keeps its
    size, and LVM's metadata doesn't change.
-3. The new metadata goes to LVM's spare metadata LV (`pmspare`) first and is checked, then to the pool
-   itself. Until then the pool is unchanged, since data was only copied into unused blocks. If the
-   final write is interrupted, `pd compact --recover` restores the metadata from the spare. Afterwards
-   the spare's superblock is wiped, so a stale copy is never mistaken for a good one.
+3. The new metadata goes to LVM's spare metadata LV (`pmspare`) first and is checked. Then the pool's
+   metadata LV is filled with random data and the new metadata written over it (§10.5). Until then
+   the pool is unchanged, since data was only copied into unused blocks. If the final write is
+   interrupted, `pd compact --recover` restores the metadata from the spare. Afterwards the spare is
+   filled with random data, so a stale copy is never mistaken for a good one.
+4. For the decoy, every free pool block above the boundary is refilled with random data (§10.5).
 
 Destinations are always below the side's own highest block, and without a collision the other side's
-data lies entirely beyond it, so compaction needs only the side's own password. `--below SIZE`
-sets the boundary explicitly; the default for the hidden side is as tight as possible.
+data lies entirely beyond it. The refill, though, covers free space up to the hidden side, so
+compacting the decoy needs `--no-hidden` (no hidden side exists yet) or `--hidden-offset N` (asks for
+the hidden password too, and stops the refill one 256 MiB chunk below the hidden side's lowest
+block). The flag is required rather than defaulted, so forgetting a hidden side can't destroy it.
+`--below SIZE` sets the boundary explicitly; the default for the hidden side is as tight as possible.
 `pd compact --stock-decoy` does the same for a stock decoy ([stock-boot.md](stock-boot.md)), whose
 `init-hidden` checks the floor too. *(tested: `test_compact`, for a pd decoy, including `--recover`
-after a damaged metadata write; for a migrated v1 decoy; and for a stock LUKS decoy.)*
+after a damaged metadata write and a scan for the fill's marked blocks above the boundary; for a
+migrated v1 decoy; and for a stock LUKS decoy.)*
 
 **Moving to another disk** (`pd move`, `pd/move.py`), bigger or smaller. The old disk is only read.
 The new disk gets fresh layouts built like init-decoy and init-hidden (new data keys, the hidden side at
@@ -679,6 +695,40 @@ for the new disk: on a bigger one, btrfs and XFS filesystems grow; on a smaller 
 shrink (XFS can't, so its LV keeps its virtual size). The
 salt and Argon2 parameters stay, so the boot USB still works; FIDO2 has to be enrolled again. Then
 wipe the old disk. *(tested: `test_move`, 8 → 12 → 6 GiB, both sides booted after each move.)*
+
+### 10.5 Traces of the decoy's old data
+The floor check (§10.4) and the frontier monitor look at where the decoy's data *is*. An examiner with
+the decoy password can also see where it *was*:
+* **Freed data blocks keep their contents.** No discard reaches the disk (§2.3), so a block the decoy
+  trimmed still holds its old ciphertext, which decrypts to recognizable data (btrfs metadata blocks,
+  for one, carry the filesystem's UUID, their own address and a checksum).
+* **The pool's metadata keeps old btree nodes.** dm-thin's metadata is copy-on-write; superseded nodes
+  stay in its free blocks until reused, and `thin_scan` or `thin_dump --repair` finds them. They say
+  where the decoy's blocks used to be.
+
+If the hidden side later overwrote such a block, the decoy's old data there would have turned into
+noise, which nothing on the decoy side explains. The invariant that prevents it: **the decoy's data
+never rises above the floor** of the hidden side's region. Then all its traces point into space the
+hidden side never takes. Two things break the invariant, and pd clears the traces in both:
+* **`pd compact` on the decoy** moves data out of the space above the boundary on purpose. It rewrites
+  the pool's metadata over random data (old nodes gone; the spare, which held a copy, is filled with
+  random data afterwards) and refills every free pool block above the boundary, up to the hidden side
+  if there is one, with random data. The refill is written to the raw disk through a dm-crypt mapping
+  with a throwaway key (`pd-wipe`), so it looks like the random fill of a never-used disk (§2.4):
+  random data written through the decoy's own key would also do, but zeros through it would decrypt
+  to zeros.
+* **`pd init-hidden` on a decoy that has been used.** A decoy installed in the same setup session
+  (its pool was created since the machine booted, from LVM's `lv_time` and `/proc/stat`'s `btime`)
+  has never been trimmed, so everything it ever wrote is still mapped and the floor check covers it.
+  Otherwise, and always for a stock decoy, `init-hidden` does the same rewrite and refill above the
+  floor first. On a large disk that writes cap × disk and takes a while.
+
+**What remains.** Between hidden boots, the decoy can grow above the floor and shrink again (the
+shutdown trim), leaving traces in the hidden side's future space. The frontier monitor warns on the
+next hidden boot when the decoy's data is above the floor (`FLOOR_SECTOR` in `frontier.env`), and
+`pd compact --hidden-offset N` on the decoy clears the traces again. A decoy that rose above the
+floor and fell back between two hidden boots goes unnoticed; keeping the decoy's data well below the
+floor is the defence.
 
 ---
 
@@ -711,12 +761,12 @@ wipe the old disk. *(tested: `test_move`, 8 → 12 → 6 GiB, both sides booted 
   | `test_setup_env` | setup run from the RAM-only setup environment, then a boot; with `PD_TEST_NET=1`, DHCP through an emulated Intel NIC and a signature-checked `pacstrap` |
   | `test_nixos` | a real NixOS initrd with `pd.nix` unlocks the disk and mounts `/sysroot` |
   | `test_arch` | a real Arch install (pacstrap, `pd` mkinitcpio hook) boots through pd (`PD_TEST_ARCH=1`, needs network) |
-  | `test_monitor` | frontier monitor report and warning; no hidden-only files in the decoy |
-  | `test_stock` | stock boot: a stock LUKS + LVM thin decoy is left unchanged by `init-hidden --stock-decoy`, and the printed commands boot the hidden side from another VM |
+  | `test_monitor` | frontier monitor report and warnings (decoy above the floor, small gap); no hidden-only files in the decoy |
+  | `test_stock` | stock boot: a stock LUKS + LVM thin decoy's header, LVM metadata and files are left unchanged by `init-hidden --stock-decoy`, and the printed commands boot the hidden side from another VM |
   | `test_live` (opt-in: `PD_TEST_LIVE=1`) | stock boot from the real Debian Live 13 Xfce image: log in on its serial console, type the printed commands, boot the hidden side |
-  | `test_compact` | a pd decoy, a migrated v1 decoy and a stock decoy, filled and mostly emptied: init-hidden refuses, `pd compact` moves the data down (files intact; `--recover` after a damaged metadata write), then both sides boot |
+  | `test_compact` | a pd decoy, a migrated v1 decoy and a stock decoy, filled and mostly emptied: init-hidden refuses, `pd compact` moves the data down (files intact; `--recover` after a damaged metadata write; none of the fill's marked blocks left above the boundary), then both sides boot; `init-hidden` on a decoy that used and trimmed the hidden side's space clears it (§10.5) |
   | `test_move` | `pd move` 8 → 12 → 6 GiB: files intact, btrfs roots grown and shrunk, both sides boot after each move |
-  | `test_fido2` | enroll two emulated security keys for both sides, boot with either, wrong PIN, unknown key, rekey, remove |
+  | `test_fido2` | enroll two emulated security keys for both sides, boot with either, wrong PIN, unknown key, rekey (a new boot-volume key: the old `fido2.txt` stops working), remove |
   | `test_churn` | btrfs, XFS and (unsupported) ext4 pool footprint under churn, with and without a shutdown trim |
   | `fs_survey.py` (not in the suite; `python3 -m tests.fs_survey`) | the §2.3 table: filesystems and btrfs options × workloads × trim |
   | `test_luks_equiv` | a v1 LUKS2 data region reads identically through plain dm-crypt with its volume key |
@@ -810,6 +860,11 @@ Decisions made while implementing v2:
 | D47 | `pd compact`: `thin_shrink` on the inactive pool, the new metadata staged in `pmspare`; `init-hidden` refuses a decoy with data above the hidden side's floor | A pool that was once full has data everywhere; dm-thin never moves it. Interruptions leave the pool intact or recoverable (§10.4) | agreed |
 | D48 | `pd move` copies each thin LV's mapped blocks to fresh layouts on another disk, instead of growing or shrinking in place | Works for bigger and smaller disks, needs no change to the old disk, and compacts as a side effect; in place, the decoy's end-of-disk metadata and the hidden side would have to move (§10.4) | agreed |
 | D49 | Extra volumes are btrfs by default; XFS stays an option | XFS can't shrink, so `pd move` to a smaller disk would leave XFS volumes bigger than their pool; btrfs shrinks, and `chattr +C` covers files rewritten in place (§2.3) | agreed |
+| D50 | Clear the decoy's old-data traces above the floor: `pd compact` (decoy) and `init-hidden` on a decoy from an earlier boot rewrite the pool metadata over random data and refill free blocks above the boundary through a throwaway key; `pd compact` on the decoy requires `--no-hidden` or `--hidden-offset`; the frontier monitor warns when decoy data is above the floor | Freed blocks keep old data and the CoW metadata keeps old pointers to them; hidden data over them would be visible (§10.5) | agreed |
+| D51 | Setup's LVM settings go into a private `lvm.conf` (`LVM_SYSTEM_DIR`), not `--config`/`--devices` on the command line; no `-qq`; human sizes | LVM records each full command line in the on-disk metadata (§6.1) | agreed |
+| D52 | `pd rekey` on a FIDO2 side generates a new boot-volume key | Otherwise an old `fido2.txt` with the old password still opens the side | agreed |
+| D53 | `pd randomize` checks that every byte was written | `dd` exits non-zero at the end of the disk either way, so a failed fill went unnoticed; unfilled space would stand out | agreed |
+| D54 | `pd compact` trims at `/mnt`; stock-boot mounts the hidden boot volume `ro,rescue=nologreplay` | ext4 records the last mount point; invariant 3 for the printed commands too | agreed |
 
 ---
 

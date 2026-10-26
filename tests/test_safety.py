@@ -2,6 +2,7 @@
 shutdown, the hidden side's footprint cap, the disk's zeroed edges, and pool
 and swap settings."""
 
+import re
 import unittest
 
 from pd import layout as L
@@ -92,6 +93,26 @@ EOF
         # The pools don't zero new chunks.
         zero = dict(l.split() for l in out.splitlines() if l.strip().startswith("thinpool "))
         self.assertEqual(zero["thinpool"], "0")
+
+    def test_decoy_lvm_history_is_ordinary(self):
+        """LVM records each command line in the on-disk metadata (design.md
+        §6.1): the decoy's show only the stock commands, without pd's
+        settings."""
+        fx = self.fx
+        _, out = vm.ToolVM(fx.env, fx.work).run(f"""
+        printf '%s\\n' '{fixture.DECOY_PW}' | python3 -m pd open --config pd.toml --password-stdin \\
+            --run 'lvm pvck --dump metadata_all -f /run/meta.txt /dev/mapper/cryptlvm && cat /run/meta.txt'
+        """, disks=[fx.disk])
+        descriptions = [line.split("=", 1)[1].strip() for line in out.splitlines()
+                        if line.strip().startswith("description = ")]
+        self.assertTrue(descriptions, out[-2000:])
+        commands = set()
+        for d in descriptions:
+            self.assertNotIn("--config", d)
+            self.assertNotIn("--devices", d)
+            self.assertNotIn("-qq", d)
+            commands.add(re.match(r'"Write(?:\[\d+\])? from (\S+)', d).group(1))
+        self.assertLessEqual(commands, {"pvcreate", "vgcreate", "lvcreate"}, descriptions)
 
 
 class SwapDefault(unittest.TestCase):

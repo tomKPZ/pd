@@ -127,6 +127,10 @@ Later maintenance, from the setup environment or a live ISO (below):
   place. `pd init-hidden` asks for it when the decoy has data where the hidden side would go, which
   happens once a decoy has been nearly full. It trims the filesystems first, then moves only what's
   above the boundary; interrupted, it leaves the pool intact (`--recover` handles the one unsafe moment).
+  For the decoy it then refills the free space above the boundary with random data, to erase the
+  traces of the decoy's old data there ([design.md §10.5](design.md#105-traces-of-the-decoys-old-data)),
+  so it needs `--no-hidden` or, if a hidden side exists, `--hidden-offset N` (and the hidden password)
+  to stop below it. `pd init-hidden` does the same cleanup itself on a decoy from an earlier session.
 * `pd move --config pd.toml --to /dev/NEWDISK (--hidden-offset N | --no-hidden)` moves both sides to
   another disk, bigger or smaller, and prints the hidden side's new offset. The boot USB keeps working.
   Wipe the old disk afterwards (`pd randomize`).

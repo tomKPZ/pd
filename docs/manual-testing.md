@@ -533,11 +533,15 @@ exit
 
 ```sh
 pd init-hidden --config /m/pd.toml          # expected: refuses, "Run `pd compact` on the decoy first"
-pd compact --config /m/pd.toml              # decoy password; prints how far the data moved
+pd compact --config /m/pd.toml              # expected: refuses, needs --no-hidden or --hidden-offset
+pd compact --config /m/pd.toml --no-hidden  # decoy password; prints how far the data moved, then refills
 pd open --config /m/pd.toml --run 'cd arch/fill && sha256sum -c --quiet /m/sums.txt && echo SUMS-OK'
 pd init-hidden --config /m/pd.toml --run    # now creates the hidden side; install Arch as in B6
 ```
-* [ ] `pd compact` reports the highest block before and after, and the boundary; `SUMS-OK`.
+* [ ] `pd compact` reports the highest block before and after, and the boundary, and "refilling N MiB
+  of free space above the boundary"; `SUMS-OK`.
+* [ ] If the machine was rebooted since the decoy was created, `pd init-hidden` prints "rewriting the
+  pool's metadata" and "refilling" before it creates the hidden side (in the same boot it doesn't).
 * [ ] Record how long `pd compact` took and how much it moved.
 * [ ] Boot both sides from the boot stick (B9, B11). The frontier monitor shows the free space.
 

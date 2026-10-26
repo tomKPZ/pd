@@ -192,18 +192,18 @@ def build_side(cfg: Config, old_cfg: Config, dev: str, side: OldSide, *, hidden:
     """LVM on the new data region `dev` (cfg: the new disk's config), then the
     old side's LVs (on old_cfg's disk) copied in."""
     vg = side.vg
-    setup.lvm("pvcreate", "-qq", dev)
-    setup.lvm("vgcreate", "-qq", vg, dev)
+    setup.lvm("pvcreate", dev, stdout=subprocess.DEVNULL)
+    setup.lvm("vgcreate", vg, dev, stdout=subprocess.DEVNULL)
     swap = side.swap()
     if swap:
-        setup.lvm("lvcreate", "-qq", "-L", f"{swap.size}b", "-n", "swap", vg)
+        setup.lvm("lvcreate", "-L", setup.lvm_size(swap.size), "-n", "swap", vg, stdout=subprocess.DEVNULL)
     if hidden:
-        setup.lvm("lvcreate", "-qq", "--type", "thin-pool", "-l", "1", "--discards", "nopassdown",
-                  "-n", "thinpool", vg)
-        setup.lvm("lvextend", "-qq", "-l", "+100%FREE", f"{vg}/thinpool")
+        setup.lvm("lvcreate", "--type", "thin-pool", "-l", "1", "--discards", "nopassdown",
+                  "-n", "thinpool", vg, stdout=subprocess.DEVNULL)
+        setup.lvm("lvextend", "-l", "+100%FREE", f"{vg}/thinpool", stdout=subprocess.DEVNULL)
     else:
-        setup.lvm("lvcreate", "-qq", "--type", "thin-pool", "-l", "100%FREE", "--discards", "nopassdown",
-                  "-n", "thinpool", vg)
+        setup.lvm("lvcreate", "--type", "thin-pool", "-l", "100%FREE", "--discards", "nopassdown",
+                  "-n", "thinpool", vg, stdout=subprocess.DEVNULL)
     pool = int(setup.lvm_output("lvs", "--noheadings", "--units", "b", "--nosuffix", "-o", "lv_size",
                                 f"{vg}/thinpool"))
     if side.mapped > pool * 0.95:
@@ -217,7 +217,8 @@ def build_side(cfg: Config, old_cfg: Config, dev: str, side: OldSide, *, hidden:
         usual = pool
     for lv in side.thin:
         size = max(lv.size, usual)
-        setup.lvm("lvcreate", "-qq", "-V", f"{size}b", "-T", f"{vg}/thinpool", "-n", lv.name)
+        setup.lvm("lvcreate", "-V", setup.lvm_size(size), "-T", f"{vg}/thinpool", "-n", lv.name,
+                  stdout=subprocess.DEVNULL)
     with setup.vg_active(vg):
         if swap:
             cmd("mkswap", "-q", *(["-U", swap.uuid] if swap.uuid else []), f"/dev/{vg}/swap")
@@ -228,7 +229,7 @@ def build_side(cfg: Config, old_cfg: Config, dev: str, side: OldSide, *, hidden:
                 src, runs = devs[lv.name]
                 report(f"copying {lv.name}: {lv.mapped // L.MIB} MiB")
                 copy_runs(src, f"/dev/{vg}/{lv.name}", runs, side.block_size)
-        setup.lvm("lvchange", "-qq", "-Zn", f"{vg}/thinpool")
+        setup.lvm("lvchange", "-Zn", f"{vg}/thinpool", stdout=subprocess.DEVNULL)
         for lv in side.thin:
             dev_lv = f"/dev/{vg}/{lv.name}"
             if usual > lv.size and lv.fs in ("btrfs", "xfs"):
@@ -240,7 +241,8 @@ def build_side(cfg: Config, old_cfg: Config, dev: str, side: OldSide, *, hidden:
                 report(f"shrinking {lv.name}'s btrfs filesystem to {usual // L.MIB} MiB")
                 shrink_btrfs(dev_lv, usual)
                 # The filesystem is already smaller; LVM can't check btrfs itself.
-                setup.lvm("lvreduce", "-qq", "-f", "--fs", "ignore", "-L", f"{usual}b", f"{vg}/{lv.name}")
+                setup.lvm("lvreduce", "-f", "--fs", "ignore", "-L", setup.lvm_size(usual), f"{vg}/{lv.name}",
+                          stdout=subprocess.DEVNULL)
             elif lv.size > usual:
                 report(f"note: {lv.name} keeps its size ({lv.size // L.MIB} MiB, more than the usual "
                        f"{usual // L.MIB} MiB): {lv.fs or 'its filesystem'} can't shrink")
@@ -316,7 +318,8 @@ def move(cfg: Config, new_disk: str, decoy_password: bytes,
         hidden_key = os.urandom(64)
         frontier = old_hidden.snapshot.get("frontier.env")
         extra_env = b"".join(line + b"\n" for line in (frontier[2] if frontier else b"").splitlines()
-                             if not line.startswith(b"MIN_GAP_PERCENT=")).decode()
+                             if not line.startswith((b"MIN_GAP_PERCENT=", b"FLOOR_SECTOR="))).decode()
+        extra_env += f"FLOOR_SECTOR={setup.floor_below(new_cfg, hl, d) // L.SECTOR}\n"
         with setup.boot_volume(new_disk, hl.plain_offset, hkey, create=True) as mnt:
             setup.write_boot_volume(mnt, new_cfg, hidden_key, hl.data_table(),
                                     systems_from=boot_files(old_hidden),

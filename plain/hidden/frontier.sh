@@ -10,6 +10,9 @@ MIN_GAP_PERCENT=10
 # settings; a pd decoy shares the hidden side's.
 DECOY_VG=
 DECOY_CRYPT_ARGS=
+# The lowest sector the hidden side can reach at its cap: the decoy's data
+# must stay below it (design.md §10.5).  Set by init-hidden.
+FLOOR_SECTOR=
 [ -r "$B/frontier.env" ] && . "$B/frontier.env"
 : "${DECOY_VG:=$VG}" "${DECOY_CRYPT_ARGS:=$CRYPT_ARGS}"
 
@@ -117,6 +120,14 @@ frontier_check() {
     echo "Free space between the two sides: $gap MiB."
     if [ -n "$overlap" ]; then
         echo "WARNING: decoy volume(s) inside the hidden region: $overlap"
+        printf "Press Enter to continue booting. "
+        read -r _
+    fi
+    if [ -n "$FLOOR_SECTOR" ] && [ "$decoy_top" -gt "$FLOOR_SECTOR" ]; then
+        echo "WARNING: the decoy has data in the space reserved for this side ($(((decoy_top - FLOOR_SECTOR) / 2048)) MiB)."
+        echo "When this side grows there, it overwrites space the decoy has used, which can be detected."
+        echo "Free space on the decoy, then run pd compact --hidden-offset N on it from the setup"
+        echo "environment: it moves the decoy's data back below and clears the traces above."
         printf "Press Enter to continue booting. "
         read -r _
     fi

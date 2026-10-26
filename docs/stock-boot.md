@@ -160,8 +160,13 @@ discard settings are fixed (§1):
      read-only.
    * It refuses a decoy whose LUKS volume allows discards, or whose thin pool isn't one segment.
    * It refuses a decoy with data where the hidden side would go (once a decoy has been nearly full, its
-     pool's allocations are spread out). `pd compact --config pd.toml --stock-decoy /dev/nvme0n1p2`
-     moves the decoy's data to the front of its pool, in place.
+     pool's allocations are spread out). `pd compact --config pd.toml --stock-decoy /dev/nvme0n1p2
+     --no-hidden` moves the decoy's data to the front of its pool, in place.
+   * Since the decoy was installed earlier, it has used and trimmed space where the hidden side will
+     go, and its freed blocks still hold its old data. Before creating the hidden side, it rewrites the
+     decoy's pool metadata and refills that space with random data ([design.md
+     §10.5](design.md#105-traces-of-the-decoys-old-data)). That writes the hidden side's share of the
+     disk and takes a while.
    * It stores the decoy's LUKS volume key in the hidden boot volume, for the frontier monitor.
 3. **Install the hidden OS** in the shell it opens ([install.md](install.md) §5). The hidden OS needs pd's
    target hook, as with pd's USB. It has no bootloader or ESP of its own (the live system starts it),
@@ -182,7 +187,7 @@ discard settings are fixed (§1):
        -d <(openssl kdf -binary -keylen 64 -kdfopt pass:"$P" -kdfopt salt:SALT \
             -kdfopt iter:1 -kdfopt memcost:1048576 -kdfopt lanes:4 ARGON2ID) DISK cryptboot
    unset P
-   mkdir -p /mnt/boot && mount -o ro /dev/mapper/cryptboot /mnt/boot && /mnt/boot/late.sh DISK
+   mkdir -p /mnt/boot && mount -o ro,rescue=nologreplay /dev/mapper/cryptboot /mnt/boot && /mnt/boot/late.sh DISK
    ```
    `read` waits for the hidden password, without a prompt or echo. OpenSSL computes Argon2 on a single
    core, so this takes about a second with pd's defaults (pd's own boot USB uses all cores: about 0.3 s).
@@ -212,8 +217,8 @@ If cryptsetup reports the disk as busy, the live system is using one of its part
 the ESP): unmount it. The hidden side maps the whole disk, and the kernel refuses that while a partition
 is in use.
 
-To practice without booting anything, run the first three commands, then `mount -o ro
-/dev/mapper/cryptboot /mnt/boot && ls /mnt/boot`, and undo it with `umount /mnt/boot; cryptsetup close
+To practice without booting anything, run the first three commands, then `mount -o
+ro,rescue=nologreplay /dev/mapper/cryptboot /mnt/boot && ls /mnt/boot`, and undo it with `umount /mnt/boot; cryptsetup close
 cryptboot`.
 
 **With OpenSSL older than 3.2**, derive the key with the `argon2` and `xxd` tools instead (e.g. `apt

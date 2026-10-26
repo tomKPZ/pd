@@ -18,3 +18,6 @@ NixOS configuration repos, and running a migration.
 |---|---|---|
 | **FIDO2 with a real security key** | Implemented and tested with QEMU's emulated CanoKey (design.md §4.1). Try it with a real key, in a VM (`-device usb-host,vendorid=0x1050,...`) or on the real-hardware trial. | No: needs a real key. |
 | **Stock boot on real hardware** | Documented and tested in QEMU, including a hidden boot from the real Debian Live 13 image (`PD_TEST_LIVE=1`, [stock-boot.md](stock-boot.md)). Try it during the real-hardware trial, ideally also with Tails 7 (its Welcome Screen needs a GUI, so it isn't automated). | No: needs real hardware. |
+| **Catch the decoy rising above the floor between hidden boots** | The frontier monitor sees only where the decoy's data is now (design.md §10.5). It could also scan the decoy's pool metadata for old btree nodes (`thin_scan`) pointing above the floor, and suggest `pd compact --hidden-offset N`. Worth it if decoys run close to the floor. | Yes. |
+| **Catch the decoy rising above the floor between hidden boots** | The frontier monitor sees only where the decoy's data is now (design.md §10.5). It could also scan the decoy's pool metadata for old btree nodes (`thin_scan`) pointing above the floor, and suggest `pd compact --hidden-offset N`. Worth it if decoys run close to the floor. | Yes. |
+
