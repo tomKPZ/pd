@@ -55,3 +55,13 @@ class LayoutTest(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+
+
+class ConfigDefaultsTest(unittest.TestCase):
+    def test_volume_fs_defaults_to_btrfs(self):
+        import tempfile
+        from pd.config import Config
+        with tempfile.NamedTemporaryFile("w", suffix=".toml") as f:
+            f.write('disk = "/dev/x"\n[[volumes]]\nname = "data"\n')
+            f.flush()
+            self.assertEqual(Config.load(f.name).volumes[0].fs, "btrfs")

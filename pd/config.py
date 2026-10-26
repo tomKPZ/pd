@@ -34,11 +34,11 @@ class System:
 class Volume:
     """An extra thin LV, e.g. for bulk data (like v1's `data` LV)."""
     name: str
-    fs: str = "xfs"  # "xfs" or "btrfs"
+    fs: str = "btrfs"  # "btrfs" or "xfs"
 
     def __post_init__(self):
-        if self.fs not in ("xfs", "btrfs"):
-            raise ValueError(f"volume {self.name}: fs must be xfs or btrfs")
+        if self.fs not in ("btrfs", "xfs"):
+            raise ValueError(f"volume {self.name}: fs must be btrfs or xfs")
 
 
 @dataclasses.dataclass

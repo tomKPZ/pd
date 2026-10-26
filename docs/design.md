@@ -158,16 +158,18 @@ column.
 
 * **btrfs** allocates data block groups first-fit from low device offsets and deletes empty block
   groups; with the shutdown trim its footprint tracks live data. Root volumes are btrfs (the boot
-  path mounts their `@boot` and `@nix` subvolumes), and extra volumes may be. Its weak spot is
+  path mounts their `@boot` and `@nix` subvolumes), and so are extra volumes by default. Its weak spot is
   rewriting parts of large files: copy-on-write writes the new data elsewhere, and an extent stays
   allocated until none of it is referenced (extent "bookending"), so the filesystem itself grows to
   more than twice its live data. `compress-force` caps extents at 128 KiB, which mostly fixes this at
   some CPU cost; `nodatacow`, or `chattr +C` on the directories holding such files, fixes it entirely,
   at the cost of checksums and compression for those files. `ssd` vs `nossd` doesn't matter;
   `ssd_spread` is slightly worse; `autodefrag` doesn't help.
-* **XFS** is the default for extra volumes (`[[volumes]]`). In-place rewrites reuse mapped blocks, so
-  it suits large files rewritten in place, and under churn it stays moderate even without a trim
-  (creeping slowly: 3.8 GiB after 200 cycles).
+* **XFS** is the alternative for extra volumes (`fs = "xfs"` in `[[volumes]]`). In-place rewrites reuse
+  mapped blocks, so it suits large files rewritten in place, and under churn it stays moderate even
+  without a trim (creeping slowly: 3.8 GiB after 200 cycles). But XFS can't shrink, so `pd move` to a
+  smaller disk leaves an XFS volume at its old size (§10.4); btrfs shrinks, which is why it's the
+  default. For files rewritten in place on btrfs, use `chattr +C` directories.
 * **ext4** isn't supported. It deliberately spreads allocations and metadata across block groups (the
   Orlov allocator): with churn and no trim it reaches the whole volume, and even with the shutdown
   trim a single session's writes spread it out (the ~5 GiB comes from writing about 5 GiB in one
@@ -397,7 +399,7 @@ Under the plain dm-crypt layer, each side has one LVM PV and one VG containing:
 * a thin pool over the rest of the PV;
 * thin LVs: one btrfs root per installed OS. The btrfs roots have the subvolumes `@`, `@boot`, `@home`,
   `@home_snapshots`, `@nix`, `@snapshots`, `@var_cache`, `@var_lib_docker`, `@var_log`, `@var_tmp`.
-* optional extra thin LVs (`[[volumes]]` in the config, XFS by default, or btrfs), e.g. for bulk data like v1's
+* optional extra thin LVs (`[[volumes]]` in the config, btrfs by default, or XFS), e.g. for bulk data like v1's
   ext4 `data` LV (§2.3 on choosing the filesystem). During setup they're mounted at
   `$PD_ROOT/volumes/<name>`.
 
@@ -795,7 +797,7 @@ Decisions made while implementing v2:
 | D34 | Target OSes trim once at shutdown (NixOS `pd.trimOnShutdown`, default on; Arch unit in `target/arch/`); periodic fstrim disabled | Keeps footprints near live data (§2.3) | agreed |
 | D35 | A RAM-only setup UKI (`setupUki`) for running setup on real hardware | A throwaway environment with nothing to install | agreed |
 | D36 | Keep btrfs's default mount options; recommend `chattr +C` (or an XFS volume) for files rewritten in place | The filesystem survey (§2.3): `ssd`/`nossd`/`autodefrag` make no difference, `ssd_spread` is worse, and only rewrites of large files are a problem for btrfs | proposed |
-| D37 | Extra volumes are XFS by default and may be btrfs; ext4 is dropped | The filesystem survey (§2.3): XFS matches ext4 on in-place rewrites and is much better under churn, with or without the trim | agreed |
+| D37 | Extra volumes are XFS by default and may be btrfs; ext4 is dropped | The filesystem survey (§2.3): XFS matches ext4 on in-place rewrites and is much better under churn, with or without the trim | agreed; default superseded by D49 (ext4 stays dropped) |
 | D38 | Optional FIDO2: hmac-secret unwraps a random plain key from per-key slots on the USB (two per credential, random when unused); systemd-cryptenroll's defaults (PIN and touch, no user verification) | Stops offline password guessing; nothing hidden-specific on the USB; any of several keys works; a side without FIDO2 still boots (§4.1) | agreed |
 | D39 | Stock boot: `pd init-hidden --stock-decoy` adds a hidden side to a stock LUKS + LVM thin decoy; the hidden boot is typed in a live system (OpenSSL's Argon2id derives pd's key; `late.sh DISK` runs as on pd's USB); the salt may be the decoy's LUKS UUID | No pd USB to recognize; the hidden side and its boot logic are unchanged; nothing to bring but memory (stock-boot.md) | agreed |
 | D40 | The project is called Plain Disguise; the tools stay `pd`. The name appears only in the docs, the flake and the CLI help, never on the USB or in the decoy | It hides in plain sight, in plain dm-crypt volumes; files on the USB and in the decoy already say only "pd" | agreed |
@@ -807,6 +809,7 @@ Decisions made while implementing v2:
 | D46 | The setup UKI ships Arch's keyring (pinned by hash) and a `pacman.conf` that requires signatures, with Arch's own mirror | `pacstrap` then verifies everything it installs; nixpkgs has no Arch keyring | agreed |
 | D47 | `pd compact`: `thin_shrink` on the inactive pool, the new metadata staged in `pmspare`; `init-hidden` refuses a decoy with data above the hidden side's floor | A pool that was once full has data everywhere; dm-thin never moves it. Interruptions leave the pool intact or recoverable (§10.4) | agreed |
 | D48 | `pd move` copies each thin LV's mapped blocks to fresh layouts on another disk, instead of growing or shrinking in place | Works for bigger and smaller disks, needs no change to the old disk, and compacts as a side effect; in place, the decoy's end-of-disk metadata and the hidden side would have to move (§10.4) | agreed |
+| D49 | Extra volumes are btrfs by default; XFS stays an option | XFS can't shrink, so `pd move` to a smaller disk would leave XFS volumes bigger than their pool; btrfs shrinks, and `chattr +C` covers files rewritten in place (§2.3) | agreed |
 
 ---
 

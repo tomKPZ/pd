@@ -68,7 +68,7 @@ cmdline = "root=/dev/sysvg/root rootflags=subvol=@ rw"
 
 [[volumes]]                    # optional extra thin LVs
 name = "data"
-fs = "xfs"                     # (default) or "btrfs"; see design.md §2.3
+fs = "btrfs"                   # (default) or "xfs" (can't shrink); see design.md §2.3
 ```
 
 `default` (the system booted without holding Shift) is the first `[[systems]]` entry unless set.
