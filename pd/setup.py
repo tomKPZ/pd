@@ -28,12 +28,21 @@ RAW_MAP = "cryptlvm-raw"
 DATA_MAP = "cryptlvm"
 
 
+# While `pd move` has the old disk's data region open too, both carry a VG of
+# the same name; LVM commands then see only the device listed here.
+LVM_DEVICES: str | None = None
+
+
+def _devices() -> list[str]:
+    return ["--devices", LVM_DEVICES] if LVM_DEVICES else []
+
+
 def lvm(*args, **kwargs):
-    return cmd("lvm", *args, "--config", LVM_NO_ARCHIVE, **kwargs)
+    return cmd("lvm", *args, *_devices(), "--config", LVM_NO_ARCHIVE, **kwargs)
 
 
 def lvm_output(*args) -> str:
-    return cmd_output("lvm", *args, "--config", LVM_NO_ARCHIVE)
+    return cmd_output("lvm", *args, *_devices(), "--config", LVM_NO_ARCHIVE)
 
 
 def ram_size() -> int:
@@ -154,10 +163,11 @@ def install_hidden_extras(mnt: pathlib.Path, cfg: Config, decoy_key: bytes, deco
 # --- Data region -----------------------------------------------------------------
 
 @contextlib.contextmanager
-def data_region(disk: str, table: str, data_key: bytes, *, readonly: bool):
+def data_region(disk: str, table: str, data_key: bytes, *, readonly: bool, name: str = DATA_MAP):
+    """A side's data region (its LVM PV), at /dev/mapper/<name>."""
     tbl = table.replace("DISK", disk)
-    with dm_device(RAW_MAP, tbl, readonly=readonly) as raw, \
-            plain_crypt(DATA_MAP, raw, data_key, CIPHER_ARGS, readonly=readonly) as dev:
+    with dm_device(f"{name}-raw", tbl, readonly=readonly) as raw, \
+            plain_crypt(name, raw, data_key, CIPHER_ARGS, readonly=readonly) as dev:
         yield dev
 
 
@@ -295,6 +305,38 @@ def decoy_top(segments: list[dict], pe_start: int, data_start: int, disk_bytes: 
     after = [phys(s["first"], s["extent"]) for s in segments
              if not s["lv"].endswith("_tdata") and phys(s["first"], s["extent"]) >= tdata_end]
     return min(after) if after else L.data_end(disk_bytes)
+
+
+# Room a hidden side needs besides its thin LVs: PV header, pool metadata and
+# its spare, alignment.
+HIDDEN_OVERHEAD = 1 * L.GIB
+
+
+def floor_below(cfg: Config, hl: L.HiddenLayout, d: int) -> int:
+    """The lowest disk byte a hidden side placed at `hl` may reach at its cap.
+    The decoy's data must stay below it."""
+    return hl.plain_offset - int(d * cfg.hidden_cap) - swap_size(cfg) - HIDDEN_OVERHEAD
+
+
+def hidden_floor(cfg: Config, segments: list[dict], pe_start: int, data_start: int, d: int) -> int:
+    """floor_below for the hidden side that `init-hidden` would create next to
+    this decoy (segments and pe_start as for decoy_top)."""
+    top = decoy_top(segments, pe_start, data_start, d)
+    return floor_below(cfg, L.hidden_layout(top, memorable=cfg.memorable_offset), d)
+
+
+def check_decoy_room(pool, region_table: str, floor: int) -> None:
+    """Refuse a hidden side if the decoy's pool has data above `floor` (a pool
+    that was once full keeps allocations spread over its whole data area)."""
+    from pd import thinpool
+    with thinpool.mapped(pool, writable=False) as devs:
+        u = thinpool.usage(thinpool.dump(devs["tmeta"]))
+    top = thinpool.high_water_physical(pool, region_table, u)
+    if top > floor:
+        raise RuntimeError(
+            f"the decoy has data up to {top / L.GIB:.1f} GiB into the disk, but a hidden side needs it "
+            f"below {floor / L.GIB:.1f} GiB (its pool maps {u.mapped * u.block_size / L.GIB:.1f} GiB, "
+            "before trimming).  Run `pd compact` on the decoy first (docs/install.md).")
 
 
 def check_no_overlap(segments: list[dict], pe_start: int, hl: L.HiddenLayout,
@@ -455,8 +497,12 @@ def init_hidden(cfg: Config, decoy_password: bytes, password: bytes, run=None) -
     disk = cfg.disk
     d = check_disk(disk)
     with open_decoy_readonly(cfg, decoy_password) as (decoy_key, decoy_table, segs, pe_start):
-        top = decoy_top(segs, pe_start, L.DATA_START, d)
-    hl = L.hidden_layout(top, memorable=cfg.memorable_offset)
+        data_start = L.table_physical_range(decoy_table)[0]
+        top = decoy_top(segs, pe_start, data_start, d)
+        hl = L.hidden_layout(top, memorable=cfg.memorable_offset)
+        from pd import thinpool
+        pool = thinpool.find_pool(cfg.vg, f"/dev/mapper/{DATA_MAP}")
+        check_decoy_room(pool, decoy_table.replace("DISK", cfg.disk), floor_below(cfg, hl, d))
     check_no_overlap(segs, pe_start, hl)
     key = argon2(password, cfg.salt, cfg.argon2)
     if key == argon2(decoy_password, cfg.salt, cfg.argon2):
@@ -496,6 +542,7 @@ CRYPT_PERF_OPTS = {"same_cpu_crypt", "submit_from_crypt_cpus", "no_read_workqueu
 @dataclasses.dataclass
 class StockDecoy:
     key: bytes              # the LUKS volume key
+    high_water: int         # disk byte just past the decoy pool's highest allocated block
     table: str              # the LUKS data area, as a linear table on DISK
     crypt_args: list[str]   # plain-mode arguments that read it like the LUKS mapping
     vg: str
@@ -550,15 +597,16 @@ def luks_uuid(device: str, header: str | None) -> str:
 
 
 @contextlib.contextmanager
-def stock_decoy_opened(device: str, password: bytes, header: str | None):
-    """The decoy's LUKS volume, read-only, with the key in the dm table
-    (not the kernel keyring) so it can be read back."""
+def stock_decoy_opened(device: str, password: bytes, header: str | None, readonly: bool = True):
+    """The decoy's LUKS volume (read-only unless `readonly` is false, for `pd
+    compact`), with the key in the dm table (not the kernel keyring) so it
+    can be read back."""
     r, w = os.pipe()
     try:
         os.write(w, password)
         os.close(w)
         try:
-            cmd("cryptsetup", "open", "--readonly", "--disable-keyring", "--batch-mode",
+            cmd("cryptsetup", "open", *(["--readonly"] if readonly else []), "--disable-keyring", "--batch-mode",
                 *([f"--header={header}"] if header else []), f"--key-file=/proc/self/fd/{r}",
                 device, STOCK_MAP, pass_fds=(r,))
         except subprocess.CalledProcessError:
@@ -596,11 +644,16 @@ def read_stock_decoy(cfg: Config, device: str, password: bytes, header: str | No
         pe_start = pv_data_offset(str(dev))
         pv_start = start + offset * L.SECTOR
         table = L.linear_table(pv_start, pv_start + length * L.SECTOR)
+        from pd import thinpool
+        pool = thinpool.find_pool(vg, str(dev))
+        with thinpool.mapped(pool, writable=False) as devs:
+            u = thinpool.usage(thinpool.dump(devs["tmeta"]))
+        high_water = thinpool.high_water_physical(pool, table.replace("DISK", cfg.disk), u)
         # No LVM commands from here on: the plain mapping shows the same PV twice.
         check_plain_equivalent(L.linear_table(offset * L.SECTOR, (offset + length) * L.SECTOR,
                                               dev=device), key, args, dev)
-    return StockDecoy(key=key, table=table, crypt_args=args, vg=vg, pv_start=pv_start,
-                      segments=segs, pe_start=pe_start)
+    return StockDecoy(key=key, high_water=high_water, table=table, crypt_args=args, vg=vg,
+                      pv_start=pv_start, segments=segs, pe_start=pe_start)
 
 
 def stock_hidden_layout(cfg: Config, sd: StockDecoy) -> L.HiddenLayout:
@@ -615,7 +668,23 @@ def stock_hidden_layout(cfg: Config, sd: StockDecoy) -> L.HiddenLayout:
     hi = sd.pv_start + sd.pe_start + (seg["last"] + 1) * seg["extent"]
     hl = L.hidden_layout(hi, memorable=cfg.memorable_offset, bottom=lo)
     check_no_overlap(sd.segments, sd.pe_start, hl, data_start=sd.pv_start)
+    floor = floor_below(cfg, hl, L.disk_size(device_size(cfg.disk)))
+    if sd.high_water > floor:
+        raise RuntimeError(
+            f"the decoy has data up to {sd.high_water / L.GIB:.1f} GiB into the disk, but a hidden side "
+            f"needs it below {floor / L.GIB:.1f} GiB.  Run `pd compact --stock-decoy` first "
+            "(docs/stock-boot.md).")
     return hl
+
+
+def stock_floor(cfg: Config, pool, region_table: str, d: int) -> int:
+    """floor_below for a hidden side next to a stock decoy's pool."""
+    if len(pool.tdata) != 1:
+        raise RuntimeError("the decoy's thin pool data isn't one contiguous segment")
+    s = pool.tdata[0]
+    lo = L.logical_to_physical(region_table, s.pv_start * L.SECTOR)
+    hi = L.logical_to_physical(region_table, (s.pv_start + s.size) * L.SECTOR - 1) + 1
+    return floor_below(cfg, L.hidden_layout(hi, memorable=cfg.memorable_offset, bottom=lo), d)
 
 
 def init_hidden_stock(cfg: Config, device: str, header: str | None, decoy_password: bytes,

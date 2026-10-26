@@ -16,6 +16,7 @@ keyboards, storage, a real security key and real live images.
 | B. pd's USB | setup environment, both sides, boot, menus, trim, crash recovery | 2–3 h (randomizing takes 10–60 min) |
 | C. YubiKey | FIDO2 enrollment, boot with PIN and touch, failure cases, rekey | 45 min |
 | D. Stock boot | a stock decoy, the hidden side added next to it, boots from Debian Live and Tails | 2–3 h |
+| F. Optional: compaction and moving | adding a hidden side to a decoy that was once full; `pd move` | 1–2 h |
 | E. Report | what to send back | 10 min |
 
 Each step lists what to do and, as checkboxes, what to expect. Note anything that differs, with the
@@ -509,6 +510,47 @@ Boot the decoy and run `sudo efibootmgr`.
 
 ---
 
+## F. Optional: compaction and moving
+
+A rehearsal, on the test disk, of adding a hidden side to an install whose decoy was once nearly full
+(as for a migrated v1 install), and of moving to another disk.
+
+### F1. A decoy that was once full
+
+Boot the setup stick, mount it (B2), run `pd-net`, then randomize and create a decoy only (B4, B5).
+Before leaving B5's shell, fill and mostly empty the decoy:
+```sh
+mkdir $PD_ROOT/arch/fill
+n=$(( $(df -B1G --output=avail $PD_ROOT/arch | tail -1) * 9 / 10 ))       # GiB to write: 90% of the free space
+for i in $(seq $n); do head -c 1G /dev/urandom > $PD_ROOT/arch/fill/f$i; done; sync
+for i in $(seq $n); do [ $((i % 6)) -eq 0 ] || rm $PD_ROOT/arch/fill/f$i; done; sync
+(cd $PD_ROOT/arch/fill && sha256sum f* > /m/sums.txt)
+exit
+```
+(Writing that much takes a while; a smaller test disk is quicker.)
+
+### F2. Compact, then add the hidden side
+
+```sh
+pd init-hidden --config /m/pd.toml          # expected: refuses, "Run `pd compact` on the decoy first"
+pd compact --config /m/pd.toml              # decoy password; prints how far the data moved
+pd open --config /m/pd.toml --run 'cd arch/fill && sha256sum -c --quiet /m/sums.txt && echo SUMS-OK'
+pd init-hidden --config /m/pd.toml --run    # now creates the hidden side; install Arch as in B6
+```
+* [ ] `pd compact` reports the highest block before and after, and the boundary; `SUMS-OK`.
+* [ ] Record how long `pd compact` took and how much it moved.
+* [ ] Boot both sides from the boot stick (B9, B11). The frontier monitor shows the free space.
+
+### F3. Move to another disk (only with a second disk, e.g. in a USB enclosure)
+
+```sh
+pd move --config /m/pd.toml --to /dev/sdX --hidden-offset NNNNNNNNNN      # /dev/sdX: the second disk; erased
+```
+* [ ] It prints `Moved.` and the hidden side's new offset. Write it down.
+* [ ] With the second disk as the only internal disk, boot both sides from the same boot stick.
+
+---
+
 ## E. Report
 
 Send back the results table, plus for every failure: the step, the exact message (or a photo), and
@@ -547,3 +589,5 @@ When you're done, wipe the setup stick: it holds `pd.toml` (with the salt) and `
 | D5 Debian Live hidden boot; Argon2 time | |
 | D6 Tails hidden boot | |
 | D7 firmware entries | |
+| F2 compaction (moved MiB, time); boots | |
+| F3 move; boots from the new disk | |

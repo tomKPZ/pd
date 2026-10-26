@@ -159,6 +159,9 @@ discard settings are fixed (§1):
    * It asks for the decoy's LUKS passphrase and the hidden password, and opens the decoy only
      read-only.
    * It refuses a decoy whose LUKS volume allows discards, or whose thin pool isn't one segment.
+   * It refuses a decoy with data where the hidden side would go (once a decoy has been nearly full, its
+     pool's allocations are spread out). `pd compact --config pd.toml --stock-decoy /dev/nvme0n1p2`
+     moves the decoy's data to the front of its pool, in place.
    * It stores the decoy's LUKS volume key in the hidden boot volume, for the frontier monitor.
 3. **Install the hidden OS** in the shell it opens ([install.md](install.md) §5). The hidden OS needs pd's
    target hook, as with pd's USB. It has no bootloader or ESP of its own (the live system starts it),

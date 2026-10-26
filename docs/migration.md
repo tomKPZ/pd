@@ -62,3 +62,16 @@ What does change:
 
 Rollback: keep the v1 USB until both sides boot with v2. The data regions are never modified, but the
 v1 boot volumes are overwritten in step 2, so the v1 USB stops working after it.
+
+## Adding a hidden side afterwards
+
+A migrated install without a hidden side can get one, like any v2 decoy. If the decoy's pool was ever
+nearly full, its allocations are spread over the whole disk, and `pd init-hidden` refuses until they're
+moved down:
+```sh
+pd compact --config pd.toml          # decoy password; trims, then moves data below the hidden side's floor
+pd init-hidden --config pd.toml --run
+```
+`pd compact` needs the decoy's filesystems to be btrfs, XFS or ext4 (it mounts them to trim) and LVM's
+spare metadata LV, which v1's pool has. *(tested: `test_compact` builds a v1 decoy that was nearly full,
+migrates it, compacts it, adds a hidden side and boots both.)*

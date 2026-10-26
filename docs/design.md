@@ -593,7 +593,7 @@ Each side can hold several OSes in the same VG (e.g. Arch and NixOS).
 * **Stock decoy:** `pd init-hidden --stock-decoy DEVICE` puts the hidden side into a stock install's
   LUKS + LVM thin layout instead of a pd decoy, opening the decoy only read-only; the hidden side is then
   booted from a live system ([stock-boot.md](stock-boot.md)).
-* **Commands:** `pd salt`, `pd randomize`, `pd init-decoy`, `pd init-hidden`, `pd open`, `pd close`,
+* **Commands:** `pd salt`, `pd randomize`, `pd init-decoy`, `pd init-hidden`, `pd compact`, `pd move`, `pd open`, `pd close`,
   `pd rekey`, `pd usb`, `pd install-cpio`, `pd migrate-v1` (`python3 -m pd --help`).
 * **`pd open` / `pd close`** (`pd/opener.py`) work from the setup UKI or a live ISO (`pd.pyz`, a zipapp,
   with distribution tools). Read-only by default, using the boot environment's approach (read-only
@@ -641,7 +641,42 @@ after someone changed the decoy's LVM layout.
 
 ### 10.3 Never clone the disk
 A snapshot adversary who compares two images can see "unused" space change. Backups of hidden data must
-go to another pd setup; never `dd` the disk.
+go to another pd setup; never `dd` the disk. To move to another disk, use `pd move` (§10.4).
+
+### 10.4 Compacting and moving
+**Compacting a pool in place** (`pd compact`, `pd/compact.py`). A pool that was once nearly full keeps
+allocations spread over its whole data area, even after the data is deleted and trimmed: dm-thin never
+moves data. A hidden side needs the top of the decoy's pool data free, so `pd init-hidden` checks the
+decoy's highest allocated block and refuses if it's above the **floor**: the lowest point a hidden
+side at its cap can reach (hidden boot volume − cap × disk − swap − 1 GiB for the hidden PV's
+metadata). `pd compact` then moves the decoy's data below the floor:
+1. It fstrims every thin LV's filesystem, so the pool unmaps what they've freed (`nopassdown`: nothing
+   reaches the disk).
+2. With the pool inactive, it maps the pool's metadata and data directly (dm-linear over the LVM
+   segments) and runs `thin_shrink` (thin-provisioning-tools): every mapped block above the boundary is
+   copied into a free block below it, and the metadata is rewritten to match. The pool keeps its
+   size, and LVM's metadata doesn't change.
+3. The new metadata goes to LVM's spare metadata LV (`pmspare`) first and is checked, then to the pool
+   itself. Until then the pool is unchanged, since data was only copied into unused blocks. If the
+   final write is interrupted, `pd compact --recover` restores the metadata from the spare. Afterwards
+   the spare's superblock is wiped, so a stale copy is never mistaken for a good one.
+
+Destinations are always below the side's own highest block, and without a collision the other side's
+data lies entirely beyond it, so compaction needs only the side's own password. `--below SIZE`
+sets the boundary explicitly; the default for the hidden side is as tight as possible.
+`pd compact --stock-decoy` does the same for a stock decoy ([stock-boot.md](stock-boot.md)), whose
+`init-hidden` checks the floor too. *(tested: `test_compact`, for a pd decoy, including `--recover`
+after a damaged metadata write; for a migrated v1 decoy; and for a stock LUKS decoy.)*
+
+**Moving to another disk** (`pd move`, `pd/move.py`), bigger or smaller. The old disk is only read.
+The new disk gets fresh layouts built like init-decoy and init-hidden (new data keys, the hidden side at
+a new memorable offset), and each thin LV's mapped blocks are copied at the same offsets, read through
+the old pools' metadata without activating them. Filesystems and their UUIDs come over unchanged, the
+new pools fill from the front, swap is recreated with its UUID, and the thin LVs get the usual sizes
+for the new disk: on a bigger one, btrfs and XFS filesystems grow; on a smaller one, btrfs filesystems
+shrink (XFS can't, so its LV keeps its virtual size). The
+salt and Argon2 parameters stay, so the boot USB still works; FIDO2 has to be enrolled again. Then
+wipe the old disk. *(tested: `test_move`, 8 → 12 → 6 GiB, both sides booted after each move.)*
 
 ---
 
@@ -677,6 +712,8 @@ go to another pd setup; never `dd` the disk.
   | `test_monitor` | frontier monitor report and warning; no hidden-only files in the decoy |
   | `test_stock` | stock boot: a stock LUKS + LVM thin decoy is left unchanged by `init-hidden --stock-decoy`, and the printed commands boot the hidden side from another VM |
   | `test_live` (opt-in: `PD_TEST_LIVE=1`) | stock boot from the real Debian Live 13 Xfce image: log in on its serial console, type the printed commands, boot the hidden side |
+  | `test_compact` | a pd decoy, a migrated v1 decoy and a stock decoy, filled and mostly emptied: init-hidden refuses, `pd compact` moves the data down (files intact; `--recover` after a damaged metadata write), then both sides boot |
+  | `test_move` | `pd move` 8 → 12 → 6 GiB: files intact, btrfs roots grown and shrunk, both sides boot after each move |
   | `test_fido2` | enroll two emulated security keys for both sides, boot with either, wrong PIN, unknown key, rekey, remove |
   | `test_churn` | btrfs, XFS and (unsupported) ext4 pool footprint under churn, with and without a shutdown trim |
   | `fs_survey.py` (not in the suite; `python3 -m tests.fs_survey`) | the §2.3 table: filesystems and btrfs options × workloads × trim |
@@ -768,6 +805,8 @@ Decisions made while implementing v2:
 | D44 | Thin pools are created with `-Zn` | Zeroing new chunks only slows first writes (LVM warns about it for large chunks); chunk size measured not to affect footprints (§2.3) | agreed |
 | D45 | The setup UKI has drivers for common wired NICs and USB Ethernet adapters (the boot USB has none) | `pd-net` needs them on real machines; the boot USB never networks | agreed |
 | D46 | The setup UKI ships Arch's keyring (pinned by hash) and a `pacman.conf` that requires signatures, with Arch's own mirror | `pacstrap` then verifies everything it installs; nixpkgs has no Arch keyring | agreed |
+| D47 | `pd compact`: `thin_shrink` on the inactive pool, the new metadata staged in `pmspare`; `init-hidden` refuses a decoy with data above the hidden side's floor | A pool that was once full has data everywhere; dm-thin never moves it. Interruptions leave the pool intact or recoverable (§10.4) | agreed |
+| D48 | `pd move` copies each thin LV's mapped blocks to fresh layouts on another disk, instead of growing or shrinking in place | Works for bigger and smaller disks, needs no change to the old disk, and compacts as a side effect; in place, the decoy's end-of-disk metadata and the hidden side would have to move (§10.4) | agreed |
 
 ---
 

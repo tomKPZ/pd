@@ -123,6 +123,13 @@ Later maintenance, from the setup environment or a live ISO (below):
   With a new salt, rekey both sides, put the salt in `pd.toml`, and build a new boot USB.
 * `pd init-decoy --force --hidden-offset N` re-creates the decoy (its data is lost) while keeping the
   hidden side; `--force --no-hidden` if there is none.
+* `pd compact --config pd.toml [--offset N]` moves a side's data to the front of its thin pool, in
+  place. `pd init-hidden` asks for it when the decoy has data where the hidden side would go, which
+  happens once a decoy has been nearly full. It trims the filesystems first, then moves only what's
+  above the boundary; interrupted, it leaves the pool intact (`--recover` handles the one unsafe moment).
+* `pd move --config pd.toml --to /dev/NEWDISK (--hidden-offset N | --no-hidden)` moves both sides to
+  another disk, bigger or smaller, and prints the hidden side's new offset. The boot USB keeps working.
+  Wipe the old disk afterwards (`pd randomize`).
 
 ## 5. Install the OSes
 

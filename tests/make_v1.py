@@ -6,7 +6,11 @@ bytes 64-511, v1 tables written against /boot_tmp/disk, the hidden side at
 [D-256MiB, D-1MiB) with data reversed over [0, D-256MiB), and the hidden
 salt suffix "a".
 
-Usage: make_v1.py DISK SALT DECOY_PW HIDDEN_PW KERNEL INITRD
+Usage: make_v1.py DISK SALT DECOY_PW HIDDEN_PW KERNEL INITRD [FILL]
+
+HIDDEN_PW "-" makes a decoy-only disk.  FILL (a number of 64 MiB files) fills
+the decoy's root and then deletes all but every sixth file, without a trim,
+like a decoy that was once nearly full.
 """
 
 import os
@@ -19,6 +23,7 @@ from pd import layout as L
 from pd.util import Argon2Params, argon2, cmd, dm_device, mounted, mountpoint, plain_crypt, write_file
 
 disk, salt, decoy_pw, hidden_pw, kernel, initrd = sys.argv[1:7]
+fill = int(sys.argv[7]) if len(sys.argv) > 7 else 0
 PARAMS = Argon2Params(t=1, m_log2=12, p=1, length=512)
 CRYPT = ["--cipher=aes-xts-plain64", "--key-size=512", "--sector-size=4096"]
 META = 256 * L.MIB
@@ -33,7 +38,7 @@ def v1_reversed_table(end: int) -> str:
     return "".join(f"{i * spc} {spc} linear {{dev}} {total - (i + 1) * spc}\n" for i in range(n))
 
 
-def make_side(pw: str, suffix: str, plain_off: int, data_table: str, marker: str):
+def make_side(pw: str, suffix: str, plain_off: int, data_table: str, marker: str, fill: int = 0):
     key = argon2(pw.encode(), salt + suffix, PARAMS)
     with plain_crypt("v1plain", disk, key[:64], CRYPT, offset=plain_off // 512,
                      size=(META - L.MIB) // 512) as pdev:
@@ -78,6 +83,18 @@ def make_side(pw: str, suffix: str, plain_off: int, data_table: str, marker: str
                         with mounted("/dev/sysvg/root", r, "btrfs", "nodiscard,subvol=@"):
                             (r / "etc").mkdir()
                             write_file(r / "etc" / "pd-marker", marker + "\n")
+                            if fill:
+                                (r / "fill").mkdir()
+                                for i in range(fill):
+                                    with open(r / "fill" / f"f{i}", "wb") as f:
+                                        for _ in range(4):
+                                            f.write(os.urandom(16 << 20))
+                                os.sync()
+                                for i in range(fill):
+                                    if i % 6:
+                                        (r / "fill" / f"f{i}").unlink()
+                                os.sync()
+                                cmd("sh", "-c", f"cd {r / 'fill'} && sha256sum f* > /work/sums.txt")
                         with mounted("/dev/sysvg/root", r, "btrfs", "nodiscard,subvol=@boot"):
                             shutil.copy(kernel, r / "vmlinuz")
                             shutil.copy(initrd, r / "initrd")
@@ -95,7 +112,8 @@ cmd("dd", "if=/dev/zero", "of=/dev/mapper/v1shred", "bs=4M", "status=none", chec
 cmd("cryptsetup", "close", "v1shred")
 cmd("dd", "if=/dev/zero", f"of={disk}", "bs=1M", "count=1", "conv=fsync", "status=none")
 
-make_side(decoy_pw, "", L.MIB, f"0 {(D - META) // 512} linear {{dev}} {META // 512}\n", "decoy")
-make_side(hidden_pw, "a", D - META, v1_reversed_table(D - META), "hidden")
-print(f"V1-HIDDEN-OFFSET {(D - META) // 512}")
+make_side(decoy_pw, "", L.MIB, f"0 {(D - META) // 512} linear {{dev}} {META // 512}\n", "decoy", fill)
+if hidden_pw != "-":
+    make_side(hidden_pw, "a", D - META, v1_reversed_table(D - META), "hidden")
+    print(f"V1-HIDDEN-OFFSET {(D - META) // 512}")
 

@@ -14,7 +14,7 @@ let
   # python3, dbus and ICU through xfs_scrub's helpers (~300 MiB).
   xfsTools = pkgs.runCommand "xfs-tools" { } ''
     mkdir -p $out/bin
-    cp ${pkgs.xfsprogs.bin}/bin/mkfs.xfs ${pkgs.xfsprogs.bin}/bin/xfs_repair $out/bin/
+    cp ${pkgs.xfsprogs.bin}/bin/mkfs.xfs ${pkgs.xfsprogs.bin}/bin/xfs_repair ${pkgs.xfsprogs.bin}/bin/xfs_growfs $out/bin/
   '';
 
   # Arch Linux's signing keys, so pacstrap verifies what it installs.  The

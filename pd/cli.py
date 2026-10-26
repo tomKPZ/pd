@@ -101,6 +101,33 @@ def main(argv=None) -> int:
                         "config's [argon2], then build a new USB)")
     k.add_argument("--password-stdin", action="store_true")
 
+    cp = sub.add_parser("compact", help="move a side's data to the front of its thin pool, in place")
+    cp.add_argument("--config", required=True)
+    cp.add_argument("--offset", type=int, default=None,
+                    help="boot volume start sector (default: the decoy's)")
+    cp.add_argument("--stock-decoy", metavar="DEVICE", default=None,
+                    help="compact a stock decoy (docs/stock-boot.md) whose LUKS volume is on DEVICE")
+    cp.add_argument("--decoy-header", default=None, help="with --stock-decoy: a detached LUKS header")
+    cp.add_argument("--below", default=None, metavar="SIZE",
+                    help="keep the data within the first SIZE of the pool (default: decoy: room for "
+                         "a hidden side at its cap; hidden side: as tight as possible)")
+    cp.add_argument("--no-trim", action="store_true",
+                    help="don't fstrim the filesystems first (only blocks the pool knows are free move)")
+    cp.add_argument("--recover", action="store_true",
+                    help="after an interrupted compaction: restore the pool's metadata from the spare")
+    cp.add_argument("--password-stdin", action="store_true")
+
+    mv = sub.add_parser("move", help="move both sides to another disk (bigger or smaller)")
+    mv.add_argument("--config", required=True, help="the config for the old disk")
+    mv.add_argument("--to", required=True, metavar="DISK", help="the new disk (erased)")
+    mvh = mv.add_mutually_exclusive_group(required=True)
+    mvh.add_argument("--no-hidden", action="store_true", help="there is no hidden side")
+    mvh.add_argument("--hidden-offset", type=int, default=None,
+                     help="the hidden boot volume's start sector (asks for its password)")
+    mv.add_argument("--no-randomize", action="store_true",
+                    help="skip randomizing the new disk (only if it's already randomized)")
+    mv.add_argument("--password-stdin", action="store_true")
+
     f = sub.add_parser("fido2", help="enroll or remove FIDO2 security keys")
     fsub = f.add_subparsers(dest="fido2_command", required=True)
     fe = fsub.add_parser("enroll", help="enroll every plugged-in security key for one side")
@@ -210,6 +237,47 @@ def main(argv=None) -> int:
                                                   ("--new-argon2", new_argon2)) if v)
             print(f"Re-key the other side with the same {changed}, update the config to match,")
             print("and build a new boot USB.")
+    elif args.command == "move":
+        from pd import move
+        if args.hidden_offset is not None:
+            dpw, hpw = read_passwords(args, ["Decoy password", "Hidden password"])
+            hidden = (args.hidden_offset * L.SECTOR, hpw)
+        else:
+            (dpw,) = read_passwords(args, ["Decoy password"])
+            hidden = None
+        hl = move.move(cfg, args.to, dpw, hidden, randomize=not args.no_randomize)
+        print(f"Moved.  Set disk = \"{args.to}\" in the config.")
+        if hl:
+            # Printed once.  Never store it on the USB or in the decoy.
+            print("The hidden side has a new offset.  Hidden boot: press Enter at the password "
+                  "prompt, then run:")
+            print(f"  {L.hidden_boot_command(hl)}")
+            print("  /early.sh")
+        from pd import fido2
+        if fido2.load(cfg):
+            print("FIDO2: the moved sides open with their passwords alone; enroll the security keys "
+                  "again (pd fido2 enroll, both sides) and build a new boot USB.")
+        print("The boot USB still works (same salt).  Wipe the old disk (pd randomize) once the new "
+              "one boots: two disks with the same sides are two snapshots.")
+    elif args.command == "compact":
+        from pd import compact
+        from pd.config import parse_size
+        below = parse_size(args.below) if args.below else None
+        (pw,) = read_passwords(args, ["Decoy password" if args.stock_decoy or args.offset is None
+                                      else "Password"])
+        if args.recover:
+            print(compact.recover_side(cfg, args, pw))
+            return 0
+        if args.stock_decoy:
+            before, after, n = compact.compact_stock(cfg, args.stock_decoy, args.decoy_header, pw,
+                                                     below=below, do_trim=not args.no_trim)
+        else:
+            from pd import rekey
+            before, after, n = compact.compact(cfg, rekey.default_offset(cfg, args.offset), pw,
+                                               below=below, do_trim=not args.no_trim)
+        mib = lambda blocks: blocks * before.block_size // L.MIB  # noqa: E731
+        print(f"Data: {mib(before.mapped)} MiB.  Highest block: {mib(before.high_water)} MiB into the "
+              f"pool before, {mib(after.high_water)} MiB after (boundary {mib(n)} MiB).")
     elif args.command == "fido2":
         from pd import rekey
         if args.fido2_command == "enroll":
