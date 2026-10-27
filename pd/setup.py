@@ -14,7 +14,7 @@ import shutil
 import subprocess
 import tempfile
 
-from pd import fido2
+from pd import fido2, header
 from pd import layout as L
 from pd.config import CIPHER_ARGS, Config
 from pd.util import argon2, cmd, cmd_output, dm_device, mounted, mountpoint, plain_crypt, write_file
@@ -89,7 +89,8 @@ def device_size(dev) -> int:
 # --- Randomize ---------------------------------------------------------------
 
 def randomize(disk: str) -> None:
-    """Fill the disk with random-looking data and zero the first MiB.
+    """Fill the whole disk with random-looking data, edges included; the
+    first MiB then holds the salt (pd/header.py).
 
     cryptsetup reads the throwaway key from /dev/urandom itself, so it never
     exists in userspace.
@@ -100,7 +101,7 @@ def randomize(disk: str) -> None:
         fill_zeros("/dev/mapper/pd-randomize")
     finally:
         cmd("cryptsetup", "close", "pd-randomize")
-    zero_header(disk)
+    header.fix_edges(disk)
 
 
 def fill_zeros(dev: str, start: int = 0, end: int | None = None, progress: bool = True) -> None:
@@ -129,14 +130,6 @@ def fill_zeros(dev: str, start: int = 0, end: int | None = None, progress: bool 
         print()
     if pos != size:
         raise RuntimeError(f"wrote {pos} of {size} bytes to {dev}")
-
-
-def zero_header(disk: str) -> None:
-    """Zero the first and the last MiB (L.ZERO_HEADER, L.ZERO_TRAILER)."""
-    cmd("dd", "if=/dev/zero", f"of={disk}", "bs=1M", "count=1", "conv=fsync", "status=none")
-    end = L.disk_size(device_size(disk))
-    cmd("dd", "if=/dev/zero", f"of={disk}", "bs=1M", "count=1", f"seek={end // L.MIB - 1}",
-        "conv=fsync", "status=none")
 
 
 # --- Boot volume ---------------------------------------------------------------
@@ -473,7 +466,7 @@ def find_boot_key(cfg: Config, offset: int, password: bytes) -> tuple[bytes, int
     """The key that opens the boot volume at offset, and the FIDO2 slot it
     came from (None: the password alone, A = Argon2(password, salt)); None
     if nothing opens it.  Asks a present security key if FIDO2 is set up."""
-    a = argon2(password, cfg.salt, cfg.argon2)
+    a = argon2(password, header.salt(cfg), cfg.argon2)
     for key, slot in fido2.candidate_keys(cfg, a):
         if boot_volume_exists(cfg.disk, offset, key):
             return key, slot
@@ -512,9 +505,12 @@ def init_decoy(cfg: Config, password: bytes, run=None, *, force: bool = False,
     set_hostname(cfg)
     disk = cfg.disk
     d = check_disk(disk)
+    # The salt lives in the first MiB: give a new disk one, but never replace
+    # the one a hidden side is keyed under.
+    header.ensure(cfg, keep=isinstance(hidden, tuple))
     existing = find_boot_key(cfg, L.DECOY_PLAIN_OFFSET, password)
     # Re-creating keeps the existing key, so FIDO2 enrollment carries over.
-    key = existing[0] if existing else argon2(password, cfg.salt, cfg.argon2)
+    key = existing[0] if existing else argon2(password, header.salt(cfg), cfg.argon2)
     if not force and existing:
         raise RuntimeError(
             "this disk already has a decoy side with that password.  To re-create it, pass --force "
@@ -572,8 +568,8 @@ def init_hidden(cfg: Config, decoy_password: bytes, password: bytes, run=None) -
         check_decoy_room(pool, decoy_table.replace("DISK", cfg.disk), floor)
         fresh = created_this_boot(pool)
     check_no_overlap(segs, pe_start, hl)
-    key = argon2(password, cfg.salt, cfg.argon2)
-    if key == argon2(decoy_password, cfg.salt, cfg.argon2):
+    key = argon2(password, header.salt(cfg), cfg.argon2)
+    if key == argon2(decoy_password, header.salt(cfg), cfg.argon2):
         raise RuntimeError("passwords derive the same key")
     if not fresh:
         # A decoy from an earlier session may have used (and trimmed) the
@@ -768,6 +764,10 @@ def init_hidden_stock(cfg: Config, device: str, header: str | None, decoy_passwo
     `device` (cfg.disk or one of its partitions)."""
     if decoy_password == password:
         raise RuntimeError("the hidden password must differ from the decoy password")
+    if not cfg.salt:
+        # A stock disk's first MiB is a partition table, not a salt.
+        raise RuntimeError("a stock decoy needs `salt` in the config, e.g. the decoy's LUKS UUID "
+                           "(docs/stock-boot.md)")
     set_hostname(cfg)
     d = check_disk(cfg.disk)
     sd = read_stock_decoy(cfg, device, decoy_password, header)

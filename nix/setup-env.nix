@@ -1,4 +1,4 @@
-{ pkgs, kernel, modulesClosure, plainTree, src, fido2Hmac }:
+{ pkgs, kernel, modulesClosure, plainTree, src, fido2Hmac, bootUki, keymaps }:
 # A RAM-only setup environment: boot it (as a UKI from a USB stick) on the
 # target machine to run `pd randomize`, `pd init-decoy`, `pd init-hidden`.
 # Nothing is written anywhere but the target disk, and nothing persists.
@@ -9,6 +9,12 @@ let
     mkdir -p $out
     cp -r ${src}/pd ${src}/plain ${src}/target $out/
   '';
+
+  # The boot image and keymaps, for `pd usb` (docs/install.md §3).
+  bootEnv = pkgs.linkFarm "pd-boot-env" [
+    { name = "BOOTX64.EFI"; path = bootUki; }
+    { name = "keymaps"; path = keymaps; }
+  ];
 
   # Only the XFS binaries setup needs: the full xfsprogs closure pulls in
   # python3, dbus and ICU through xfs_scrub's helpers (~300 MiB).
@@ -108,7 +114,7 @@ let
         exit 1
       '')
       (writeShellScriptBin "pd" ''
-        export PYTHONPATH=${pdSrc} PD_PLAIN_TREE=${plainTree}
+        export PYTHONPATH=${pdSrc} PD_PLAIN_TREE=${plainTree} PD_BOOT_ENV=${bootEnv}
         exec ${python3Minimal}/bin/python3 -m pd "$@"
       '')
     ];
@@ -185,10 +191,10 @@ let
 
     pd setup environment (RAM only; nothing here persists)
 
-      pd salt                              print a new salt
       pd randomize   --config pd.toml      fill the disk with random data
       pd init-decoy  --config pd.toml --run
       pd init-hidden --config pd.toml --run
+      pd usb --output ESP [--config pd.toml]   write the boot stick
       pd-net                               wired network (DHCP), for installing OSes
 
     See docs/install.md.  Power off when done (poweroff -f).

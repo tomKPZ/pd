@@ -13,6 +13,8 @@
       packages.${system} = {
         nixosTest = import ./nix/nixos-test.nix { inherit nixpkgs system; src = self; };
         setupUki = pd.setupEnv.uki;
+        # The release boot image (docs/design.md §7.1).
+        bootUki = pd.bootUki;
         pdPyz = pd.pdPyz;
         inherit (pd) testenv bootTools plainTools bootInitrd plainTree modulesClosure detectShift fido2Hmac kernel;
         default = pkgs.linkFarm "pd" [

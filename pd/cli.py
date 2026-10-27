@@ -65,7 +65,7 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="pd", description="Plain Disguise: set up and maintain a pd disk")
     sub = p.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("salt", help="print a new random salt")
+    sub.add_parser("salt", help="print a new random salt (for a config's `salt`, e.g. with a stock decoy)")
 
     r = sub.add_parser("randomize", help="fill the disk with random data")
     r.add_argument("--config", required=True)
@@ -95,7 +95,8 @@ def main(argv=None) -> int:
     k.add_argument("--offset", type=int, default=None,
                    help="boot volume start sector (default: the decoy's)")
     k.add_argument("--new-salt", default=None,
-                   help="re-key under this salt (rekey both sides, then build a new USB)")
+                   help="with a `salt` in the config: re-key under this salt (rekey both sides, then "
+                        "build a new USB).  The disk's own salt changes with `pd header`")
     k.add_argument("--new-argon2", default=None, metavar="T,M_LOG2,P",
                    help="re-key with these Argon2 parameters (rekey both sides, put them in the "
                         "config's [argon2], then build a new USB)")
@@ -170,13 +171,29 @@ def main(argv=None) -> int:
     g.add_argument("--hidden-offset", type=int, default=None,
                    help="with --force: the hidden boot volume's start sector (asks for its password)")
 
-    u = sub.add_parser("usb", help="build the boot UKI")
-    u.add_argument("--config", required=True)
-    u.add_argument("--env", required=True, help="path to the built testenv/default output")
-    u.add_argument("--output", required=True)
-    u.add_argument("--cmdline", default=None)
-    u.add_argument("--salt-from", default=None,
-                   help="take the salt from an existing UKI instead of the config")
+    u = sub.add_parser("usb", help="put the boot image (and per-install files) on a USB stick's ESP")
+    u.add_argument("--output", required=True, metavar="ESP",
+                   help="the mounted EFI system partition of the boot stick")
+    u.add_argument("--config", default=None,
+                   help="add this install's files (FIDO2 slots, keymap, other Argon2 parameters, a salt)")
+    u.add_argument("--env", default=os.environ.get("PD_BOOT_ENV"),
+                   help="directory with BOOTX64.EFI and keymaps/ (the testenv, or the setup "
+                        "environment's; default: $PD_BOOT_ENV)")
+    u.add_argument("--image", default=None, help="the boot image (default: ENV/BOOTX64.EFI)")
+
+    hd = sub.add_parser("header", help="write a new random header (the disk's salt) and re-key both "
+                                       "sides to it; also moves an install's salt from the USB to the "
+                                       "disk")
+    hd.add_argument("--config", required=True)
+    hdh = hd.add_mutually_exclusive_group(required=True)
+    hdh.add_argument("--no-hidden", action="store_true", help="there is no hidden side")
+    hdh.add_argument("--hidden-offset", type=int, default=None,
+                     help="the hidden boot volume's start sector (asks for its password)")
+    hds = hd.add_mutually_exclusive_group()
+    hds.add_argument("--old-salt", default=None, help="the current salt, if not in the config")
+    hds.add_argument("--old-salt-from", default=None, metavar="UKI",
+                     help="read the current salt from an old boot image")
+    hd.add_argument("--password-stdin", action="store_true")
 
     c = sub.add_parser("install-cpio", help="write the per-install initrd cpio")
     c.add_argument("--config", required=True)
@@ -196,14 +213,17 @@ def main(argv=None) -> int:
 
     from pd import fido2
     from pd.config import Config
-    cfg = Config.load(args.config)
-    if getattr(args, "salt_from", None):
+    if args.command == "usb":
         from pd import usb
-        uki = pathlib.Path(args.salt_from)
-        cfg.salt = usb.read_salt(uki)
-        if not (cfg.fido2 and pathlib.Path(cfg.fido2).exists()):
-            cfg.fido2_text = usb.read_member(uki, "fido2.txt")
-    cfg.check_salt()
+        if not (args.image or args.env):
+            raise SystemExit("pass --env or --image (the boot image)")
+        image = pathlib.Path(args.image) if args.image else pathlib.Path(args.env) / usb.IMAGE
+        cfg = Config.load(args.config) if args.config else None
+        keymaps = pathlib.Path(args.env) / "keymaps" if args.env else None
+        for f in usb.write_usb(cfg, image, pathlib.Path(args.output), keymaps):
+            print(f"wrote {f}")
+        return 0
+    cfg = Config.load(args.config)
     if getattr(args, "password_stdin", False):
         # One PIN line, after the passwords, for every security key.
         pin: list[str] = []
@@ -222,6 +242,8 @@ def main(argv=None) -> int:
     elif args.command == "rekey":
         from pd import rekey
         if args.new_salt:
+            if not cfg.salt:
+                raise SystemExit("this install uses the disk's salt: `pd header` gives it a new one")
             Config(disk=cfg.disk, salt=args.new_salt).check_salt()
         new_argon2 = None
         if args.new_argon2:
@@ -263,8 +285,10 @@ def main(argv=None) -> int:
         if fido2.load(cfg):
             print("FIDO2: the moved sides open with their passwords alone; enroll the security keys "
                   "again (pd fido2 enroll, both sides) and build a new boot USB.")
-        print("The boot USB still works (same salt).  Wipe the old disk (pd randomize) once the new "
-              "one boots: two disks with the same sides are two snapshots.")
+        print("The boot USB still works" + (" (same salt)." if cfg.salt else
+                                            " (the new disk has its own salt in its first MiB).")
+              + "  Wipe the old disk (pd randomize) once the new one boots: two disks with the same "
+              "sides are two snapshots.")
     elif args.command == "compact":
         from pd import compact
         from pd.config import parse_size
@@ -370,10 +394,31 @@ def main(argv=None) -> int:
                 runner(args)(mnt)
             finally:
                 session.close()
-    elif args.command == "usb":
-        from pd import usb
-        usb.build_uki(cfg, pathlib.Path(args.env), pathlib.Path(args.output),
-                      args.cmdline or usb.BOOT_CMDLINE)
+    elif args.command == "header":
+        from pd import header
+        old_salt = args.old_salt
+        if args.old_salt_from:
+            from pd import usb
+            uki = pathlib.Path(args.old_salt_from)
+            old_salt = usb.read_salt(uki)
+            if not (cfg.fido2 and pathlib.Path(cfg.fido2).exists()):
+                # Old boot images carried the FIDO2 slots too.
+                cfg.fido2_text = usb.read_member(uki, "fido2.txt")
+        if old_salt:
+            Config(disk=cfg.disk, salt=old_salt).check_salt()
+        if args.hidden_offset is not None:
+            dpw, hpw = read_passwords(args, ["Decoy password", "Hidden password"])
+            sides = [header.Side(L.DECOY_PLAIN_OFFSET, dpw), header.Side(args.hidden_offset * L.SECTOR, hpw)]
+        else:
+            (dpw,) = read_passwords(args, ["Decoy password"])
+            sides = [header.Side(L.DECOY_PLAIN_OFFSET, dpw)]
+        header.change(cfg, args.config, sides, old_salt=old_salt, next_key=key_prompter(args))
+        print("Done: both sides are keyed under the salt in the disk's first MiB.")
+        if cfg.salt:
+            print("Remove `salt` from the config, and rewrite the boot USB (`pd usb`): it no longer "
+                  "needs one.")
+        elif fido2.load(cfg):
+            print("Rewrite the boot USB (`pd usb --config`): fido2.txt changed.")
     elif args.command == "install-cpio":
         from pd import usb
         pathlib.Path(args.output).write_bytes(

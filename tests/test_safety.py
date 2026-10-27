@@ -1,5 +1,5 @@
 """Safety properties that need a real setup: booting after an unclean
-shutdown, the hidden side's footprint cap, the disk's zeroed edges, and pool
+shutdown, the hidden side's footprint cap, the disk's random edges, and pool
 and swap settings."""
 
 import re
@@ -33,11 +33,11 @@ class Safety(unittest.TestCase):
         check = f"""
         python3 - <<'EOF'
 import pathlib
-from pd import layout as L, setup
+from pd import header, layout as L, setup
 from pd.config import Config
 from pd.util import argon2, cmd_output
 cfg = Config.load("pd.toml")
-key = argon2(b"{fixture.DECOY_PW}", cfg.salt, cfg.argon2)
+key = argon2(b"{fixture.DECOY_PW}", header.salt(cfg), cfg.argon2)
 with setup.boot_volume(cfg.disk, L.DECOY_PLAIN_OFFSET, key, create=False) as mnt:
     data_key = (mnt / "data.key").read_bytes()
     table = (mnt / "table.txt").read_text()
@@ -78,11 +78,18 @@ EOF
     def test_disk_edges_and_pool_settings(self):
         fx = self.fx
         d = L.disk_size(fx.disk.stat().st_size)
-        # The first and last MiB stay zero (L.ZERO_HEADER, L.ZERO_TRAILER).
+        # The first and last MiB are random data that nothing recognizes
+        # (L.HEADER, L.TRAILER), and the salt is the end of the first.
+        from pd import header
         with open(fx.disk, "rb") as f:
-            self.assertEqual(f.read(L.ZERO_HEADER), bytes(L.ZERO_HEADER))
-            f.seek(d - L.ZERO_TRAILER)
-            self.assertEqual(f.read(L.ZERO_TRAILER), bytes(L.ZERO_TRAILER))
+            head = f.read(L.HEADER)
+            f.seek(d - L.TRAILER)
+            tail = f.read(L.TRAILER)
+        for edge in (head, tail):
+            self.assertGreater(len(set(edge)), 250)
+            self.assertNotIn(bytes(4096), edge)
+        self.assertEqual(header.disk_class(str(fx.disk)), "plain")
+        self.assertEqual(header.signatures(str(fx.disk)), [])
         _, out = vm.ToolVM(fx.env, fx.work).run(f"""
         printf '%s\\n' '{fixture.DECOY_PW}' | python3 -m pd open --config pd.toml --rw --password-stdin \\
             --run 'dmsetup table cryptlvm-raw; lvm lvs --noheadings --binary -o lv_name,zero sysvg'

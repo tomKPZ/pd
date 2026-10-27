@@ -31,15 +31,15 @@ exact message (a phone photo of the screen is fine), in the results table at the
 ```sh
 NIX="nix --extra-experimental-features nix-command --extra-experimental-features flakes"
 $NIX build -j auto "path:$PWD#setupUki" --out-link setup.efi
-$NIX build -j auto "path:$PWD#testenv"  --out-link env
-python3 -m pd salt                       # prints a new salt for pd.toml
+$NIX build -j auto "path:$PWD#bootUki"  --out-link boot.efi
+$NIX build -j auto --rebuild "path:$PWD#bootUki"   # succeeds only if the rebuild is bit-for-bit identical
+sha256sum -L boot.efi                    # record it
 ```
 
 ### A2. Write `pd.toml` (on the build machine, outside the repository)
 
 ```toml
 disk = "/dev/nvme0n1"          # the target disk as the setup environment will see it (fixed in B2 if needed)
-salt = "PASTE THE SALT HERE"
 vg = "sysvg"
 memorable_offset = true
 
@@ -65,14 +65,16 @@ cmdline = "root=/dev/sysvg/root rootflags=subvol=@ rw"
   cmdline = ""
   ```
 
-### A3. Build the boot UKI (on the build machine)
+### A3. The boot image (on the build machine)
 
+The boot image is the same for every install, so nothing is built for this one:
 ```sh
-python3 -m pd usb --config pd.toml --env env --output BOOTX64.EFI
+cp -L boot.efi BOOTX64.EFI
 ```
 
 Copy `setup.efi` (follow the symlink: `cp -L`), `BOOTX64.EFI` and `pd.toml` to the machine where you
-write the USB sticks.
+write the USB sticks. (The setup environment carries the same image: `pd usb` there writes it too, as
+in C3.)
 
 ### A4. Write the USB sticks (on a Linux machine)
 
@@ -151,8 +153,13 @@ pd-net
 pd randomize --config /m/pd.toml
 ```
 
-* [ ] `dd` shows progress and ends with "No space left on device" (expected: it fills the disk).
-  Record the time it took.
+* [ ] It counts up to 100% and returns without an error. Record the time it took.
+
+```sh
+od -An -tx1 -N 64 /dev/nvme0n1                   # random bytes, not zeros
+wipefs -n /dev/nvme0n1                           # prints nothing
+```
+* [ ] As in the comments.
 
 ### B5. Create the decoy side and install Arch on it
 
@@ -271,9 +278,13 @@ sed -i s/2048/NNNNNNNNNN/ /early_env.sh
   recovery shell; `exit` powers the machine off.
 * [ ] **Argon2 timing:** at `Password:` press Enter for the recovery shell, then run:
   ```sh
-  . /early_env.sh; time sh -c 'printf test | argon2 "$(cat /salt.txt)" $ARGON2_ARGS >/dev/null'
+  . /early_env.sh; . /disk_class.sh; S=$(disk_salt /dev/nvme0n1); echo "${#S} $(disk_class /dev/nvme0n1)"
+  time sh -c "printf test | argon2 $S $ARGON2_ARGS >/dev/null"
   ```
-  Record the time (expected: well under a second).
+  Record the time (expected: well under a second). The first line shows `64 plain` (the salt's length
+  in hex digits, and how the boot classifies the disk).
+* [ ] **Extra disk:** plug in another USB stick or disk (any contents) next to the boot stick and boot
+  the decoy. It still boots with one password; record how long the step after the password takes.
 * [ ] **Keymap** (only if you set `keymap`): a password with layout-specific characters works.
 
 ### B13. Crash recovery
@@ -341,17 +352,17 @@ pd fido2 list --config /m/pd.toml
 ```
 * [ ] The list shows `0: …  plugged in: /dev/hidrawN` (one line per key).
 
+### C3. Rewrite the boot USB
+
+In the same setup session, plug in the boot stick and:
 ```sh
+lsblk -o NAME,SIZE,MODEL,TRAN                      # the boot stick's partition, e.g. /dev/sdb1
+mkdir -p /b && mount /dev/sdb1 /b
+pd usb --output /b --config /m/pd.toml
+umount /b
 sync; umount /m; poweroff -f
 ```
-
-### C3. Rebuild the boot USB
-
-Copy `pd.toml` and `fido2.txt` from the setup stick to the build machine (next to each other), then:
-```sh
-python3 -m pd usb --config pd.toml --env env --output BOOTX64.EFI
-```
-Put the new `BOOTX64.EFI` on the boot stick (replacing the old one).
+* [ ] It prints `wrote EFI/BOOT/BOOTX64.EFI` and `wrote EFI/BOOT/BOOTX64.EFI.extra.d/fido2.cred`.
 
 ### C4. Boot with the key
 
@@ -461,7 +472,7 @@ Boot the setup stick, mount it (B2), run `pd-net`, and write `/m/stock.toml`: a 
 with the decoy's LUKS UUID as the salt.
 ```sh
 uuid=$(cryptsetup luksUUID /dev/nvme0n1p2)          # p3 with Fedora
-sed -e "s/^salt = .*/salt = \"$uuid\"/" -e '/^fido2 = /d' /m/pd.toml > /m/stock.toml
+{ echo "salt = \"$uuid\""; sed '/^fido2 = /d' /m/pd.toml; } > /m/stock.toml
 pd init-hidden --config /m/stock.toml --stock-decoy /dev/nvme0n1p2 --run
 ```
 
@@ -563,7 +574,7 @@ what you tried. Useful extras:
   them off with a USB stick);
 * from pd's recovery shell: `dmesg`, `ls /sys/block`, `ls /dev/hidraw*` (photos are fine).
 
-When you're done, wipe the setup stick: it holds `pd.toml` (with the salt) and `fido2.txt`.
+When you're done, wipe the setup stick: it holds `pd.toml` and `fido2.txt`.
 
 ### Results
 

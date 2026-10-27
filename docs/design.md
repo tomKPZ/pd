@@ -30,12 +30,13 @@ Nothing the decoy can read refers to the hidden system. That includes the decoy'
 boot USB, and NVRAM.
 
 Requirements:
-* **No unencrypted data on disk** except the zeroed first MiB. Someone who finds the disk sees random
-  data and no partition table: a drive that looks wiped or never provisioned.
-* **The first MiB is zeroed**, for two reasons:
-  * minor: the disk can't be misidentified as some partition table or filesystem by chance;
-  * main: the decoy's plain volume then starts at sector 2048, the standard first-partition offset.
-    2048 is the one number the hidden boot replaces, with a single hand-typed `sed`.
+* **No unencrypted data on disk.** Someone who finds the disk sees random data from the first byte to
+  the last, and no partition table: a drive that looks wiped.
+* **The first MiB holds nothing but random data and, at its end, the salt** (§4.2). The decoy's plain
+  volume then starts at sector 2048, the standard first-partition offset. 2048 is the one number the
+  hidden boot replaces, with a single hand-typed `sed`.
+* **The boot USB is the same for everyone:** a downloadable, reproducible image (§7.1), plus optional
+  files next to it.
 * **NVRAM is cleaned on every boot.** The firmware's boot entry for the USB is deleted. A machine
   found without its USB shows no sign of having booted from one.
 * **One password prompt per boot.** Keys pass from stage to stage in RAM by being appended to the next
@@ -207,26 +208,27 @@ could map out every block written since setup.)
 
 ```
 0      1 MiB         256 MiB                                                  H-255 MiB      H             D-1 MiB    D
-|zeros | decoy plain | PV hdr, swap, decoy thin data →     ...     ← hidden thin data | hidden plain | decoy tmeta | zeros |
+|header| decoy plain | PV hdr, swap, decoy thin data →     ...     ← hidden thin data | hidden plain | decoy tmeta |trailer|
                      |<------------------------ decoy data region [256 MiB, D-1 MiB) --------------------------->|
                      |<--------- hidden data region [256 MiB, H-255 MiB), reversed --------->|
 ```
 
 | Region | Range | Contents |
 |---|---|---|
-| zero header | [0, 1 MiB) | zeros |
+| header | [0, 1 MiB) | random; its last 32 bytes are the salt (§4.2) |
 | decoy plain volume | [1 MiB, 256 MiB) | plain dm-crypt (Argon2 key), btrfs |
 | decoy data region | [256 MiB, D − 1 MiB) | plain dm-crypt (decoy `data.key`), LVM PV |
 | hidden data region | [256 MiB, H − 255 MiB), reversed in 256 MiB chunks | plain dm-crypt (hidden `data.key`), LVM PV |
 | hidden plain volume | [H − 255 MiB, H) | plain dm-crypt (Argon2 key), btrfs |
-| zero trailer | [D − 1 MiB, D) | zeros |
+| trailer | [D − 1 MiB, D) | random, unused |
 
 * **The decoy data region spans the rest of the disk**, because an ordinary install would. The hidden
   regions lie inside it, in space the decoy's pool hasn't allocated.
-* **The last MiB stays zero, like the first.** A tool that "initializes" the disk (Windows Disk
-  Management offers to; gdisk's repairs do it) writes a backup GPT into the last sectors. Without the
-  trailer that would land on the decoy pool's `tmeta`, and a decoy that stops working is suspicious in
-  itself.
+* **The first and last MiB are random data, never used for data** (§4.2). The first leaves room for a
+  partition table and holds the salt. The last is where a tool that "initializes" the disk (Windows
+  Disk Management offers to; gdisk's repairs do it) writes a backup GPT. Without the trailer that would
+  land on the decoy pool's `tmeta`, and a decoy that stops working is suspicious in itself. (Until D56
+  both were zeros, a fixed pattern.)
 * **What H is.** The decoy's LVM layout is stock (§6.1). Measured with LVM 2.03.41, stock placement
   is `[swap][pmspare][pool data][tmeta]`: the spare metadata LV goes in front of the pool's data and
   `tmeta` goes at the very end of the PV. The decoy writes to `tmeta`, so the hidden side must stay below
@@ -239,7 +241,7 @@ could map out every block written since setup.)
 * **Both plain volumes are 255 MiB (522240 sectors)**, so they differ only in their start sector: 2048
   for the decoy, (H − 255 MiB)/512 for the hidden side. That is what makes the hidden boot a one-number
   `sed`.
-* **The hidden data region never covers the decoy's plain volume or the zero header.** Even if the
+* **The hidden data region never covers the decoy's plain volume or the header.** Even if the
   hidden side overflows, it can't break the decoy's ability to boot. A decoy that fails to boot would be
   suspicious in itself.
 * **Memorable offset** (`memorable_offset`, on by default). The hidden plain volume's start is rounded
@@ -268,17 +270,16 @@ because v1 creates the pool with one data extent and then extends it.
   ([stock-boot.md](stock-boot.md)). One pass with a lot of memory is the most memory-hard setting per
   second, which is what limits a GPU's parallel guessing. Making the KDF 10× slower buys about what one
   more random character buys at 60×, so pd keeps boots fast and relies on password length.
-  `pd rekey --new-argon2 T,M_LOG2,P` changes them later (both sides, then a new USB).
-* **Salt.** A random 64-byte salt is stored on the boot USB, and both sides use it. Keeping the salt off
-  the disk means the boot script derives one key and tries it on every disk, with no per-disk lookup and
-  no alignment issues. The cost is that a USB belongs to one machine.
+  `pd rekey --new-argon2 T,M_LOG2,P` changes them later (both sides; other parameters than the
+  defaults go next to the boot image as `argon2.cred`, §7.1).
+* **Salt.** The 32 bytes just below 1 MiB on the disk, as hex, shared by both sides (§4.2). The boot
+  image carries none, so it's the same for every install.
 * **Passwords must differ.** Setup enforces this, and checks that the two passwords don't derive the
   same key. (v1 instead appended a fixed suffix `a` to the salt for the hidden side. The
   suffix is public, so it added nothing.)
 * **Changing a password** (`pd rekey`) re-creates that side's 255 MiB plain volume under the new key
   with the same contents (held in RAM, then compared after writing). `data.key` and the data region
-  stay as they are. `pd rekey --new-salt` changes the salt the same way; both sides and the USB then
-  need it.
+  stay as they are. `pd header` gives the disk a new salt and re-keys both sides the same way (§4.2).
 * **Why not LUKS.** v1 kept a detached LUKS2 header in the plain volume, using Argon2 output bytes
   64–511 as the keyslot passphrase. The motivation was reencryption and FIDO2, but neither was ever used.
   A coerced examiner walks the whole boot chain, so every layer has to be explainable, and a raw key file
@@ -312,21 +313,25 @@ secret.)
 | h_i | hmac-secret(C_i, SHA-256(A)): 32 bytes only security key i can compute, and only from A |
 | slot | K XOR SHA-512(A ‖ h_i) |
 
-The USB carries `fido2.txt`: one line per credential, `C_i SLOT0 SLOT1`. Slot 0 belongs to the side
+The USB carries the slots as `fido2.cred` next to the boot image (§7.1; the config names the file,
+`fido2.txt`): one line per credential, `C_i SLOT0 SLOT1`. Slot 0 belongs to the side
 whose boot volume is at the decoy's offset, slot 1 to the other side. A slot no side uses holds random
 bytes, which can't be told apart from a wrapped key.
 
-At boot, `early.sh` derives A as usual. If `fido2.txt` exists, it asks for the PIN and runs
-`fido2-hmac unlock` (`tools/fido2_hmac.c`, static, on the USB). That program waits for a security key
-holding one of the credentials (checked silently, without a touch), gets h_i (touch), and writes the
-two unwrapped candidates. `early.sh` then tries A, slot 0 and slot 1 on each disk. Trying A keeps a side
-without FIDO2 bootable, so enrolling one side never locks out the other.
+At boot, `early.sh` derives A for a disk as usual. If `fido2.cred` exists, it asks for the PIN (once
+per boot) and runs `fido2-hmac unlock` (`tools/fido2_hmac.c`, static, on the USB). That program waits
+for a security key holding one of the credentials (checked silently, without a touch), gets h_i
+(touch), and writes the two unwrapped candidates. `early.sh` then tries A, slot 0 and slot 1 on the
+disk. Trying A keeps a side without FIDO2 bootable, so enrolling one side never locks out the other.
+A depends on the disk's salt (§4.2), so each disk tried needs its own touch; with one pd disk that's
+one.
 
 **Deniability.** Both sides use the same credentials, and the hidden side's request to the security key
 is derived from its own password, so nothing on the USB is specific to the hidden side (invariant 1):
 every line has two slots whether or not a second side exists. One consequence: **if the hidden side
-uses FIDO2, enroll the decoy too.** A `fido2.txt` on the USB that the decoy doesn't use points at
-another side.
+uses FIDO2, enroll the decoy too.** A `fido2.cred` on the USB that the decoy doesn't use points at
+another side. It's also the one file that makes a FIDO2 user's USB specific to an install
+([roadmap](roadmap.md)).
 
 **Several security keys.** Each security key computes a different h_i, so each gets its own line, and
 each line wraps the same K. Losing every enrolled security key loses the sides that use FIDO2; enroll
@@ -344,15 +349,56 @@ at least two.
   just new slots, so an old `fido2.txt` with the old password stops working too. The slots of keys
   that weren't plugged in are replaced with random bytes.
 * `pd fido2 remove N` and `pd fido2 list`.
-* After any change, build a new USB: `fido2.txt` is part of it. The config's `fido2` names the file.
+* After any change, rewrite the USB (`pd usb --config`): `fido2.cred` is part of it. The config's
+  `fido2` names the file.
 
 **Cost.** `fido2-hmac` (static libfido2, libcbor, OpenSSL; 5.7 MB) adds about 0.5 MB to every USB's
 compressed initrd, since its OpenSSL largely duplicates cryptsetup's. A PIN prompt and a touch on
-every boot, only when `fido2.txt` exists.
+every boot, only when `fido2.cred` exists.
 
 **Tests.** `tests/test_fido2.py` uses QEMU's emulated CanoKey, which implements `hmac-secret`. QEMU
 emulates one CanoKey at a time, so the test swaps between two over QMP, like a user swapping keys. A
 real security key can be passed into a VM with `-device usb-host`.
+
+### 4.2 The salt and the disk's edges
+
+The boot image is the same file for every install (§7.1), so the salt lives on the disk, next to the
+data it protects (D55, `pd/header.py`).
+
+* **The salt is the 32 bytes just below 1 MiB, `[1 MiB − 32, 1 MiB)`,** as 64 lowercase hex
+  characters. Both sides use it. `pd randomize` fills it along with the rest of the disk, and setup
+  reads it back: it's never chosen.
+* **Why there.** Tools that write to the front of a disk leave it alone: an MBR (512 bytes), a primary
+  GPT (17 KiB with 512-byte sectors, 24 KiB with 4 KiB sectors), Windows' "Initialize disk".
+  Partitions conventionally start at 1 MiB, and partitioning tools don't write the gap below. A disk
+  with no partition table shows as unallocated, and they write nothing until asked.
+* **Why only 32 bytes, with no redundancy.** Hashing a larger range adds nothing (any changed byte
+  changes the salt). Copies or error correction that anyone can decode would also let anyone check
+  that they agree, which random data never does.
+* **Typed in a live system:** `od -An -tx1 -v -j 1048544 -N 32 /dev/nvme0n1 | tr -d ' \n'`.
+* **The edges look like nothing.** After the random fill, setup checks the first and last MiB with
+  `pd/disk_class.sh` (the boot's own check, §7.2) and libblkid's full set of probes (`wipefs`), and
+  refills an edge that matches anything. That happens about once in 65,536 disks, almost always for the
+  MBR boot signature; nothing can observe a bias that small. (The setup kernel's partition parsers add
+  nothing: nixpkgs enables only the MBR, GPT and LDM ones, all of which libblkid covers.)
+* **Nothing is kept to prove the edges are filler** (D59): no seed, no fill key. The free space can never
+  be proven unused either, so proving only the header would invite the question why, and the fill key
+  would map every block the hidden side wrote (§2.4).
+* **An explicit salt** in the config (`salt = …`) overrides the disk's, and goes next to the boot image
+  as `salt.cred` (§7.1). Stock decoys need one (their first MiB is a partition table; [stock-boot.md](stock-boot.md)),
+  and installs from before D55 have one until `pd header` moves it to the disk ([migration.md](migration.md)).
+* **`pd header`** writes a new random header and re-keys both sides to it (it asks for both passwords).
+  The old salt is saved next to the config first, so an interrupted run is finished by running it
+  again. It leaves the trailer alone on layouts migrated from v1, whose decoy data region reaches the
+  end of the disk, and refuses if a hidden side has data in the chunk holding the header (v1's hidden
+  region starts at 0; it allocates that chunk last, after the decoy's whole region).
+
+**Security.** Offline guessing no longer needs the USB: before D55, someone with only the disk couldn't
+start guessing, because the salt was on the USB. The password carries the security either way
+(whoever holds both could already guess), and FIDO2 adds a second factor (§4.1). In exchange the USB
+proves less (a public file whose hash matches the release, not a record of an install), losing it
+loses nothing, and the disk has no fixed pattern. Nothing changes for someone with the decoy password:
+the decoy uses the salt itself, and it's the same for both sides (invariant 1).
 
 ---
 
@@ -470,18 +516,33 @@ firmware → UKI on the USB → /init → early.sh → (password, Argon2) → pl
 
 ### 7.1 UKI
 A unified kernel image at `EFI/BOOT/BOOTX64.EFI` on the USB's ESP. This is the removable-media path, so
-no NVRAM entry is needed. It contains:
+no NVRAM entry is needed. It's the same file for every install (D55, D58): Nix builds it (`bootUki`)
+reproducibly, so a release can publish it with its hash, and a download can be checked against a build
+(`nix build --rebuild`). It contains:
 * **Kernel:** a nixpkgs kernel with the stock config, plus a broad set of storage, input, USB, and HID
   modules loaded through modalias coldplug. A missing keyboard driver means a machine that can't boot,
   so hardware coverage matters more than size.
 * **initrd** (about 10 MB): static busybox, cryptsetup, argon2, and the kernel modules (stored
   uncompressed, because busybox `modprobe` can't reliably load compressed ones), plus `/init`,
-  `early.sh`, and a second, per-install cpio with `early_env.sh`, `salt.txt` and optionally
-  `keymap.bmap`. GPU drivers are left
+  `early.sh`, `disk_class.sh` and `early_env.sh`. GPU drivers are left
   out (their firmware is over a gigabyte); the firmware framebuffer is enough for a text console.
   `/sbin` links to `/bin`, because the kernel runs `/sbin/modprobe` to load crypto modules on demand.
 * **Command line:** includes `init_on_free=1`. Pages the boot environment frees (password buffers,
   Argon2 memory) are then zeroed before `kexec` hands RAM to the next kernel.
+
+**Per-install files go next to it**, in `EFI/BOOT/BOOTX64.EFI.extra.d/`, so the image itself never
+changes. systemd-stub packs the `*.cred` files it finds there into a cpio under `/.extra/credentials/`
+in the initrd. `pd usb --config` writes them (`pd/usb.py`):
+
+| File | Contents | Reveals |
+|---|---|---|
+| `keymap.cred` | the console keymap (busybox `loadkmap` format, built from kbd's keymaps) | the user's keyboard layout |
+| `fido2.cred` | the FIDO2 slots (§4.1) | a FIDO2 enrollment, so an install |
+| `argon2.cred` | Argon2 parameters other than the defaults (the tests use this) | an install with custom parameters |
+| `salt.cred` | a salt from the config (§4.2) | an install |
+
+A USB without FIDO2, custom parameters or an explicit salt is the release file plus, at most, a keymap.
+The Argon2 defaults are fixed per release: changing them would make installs re-key.
 
 **Why a UKI booting full Linux rather than GRUB:**
 * No dependence on what a bootloader supports (FIDO2, filesystems, LVM thin).
@@ -496,20 +557,41 @@ tools.
 `/init` mounts the pseudo-filesystems and starts busybox `mdev -d`, which loads the driver for every
 device that appears (via its `MODALIAS` uevent), including keyboards that enumerate late behind hubs or
 docks. It also makes a pass over the devices already present, repeated while new drivers keep exposing
-new devices. It loads the configured console keymap (`keymap.bmap`, built from kbd's keymaps, with
-busybox `loadkmap`), then runs `early.sh` and, if it returns, the recovery shell, in a single session
-(so no console output is lost when a session leader exits).
+new devices. It loads the configured console keymap (`keymap.cred`, with busybox `loadkmap`), then runs
+`early.sh` and, if it returns, the recovery shell, in a single session (so no console output is lost
+when a session leader exits).
 1. Delete the `BootCurrent` NVRAM entry and remove it from `BootOrder`. This is done directly through
    efivarfs with busybox, since efibootmgr doesn't build statically; one tool fewer on the USB.
 2. Prompt `Password:` with echo off (`stty -echo`). An empty password goes straight to the recovery
    shell without running Argon2: that's the start of the hidden boot.
-3. Run `argon2`, writing the plain key to tmpfs.
-4. For each whole disk in `/sys/block` (there's no udev):
+3. Sort the whole disks in `/sys/block` (there's no udev) with `disk_class.sh`, the check setup also
+   runs on the disk's edges (§4.2, D57):
+
+   | Disk | Treatment |
+   |---|---|
+   | loop, ram, zram, dm, sr; smaller than 2 GiB (setup's minimum) | never tried |
+   | salt bytes all the same value (zeros on a new or trimmed SSD, `0xff` on erased flash) | never tried: 32 random bytes never are, and a disk whose salt was overwritten can't boot anyway |
+   | looks partitioned or formatted | tried last |
+   | everything else | tried first |
+
+   Largest first within each group. A disk looks partitioned or formatted if the kernel created
+   partitions for it, bytes 510–511 are `55 AA`, `EFI PART` sits at byte 512 or 4096, or `blkid` names
+   a type. The boot USB itself is never tried (the bytes just below its ESP at 1 MiB are zeros) or
+   tried last. Partitioned-looking disks are tried last rather than skipped, so a pd disk whose front
+   sectors something overwrote still boots (its salt is at the end of the first MiB); only wrong
+   passwords pay for them. `PD_DISK=/dev/nvme0n1 /early.sh` in the recovery shell tries just that disk.
+4. For each candidate: read its salt (or `salt.cred`'s), run `argon2` (reusing the key if the previous
+   disk had the same salt), unwrap the FIDO2 slots if `fido2.cred` exists, and with each key:
    * `cryptsetup open --type plain --readonly --offset $PLAIN_OFFSET --size $PLAIN_SIZE …`;
    * mount btrfs with `ro,rescue=nologreplay`;
    * `exec` `late.sh` from it. Using `exec` frees early.sh's memory, password included, which
      `init_on_free=1` then zeroes.
-5. If no disk works, shred the key and drop to a shell: the "recovery shell".
+5. If no disk works, shred the keys and drop to a shell: the "recovery shell".
+
+Each disk tried costs one Argon2 run (about 0.3 s), and with FIDO2 one touch: with the right password
+on a machine with one pd disk, that's one, as before D55. The password stays in the shell's memory
+until a disk opens or all have failed. After `kexec` nothing changes: the target's initrd hook already
+finds the disk by trying the data key on every disk (§7.4), without udev or Argon2.
 
 `early_env.sh` holds `PLAIN_OFFSET=2048`, `PLAIN_SIZE=522240`, and the Argon2 and cipher parameters. The
 hidden boot edits `PLAIN_OFFSET` ([booting.md](booting.md)). (v1 instead used a dm table, `table.txt`,
@@ -596,16 +678,18 @@ Each side can hold several OSes in the same VG (e.g. Arch and NixOS).
 
   Setup also disables LVM archive and backup explicitly.
 * **Keys only travel through pipes or memory**, never temporary files.
-* **Order:** randomize the disk → zero the first MiB → create the decoy → read back the decoy's layout
-  to find H → create the hidden side.
+* **Order:** randomize the whole disk (edges checked and refilled if they look like anything, §4.2) →
+  create the decoy, keyed under the salt read back from the first MiB → read back the decoy's layout to
+  find H → create the hidden side. `init-decoy` gives an unrandomized disk random edges itself.
 * **pd's core stops at "this side's roots are mounted".** `pd init-decoy/init-hidden --run` opens a
   shell with each system's root at `$PD_ROOT/<system>`; the OS is installed with the distro's own tools
   ([install.md](install.md)).
 * **Stock decoy:** `pd init-hidden --stock-decoy DEVICE` puts the hidden side into a stock install's
   LUKS + LVM thin layout instead of a pd decoy, opening the decoy only read-only; the hidden side is then
   booted from a live system ([stock-boot.md](stock-boot.md)).
-* **Commands:** `pd salt`, `pd randomize`, `pd init-decoy`, `pd init-hidden`, `pd compact`, `pd move`, `pd open`, `pd close`,
-  `pd rekey`, `pd usb`, `pd install-cpio`, `pd migrate-v1` (`python3 -m pd --help`).
+* **Commands:** `pd randomize`, `pd init-decoy`, `pd init-hidden`, `pd compact`, `pd move`, `pd open`,
+  `pd close`, `pd rekey`, `pd header`, `pd usb`, `pd install-cpio`, `pd migrate-v1`, `pd fido2`, `pd salt`
+  (for a config's explicit salt) (`python3 -m pd --help`).
 * **`pd open` / `pd close`** (`pd/opener.py`) work from the setup UKI or a live ISO (`pd.pyz`, a zipapp,
   with distribution tools). Read-only by default, using the boot environment's approach (read-only
   mappings, thin LVs mapped from `thin_dump`, `rescue=nologreplay` for btrfs, `norecovery` for XFS);
@@ -617,9 +701,10 @@ Each side can hold several OSes in the same VG (e.g. Arch and NixOS).
   hidden side before the data region is written. The disk is never re-randomized.
 * **The UKI records nothing about the build host:** `pd usb` passes a neutral `--os-release`
   (ukify otherwise embeds the host's `/usr/lib/os-release`).
-* **Building the USB.** `pd usb` combines the Nix-built UKI template with a small per-install cpio (salt
-  and `early_env.sh`). A later rebuild, e.g. for a kernel update, reads the salt back from the existing
-  USB (`pd usb --salt-from OLD.EFI`). Per-install values therefore never need to live in the repo or in `/nix/store`.
+* **Writing the USB.** `pd usb --output ESP [--config pd.toml]` copies the release boot image to the
+  stick's ESP and writes the per-install files next to it (§7.1). The setup UKI carries the boot image
+  and the keymaps (`$PD_BOOT_ENV`), so it needs nothing else. Updating the boot environment is replacing
+  one file. Per-install values never live in the repo or in `/nix/store`.
 * **Per-install configuration** (disk, VG names, sizes, Argon2 parameters) is a TOML file kept outside
   the repo.
 * **The hidden offset is printed once.** It must not be written on the USB or anywhere in the decoy.
@@ -737,13 +822,14 @@ floor is the defence.
 * **Build.** A Nix flake pins nixpkgs and builds:
   * static busybox, cryptsetup, argon2 (boot USB); static lvm2, thin-provisioning-tools, kexec-tools,
     fzf, jq, and detect_shift (boot volume);
-  * the kernel and its module closure, the boot initrd, and the UKI pieces;
+  * the kernel and its module closure, the boot initrd, and the release boot image (`bootUki`,
+    reproducible: `nix build --rebuild` checks it, and `test_uefi` rebuilds it with ukify and compares);
   * the tool VM (kernel + tiny initrd that mounts the host's `/nix/store` read-only over 9p, so tools
     aren't copied) and a fake target OS;
   * a minimal NixOS system using `target/nixos/pd.nix`, for integration tests;
-  * the RAM-only setup UKI (`setupUki`).
+  * the RAM-only setup UKI (`setupUki`), which carries the boot image and keymaps for `pd usb`.
 
-  Build with `nix build "path:$PWD#testenv"` (and `#setupUki`). The `path:` form is needed because Nix's libgit2 can't
+  Build with `nix build "path:$PWD#testenv"` (and `#setupUki`, `#bootUki`). The `path:` form is needed because Nix's libgit2 can't
   read repositories using the reftable ref format.
 * **Test.** Tests run QEMU (KVM, OVMF) as an ordinary user against sparse image files. Setup runs as
   root inside the tool VM; nothing needs root on the host, and no device-mapper state is created there.
@@ -752,13 +838,13 @@ floor is the defence.
 
   | Test | Covers |
   |---|---|
-  | `test_layout`, `test_placement`, `test_usb`, `test_monitor_awk` | unit tests: layout arithmetic, reversed tables, hidden placement and overlap checks, salt read-back, the monitor's overlap detection |
+  | `test_layout`, `test_placement`, `test_usb`, `test_monitor_awk` | unit tests: layout arithmetic, reversed tables, hidden placement and overlap checks, the per-install files next to the boot image, `disk_class.sh` on image files (blank, small, MBR signature, GPT header, a filesystem), salt read-back from old boot images, the monitor's overlap detection |
   | `test_smoke` | the tool VM |
-  | `test_e2e` | decoy boot, hidden boot via the recovery-shell `sed`, wrong password, password not echoed, read-only disk, keyboard plugged in after boot, keymap |
-  | `test_safety` | boot after a crash with a dirty btrfs log; hidden cap over roots and volumes; fstrim shrinks the pool but never reaches the disk |
-  | `test_growth` | on an unrandomized disk, decoy writes at the front, hidden at the back, untouched gap between |
-  | `test_uefi` | the real UKI from a USB stick under OVMF; NVRAM entry and `BootOrder` cleanup; no build-host os-release |
-  | `test_setup_env` | setup run from the RAM-only setup environment, then a boot; with `PD_TEST_NET=1`, DHCP through an emulated Intel NIC and a signature-checked `pacstrap` |
+  | `test_e2e` | decoy boot, hidden boot via the recovery-shell `sed`, wrong password, password not echoed, read-only disk, keyboard plugged in after boot, keymap; with an empty and a small extra disk and the pd disk's copy carrying an MBR signature and a GPT header, the classes are blank/small/used and the decoy still boots |
+  | `test_safety` | boot after a crash with a dirty btrfs log; hidden cap over roots and volumes; fstrim shrinks the pool but never reaches the disk; random edges that nothing recognizes |
+  | `test_growth` | on an unrandomized disk, decoy writes at the front, hidden at the back, untouched gap between (and the random edges `init-decoy` gave it) |
+  | `test_uefi` | the release boot image is reproducible (rebuilt bit for bit) and has no build-host os-release; the same image with a serial console boots from a USB stick under OVMF with `argon2.cred` in `BOOTX64.EFI.extra.d/` (the decoy only opens with it); NVRAM entry and `BootOrder` cleanup |
+  | `test_setup_env` | setup run from the RAM-only setup environment, `pd usb` from its own boot image, then a boot; with `PD_TEST_NET=1`, DHCP through an emulated Intel NIC and a signature-checked `pacstrap` |
   | `test_nixos` | a real NixOS initrd with `pd.nix` unlocks the disk and mounts `/sysroot` |
   | `test_arch` | a real Arch install (pacstrap, `pd` mkinitcpio hook) boots through pd (`PD_TEST_ARCH=1`, needs network) |
   | `test_monitor` | frontier monitor report and warnings (decoy above the floor, small gap); no hidden-only files in the decoy |
@@ -770,8 +856,8 @@ floor is the defence.
   | `test_churn` | btrfs, XFS and (unsupported) ext4 pool footprint under churn, with and without a shutdown trim |
   | `fs_survey.py` (not in the suite; `python3 -m tests.fs_survey`) | the §2.3 table: filesystems and btrfs options × workloads × trim |
   | `test_luks_equiv` | a v1 LUKS2 data region reads identically through plain dm-crypt with its volume key |
-  | `test_migrate` | a v1-format disk migrated with `pd migrate-v1` boots both sides with v2 |
-  | `test_rekey` | new passwords and a new salt on both sides; both boot with a new USB, the old password fails |
+  | `test_migrate` | a v1-format disk migrated with `pd migrate-v1` keeping an explicit salt, then moved to the disk salt with `pd header`, boots both sides with v2 (`test_compact` migrates straight to the disk salt) |
+  | `test_rekey` | new passwords and Argon2 parameters on both sides, then a new header (`pd header`); `--new-salt` is refused without an explicit salt; both boot with a new USB, the old password fails |
   | `test_reinit` | re-initializing the decoy is refused without `--force`; with the hidden offset, both sides still boot |
   | `test_open` | `pd.pyz open`/`close`: read-only with the disk attached read-only, hidden side, read-write, wrong password |
 
@@ -790,7 +876,14 @@ floor is the defence.
 | dracut-built boot environment (host kernel + host tools) | v1. Replaced by a pinned minimal build, so the USB reveals less. |
 | mkinitcpio → dracut for the Arch target | Tried and reverted: it added nothing, and mkinitcpio is simpler and the Arch default. |
 | dm-integrity under the plain volume | Replaced in 2024 by btrfs dup + checksums. |
-| Salt in a disk sector | Rejected at first: one key derivation could then try every disk. Now planned (D55, [disk-salt.md](disk-salt.md)): a boot image identical for every install is worth a key derivation per candidate disk. |
+| Salt on the USB | v2 until D55: one key derivation tried every disk, but the USB belonged to one install and held the salt's only copy besides the config. |
+| Salt = hash of the whole first MiB | Any changed byte destroys it; nothing gained over 32 bytes. |
+| Redundant, recoverable salt | Redundancy that anyone can decode, anyone can check: the first MiB would no longer look random. |
+| First MiB generated from a stored seed, to prove it hides nothing | The free space can't be proven unused anyway (D59). |
+| Skip empty disks by a zero first sector | Weaker than checking the salt bytes: misses disks that are zero only at the salt, and skips a pd disk whose first sector was overwritten. |
+| Skip partitioned-looking disks at boot | A pd disk whose front sectors were overwritten would never boot. Tried last, they cost only wrong passwords. |
+| Ask for the disk at boot | Not needed: the order finds it, and after kexec the hook scans with the data key anyway. The recovery shell can still name one (`PD_DISK`). |
+| One FIDO2 touch for all disks (the security key's input derived from the password alone) | Changes the FIDO2 format and adds an Argon2 run, while one touch per candidate rarely means more than one. |
 | Hidden salt suffix | Removed: it's public, so it adds nothing. Setup enforces different passwords instead. |
 | `pvmove` to tidy the pool layout (`MOVE_PES`) | Removed: cosmetic, and visible in LVM history. The decoy layout is now stock. |
 | rdseed as an extra entropy source | Removed: the kernel CSPRNG is enough. |
@@ -809,7 +902,7 @@ it.
 | D1 | No discard reaches the disk (dm-crypt without `allow_discards`); filesystems `nodiscard`; pools `--discards=nopassdown`; one `fstrim` at shutdown | Deniability, and bounded growth (§2.3) | agreed (revised: originally `--discards=ignore`, which made a shutdown trim impossible; measurements show the shutdown trim keeps footprints near live data) |
 | D2 | Hidden data reversed in 256 MiB chunks, from 256 MiB up to the hidden plain volume; fix `reversed_table`'s offset bug (it ignores `start` when `start != 0`) | The hidden side grows from the back and can't destroy the decoy's boot volume | agreed |
 | D3 | Decoy data region is [256 MiB, D) | An ordinary install uses the whole disk | agreed |
-| D4 | First MiB zeroed | No accidental signatures; plain volume starts at sector 2048 | agreed |
+| D4 | First MiB zeroed | No accidental signatures; plain volume starts at sector 2048 | superseded by D55, D56 (random, checked for signatures) |
 | D5 | Shred key never printed; read from `/dev/urandom` by cryptsetup | The shred key would reveal every write | agreed |
 | D6 | No key material in temporary files | Temp directories may be disk-backed | agreed |
 | D7 | Random salt by default | A static default would allow precomputation across users | agreed |
@@ -827,7 +920,7 @@ it.
 | D19 | Decoy LVM is stock; the hidden side sits below the decoy's end-of-disk metadata, read back rather than assumed | Stock layout and stock history | agreed |
 | D20 | Decoy LVM history looks ordinary (stock commands, boot-time names, decoy hostname); no LVM archive or backup during setup | LVM metadata records commands, host, and device names | agreed |
 | D21 | Boot-environment btrfs mounts use `rescue=nologreplay` | Booting after an unclean shutdown | agreed |
-| D22 | Per-install config outside the repo; salt read back from the USB (`pd usb --salt-from`) | Keeps install values out of git and `/nix/store` | agreed |
+| D22 | Per-install config outside the repo; salt read back from the USB (`pd usb --salt-from`) | Keeps install values out of git and `/nix/store` | superseded by D55 |
 | D23 | Setup only in throwaway environments | The setup host would otherwise keep traces of both sides | agreed |
 | D24 | OS installation through optional recipes | Separation of concerns | agreed |
 | D25 | The target hook finds the disk by trial | There's no udev on the USB | agreed |
@@ -852,7 +945,7 @@ Decisions made while implementing v2:
 | D39 | Stock boot: `pd init-hidden --stock-decoy` adds a hidden side to a stock LUKS + LVM thin decoy; the hidden boot is typed in a live system (OpenSSL's Argon2id derives pd's key; `late.sh DISK` runs as on pd's USB); the salt may be the decoy's LUKS UUID | No pd USB to recognize; the hidden side and its boot logic are unchanged; nothing to bring but memory (stock-boot.md) | agreed |
 | D40 | The project is called Plain Disguise; the tools stay `pd`. The name appears only in the docs, the flake and the CLI help, never on the USB or in the decoy | It hides in plain sight, in plain dm-crypt volumes; files on the USB and in the decoy already say only "pd" | agreed |
 | D41 | Swap defaults to the RAM size of the machine running setup (`swap_size`, `"0"` for none) | The swap LV can't grow after setup, and an installer would size it that way; the old 64 MiB default looked odd | agreed |
-| D42 | The last MiB of the disk is zeroed and unused; the decoy data region is [256 MiB, D − 1 MiB) | A backup GPT written by a tool that initializes the disk can't hit the decoy's pool metadata (§3) | agreed |
+| D42 | The last MiB of the disk is unused (zeroed until D56); the decoy data region is [256 MiB, D − 1 MiB) | A backup GPT written by a tool that initializes the disk can't hit the decoy's pool metadata (§3) | agreed |
 | D43 | Argon2 defaults t=1, m=1 GiB, p=4 (about 0.3 s); `pd rekey --new-argon2` | Short boots, strong passwords: an extra random character is worth far more than a slower KDF; one pass over much memory is the most memory-hard per second (§4) | agreed |
 | D44 | Thin pools are created with `-Zn` | Zeroing new chunks only slows first writes (LVM warns about it for large chunks); chunk size measured not to affect footprints (§2.3) | agreed |
 | D45 | The setup UKI has drivers for common wired NICs and USB Ethernet adapters (the boot USB has none) | `pd-net` needs them on real machines; the boot USB never networks | agreed |
@@ -865,15 +958,14 @@ Decisions made while implementing v2:
 | D52 | `pd rekey` on a FIDO2 side generates a new boot-volume key | Otherwise an old `fido2.txt` with the old password still opens the side | agreed |
 | D53 | `pd randomize` checks that every byte was written | `dd` exits non-zero at the end of the disk either way, so a failed fill went unnoticed; unfilled space would stand out | agreed |
 | D54 | `pd compact` trims at `/mnt`; stock-boot mounts the hidden boot volume `ro,rescue=nologreplay` | ext4 records the last mount point; invariant 3 for the printed commands too | agreed |
-| D55 | The salt becomes the 32 bytes just below 1 MiB on the disk (as hex); the boot image carries none, and an explicit salt can still come from a file next to it. Reverses the USB salt of §4 and D22, and §12's "salt in a disk sector" | A boot image identical for every install: downloadable, reproducible, replaceable. The salt can't be lost with the USB, and rebuilding the USB needs no config ([disk-salt.md](disk-salt.md)) | agreed, planned |
-| D56 | The disk's first and last MiB hold random data instead of zeros, still unused; setup refills either if it matches any partition-table or filesystem signature, checking a superset of what the boot checks | Zeros at both ends are a fixed pattern; the buffers' job doesn't need zeros (disk-salt.md §3) | agreed, planned |
-| D57 | The boot tries disks in order: never those too small or whose salt bytes are all equal, partitioned-looking ones last, largest first; one Argon2 run (and FIDO2 touch) per disk tried | Each disk has its own salt; with one pd disk the right password still costs one key derivation (disk-salt.md §4) | agreed, planned |
-| D58 | The release image has fixed Argon2 parameters; keymap, FIDO2 slots, other Argon2 parameters and an explicit salt are optional files in `BOOTX64.EFI.extra.d/`, which systemd-stub passes to the initrd | The image itself stays identical for everyone (disk-salt.md §5) | agreed, planned |
-| D59 | No seed or fill key is kept to prove the disk's edges are filler | The free space can never be proven unused, so proving only the header invites the question why, and the fill key would expose the hidden side (§2.4) | agreed, planned |
+| D55 | The salt becomes the 32 bytes just below 1 MiB on the disk (as hex); the boot image carries none, and an explicit salt can still come from a file next to it. Reverses D22 and the USB salt | A boot image identical for every install: downloadable, reproducible, replaceable. The salt can't be lost with the USB, and rebuilding the USB needs no config (§4.2) | agreed |
+| D56 | The disk's first and last MiB hold random data instead of zeros, still unused; setup refills either if it matches any partition-table or filesystem signature, checking a superset of what the boot checks | Zeros at both ends are a fixed pattern; the buffers' job doesn't need zeros (§3, §4.2) | agreed |
+| D57 | The boot tries disks in order: never those too small or whose salt bytes are all equal, partitioned-looking ones last, largest first; one Argon2 run (and FIDO2 touch) per disk tried | Each disk has its own salt; with one pd disk the right password still costs one key derivation (§7.2) | agreed |
+| D58 | The release image has fixed Argon2 parameters; keymap, FIDO2 slots, other Argon2 parameters and an explicit salt are optional files in `BOOTX64.EFI.extra.d/`, which systemd-stub passes to the initrd | The image itself stays identical for everyone (§7.1) | agreed |
+| D59 | No seed or fill key is kept to prove the disk's edges are filler | The free space can never be proven unused, so proving only the header invites the question why, and the fill key would expose the hidden side (§2.4) | agreed |
 
 ---
 
 ## 14. Open questions
 
-None at the moment; what's left is in [roadmap.md](roadmap.md). Planned and agreed but not implemented:
-[disk-salt.md](disk-salt.md) moves the salt onto the disk for a generic boot image (D55–D59).
+None at the moment; what's left is in [roadmap.md](roadmap.md).

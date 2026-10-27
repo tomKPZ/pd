@@ -22,18 +22,19 @@ goal is to avoid that question altogether.
 
 ```
  0   1 MiB           256 MiB                                                                   end
- |000| decoy plain  | decoy data: grows →        (random-looking free space)   ← grows: hidden data | hidden plain | decoy pool metadata |
+ |hdr| decoy plain  | decoy data: grows →        (random-looking free space)   ← grows: hidden data | hidden plain | decoy pool metadata |
 ```
 
-* The whole disk is first filled with random data. Discards (TRIM) never reach the disk, so regions
-  that hold data look the same as regions that never did.
+* The whole disk is first filled with random data, edges included. Discards (TRIM) never reach the
+  disk, so regions that hold data look the same as regions that never did.
 * **dm-thin allocates physical blocks sequentially.** The decoy's thin pool sits on the disk normally,
   so it fills from the front. The hidden system's thin pool sits on a *reversed* view of the disk
   (built with a dm-linear table), so it fills from the back. Each side looks like an encrypted volume
   that is mostly free space.
-* Each side has a small encrypted **plain volume**. It's keyed by Argon2id(password, salt) and found by
-  trying that key at a fixed offset. It holds the side's data-region key, boot scripts, and tools. The
-  boot USB only knows the decoy's offset. Optionally, FIDO2 security keys (e.g. YubiKeys) become a
+* Each side has a small encrypted **plain volume**. It's keyed by Argon2id(password, salt), where the
+  salt is 32 random bytes at the end of the disk's first MiB, and found by trying that key at a fixed
+  offset. It holds the side's data-region key, boot scripts, and tools. The boot USB only knows the
+  decoy's offset, and its image is the same file for everyone. Optionally, FIDO2 security keys (e.g. YubiKeys) become a
   second factor, so passwords can't be guessed offline.
 * **Booting the decoy:** boot the USB and type the decoy password.
 * **Booting the hidden system:** press Enter at the password prompt to fall into the "recovery" shell,
@@ -78,12 +79,13 @@ The details are in [docs/design.md](docs/design.md).
 
 [docs/install.md](docs/install.md) has the full procedure. In short:
 
-1. Build: `nix build "path:$PWD#setupUki" --out-link setup.efi` (RAM-only setup environment) and
-   `nix build "path:$PWD#testenv" --out-link env` (boot environment pieces).
-2. Write a `pd.toml` (disk, salt from `pd salt`, systems, optional volumes).
-3. Build the boot USB: `python3 -m pd usb --config pd.toml --env env --output BOOTX64.EFI`.
-4. Boot the target machine from the setup UKI and run `pd randomize`, `pd init-decoy --run` (install the
+1. Build: `nix build "path:$PWD#setupUki" --out-link setup.efi` (RAM-only setup environment, which
+   also carries the boot image; `#bootUki` builds the boot image alone, reproducibly).
+2. Write a `pd.toml` (disk, systems, optional volumes).
+3. Boot the target machine from the setup UKI and run `pd randomize`, `pd init-decoy --run` (install the
    decoy OSes), and `pd init-hidden --run` (install the hidden OSes; memorize the printed offset).
+4. Write the boot USB there: `pd usb --output ESP --config pd.toml` (the boot image, plus a keymap or
+   FIDO2 slots next to it if configured).
 5. Boot from the boot USB ([docs/booting.md](docs/booting.md)).
 
 Tests: `python3 -m unittest discover -s tests -t .` (about 15 minutes, needs KVM; see

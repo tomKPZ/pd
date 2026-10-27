@@ -259,6 +259,11 @@ def hidden_low(cfg: Config, offset: int, password: bytes) -> int:
     with setup.boot_volume(cfg.disk, offset, key, create=False) as mnt:
         data_key = (mnt / "data.key").read_bytes()
         table = (mnt / "table.txt").read_text()
+    return region_low(cfg, table, data_key)
+
+
+def region_low(cfg: Config, table: str, data_key: bytes) -> int:
+    """hidden_low for a hidden data region given by its table and key."""
     with setup.data_region(cfg.disk, table, data_key, readonly=True, name="pd-hidden") as dev:
         pool = thinpool.find_pool(cfg.vg, str(dev))
         with thinpool.mapped(pool, writable=False) as devs:

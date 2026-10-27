@@ -73,7 +73,7 @@ class Config:
         "@var_log": "var/log",
         "@var_tmp": "var/tmp",
     })
-    # fido2.txt contents taken from an existing UKI (`--salt-from`), if any.
+    # fido2.txt contents taken from an old boot image (`pd header --old-salt-from`), if any.
     fido2_text: str | None = dataclasses.field(default=None, repr=False)
 
     @staticmethod

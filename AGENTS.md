@@ -51,7 +51,7 @@ order: [README.md](README.md) → [docs/design.md](docs/design.md) →
   15 minutes; `test_churn` is the slowest). Useful variables: `PD_SKIP_NIX_BUILD=1` (reuse `.testenv`),
   `PD_TEST_DIR=/tmp/x PD_KEEP_TEST_DIR=1` (keep disk images and serial logs). `tests/debug_boot.py
   WORKDIR` boots a kept disk into the recovery shell and runs commands from stdin.
-* **Layout:** `boot/` (USB initrd scripts), `plain/` (boot-volume scripts; `plain/hidden/` is installed
+* **Layout:** `boot/` (USB initrd scripts; `pd/disk_class.sh` goes on the USB too, shared with setup), `plain/` (boot-volume scripts; `plain/hidden/` is installed
   only on the hidden side), `target/` (hook, NixOS module, Arch hook and trim unit for installed OSes),
   `pd/` (setup CLI), `nix/` (static tools, kernel modules, boot initrd, tool VM, setup UKI, fake target,
   NixOS test system), `tests/`, `tools/` (`detect_shift.c`, `fido2_hmac.c`). The v1 code is on branch `main` (`git show main:pd.py`).

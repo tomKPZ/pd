@@ -13,12 +13,15 @@ Has the machine or the bare disk, maybe also the USB, but no passwords. Wants to
 installed at all.
 
 What they see:
-* a disk full of random data, with a zeroed first MiB and no partition table. It looks like a drive
-  that was wiped or never provisioned;
+* a disk full of random data from the first byte to the last, with no partition table. It looks like
+  a drive that was wiped with random data;
 * no NVRAM boot entry pointing at a USB, because the boot environment deletes the firmware's entry on
   every boot.
 
-If they also have the USB, the caveat under A2 applies.
+If they also have the USB, the caveat under A2 applies. The USB's boot image is the same public file
+for everyone (its hash matches the release), so on its own it shows that pd was downloaded, not that
+an install exists; files next to it (a FIDO2 enrollment, an explicit salt, custom Argon2 parameters)
+do show an install ([design.md §7.1](design.md#71-uki)).
 
 ### A2. Coercer (in scope; the main design target)
 Gets the boot USB and the decoy password, through seizure plus compelled disclosure, a border search, or
@@ -49,8 +52,10 @@ there.
 > configuration can still hint at it ([stock-boot.md](stock-boot.md#what-could-give-you-away)).
 
 ### Offline password guessing
-Anyone with the USB and a disk image (A1 or A2) can guess passwords offline: the salt is on the USB, and
-a guess is checked by trying to open a boot volume. Argon2 (1 GiB, one pass by default: about 0.3 s, and
+Anyone with a disk image (A1 or A2) can guess passwords offline: the salt is in the disk's first MiB
+([design.md §4.2](design.md#42-the-salt-and-the-disks-edges)), and a guess is checked by trying to open
+a boot volume. (Until the salt moved to the disk, the USB was needed too; the password carried the
+security either way.) Argon2 (1 GiB, one pass by default: about 0.3 s, and
 1 GiB of memory per guess, which limits how many guesses a GPU can run at once) makes each guess
 costly. The defaults favor a short boot over a slow KDF, so the password has to be correspondingly
 strong: each extra random character multiplies an attacker's work by the size of the character set
@@ -62,7 +67,7 @@ doesn't change coercion: a coercer demands the key along with the password.
 
 * **Snapshot adversaries.** Two or more disk images taken at different times show "free" space
   changing. Never clone the disk. Back up hidden data only to another pd setup. The boot USB counts
-  too: `fido2.txt` changes when the hidden side enrolls a security key or is re-keyed, while the
+  too: `fido2.cred` changes when the hidden side enrolls a security key or is re-keyed, while the
   decoy's slots stay the same. Someone who kept a copy of an earlier USB can compare. Re-key or
   enroll the decoy at the same time, and don't let old copies of the USB exist.
 * **Flash forensics.** SSD wear leveling, FTL mapping tables, chip-off analysis. If this matters, two
@@ -78,7 +83,8 @@ doesn't change coercion: a coercer demands the key along with the password.
 
 | Signal | Explanation or mitigation |
 |---|---|
-| pd's scripts on the USB | Recognizable now that the repo is public (see A2). [Stock boot](stock-boot.md) has no pd USB. |
+| pd's scripts on the USB | Recognizable now that the repo is public (see A2). The boot image itself is the public release file, the same for everyone; files next to it can mark an install (A1). [Stock boot](stock-boot.md) has no pd USB. |
+| Files next to the boot image (`BOOTX64.EFI.extra.d/`) | A keymap reveals only your layout. `fido2.cred`, `salt.cred` and `argon2.cred` show that an install exists (not that it has a hidden side). Without FIDO2, keep the defaults and the disk salt, and the USB is just the release file. |
 | No TRIM on an SSD | Common advice for encrypted SSDs; dm-crypt disables discards by default because they leak which blocks are in use. |
 | A shutdown `fstrim` unit in the decoy | An ordinary way to reclaim thin pool space; the pool's `nopassdown` mode is a documented LVM setting. |
 | A barely used decoy | Use the decoy regularly, with realistic data. A decoy with no activity for months, on a machine that is clearly used, is suspicious. |
@@ -88,7 +94,7 @@ doesn't change coercion: a coercer demands the key along with the password.
 | LVM metadata history in the decoy | v2 creates the decoy with stock commands and names ([design.md §6.1](design.md#61-decoy-stock-lvm)). A v1 decoy's history shows pd's unusual commands. Each version also records the `uname` of the machine that ran the command: for a pd decoy, the setup environment's NixOS kernel. That marks the decoy as set up by pd, which the USB shows anyway, not the presence of a hidden side. |
 | The decoy's old data in the hidden side's space | Blocks the decoy freed keep their old contents, and its pool metadata keeps old pointers to them; hidden data written over them would show. `pd compact` and `init-hidden` on a used decoy clear these traces; keep the decoy's data below the hidden side's floor, which the frontier monitor checks ([design.md §10.5](design.md#105-traces-of-the-decoys-old-data)). |
 | Filesystem errors in the decoy | If the hidden side ever overwrote decoy blocks, the decoy would show checksum errors. Prevented by the hidden cap and the frontier monitor. |
-| `fido2.txt` on the USB, but the decoy doesn't use a security key | Points at a side that does. If the hidden side uses FIDO2, enroll the decoy too. |
+| `fido2.cred` on the USB, but the decoy doesn't use a security key | Points at a side that does. If the hidden side uses FIDO2, enroll the decoy too. |
 | A written-down hidden offset | Not a secret in itself, but a note of it next to the machine is a pointer saying "there is a hidden side". Keep it out of the decoy, off the USB, and away from the machine. |
 
 ## Operational rules

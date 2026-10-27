@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 
 from pd import layout as L
-from pd import setup
+from pd import header, setup
 from pd.config import CIPHER_ARGS, Config
 from pd.util import Argon2Params, argon2, cmd, cmd_output, mounted, mountpoint, plain_crypt, write_file
 
@@ -100,7 +100,19 @@ def migrate(cfg: Config, v1_salt: str, decoy_password: bytes, hidden_password: b
         hidden = read_v1_side(cfg, hidden_offset, v1_key(hidden_password, v1_salt, True, v1_params))
         verify_data_region(cfg, hidden)
 
-    write_v2_side(cfg, L.DECOY_PLAIN_OFFSET, argon2(decoy_password, cfg.salt, cfg.argon2), decoy)
+    if not cfg.salt and header.disk_class(cfg.disk) != "plain":
+        # The salt moves to the disk: v1's first MiB is zeros and unused.
+        # Only the header is written; v1's decoy data region reaches the end
+        # of the disk, so the trailer stays as it is.  (A header from an
+        # interrupted earlier run is kept.)
+        with open(cfg.disk, "rb") as f:
+            if f.read(L.HEADER) != bytes(L.HEADER):
+                raise RuntimeError(f"{cfg.disk}'s first MiB isn't all zeros; refusing to overwrite it")
+        if hidden is not None:
+            header.check_header_clear(cfg, hidden.table, hidden.data_key)
+        header.write_edges(cfg.disk, trailer=False)
+    salt = header.salt(cfg)
+    write_v2_side(cfg, L.DECOY_PLAIN_OFFSET, argon2(decoy_password, salt, cfg.argon2), decoy)
     if hidden is not None:
-        write_v2_side(cfg, hidden_offset, argon2(hidden_password, cfg.salt, cfg.argon2), hidden,
+        write_v2_side(cfg, hidden_offset, argon2(hidden_password, salt, cfg.argon2), hidden,
                       decoy=decoy)

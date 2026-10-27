@@ -63,7 +63,7 @@ class Compact(unittest.TestCase):
         work = vm.workdir()
         self.addCleanup(vm.cleanup, work)
         disk = vm.sparse_disk(work / "disk.img", 8 << 30)
-        (work / "pd.toml").write_text(fixture.CONFIG.format(salt="0123456789abcdef0123456789abcdef"))
+        (work / "pd.toml").write_text(fixture.config())
         (work / "install.sh").write_text(fixture.INSTALL.format(
             kernel=env / "bzImage", initrd=env / "faketarget-initrd.cpio.zst"))
         dpw, hpw = fixture.DECOY_PW, fixture.HIDDEN_PW
@@ -118,7 +118,7 @@ class Compact(unittest.TestCase):
         work = vm.workdir()
         self.addCleanup(vm.cleanup, work)
         disk = vm.sparse_disk(work / "disk.img", 8 << 30)
-        (work / "pd.toml").write_text(fixture.CONFIG.format(salt="0123456789abcdef0123456789abcdef"))
+        (work / "pd.toml").write_text(fixture.config())
         (work / "install.sh").write_text(fixture.INSTALL.format(
             kernel=env / "bzImage", initrd=env / "faketarget-initrd.cpio.zst"))
         (work / "fill.sh").write_text(FILL.format(count=90) + 'mkdir -p $PD_ROOT/fake/home/t\nfill $PD_ROOT/fake/home/t\n')
@@ -216,7 +216,7 @@ PY
         work = vm.workdir()
         self.addCleanup(vm.cleanup, work)
         disk = vm.sparse_disk(work / "disk.img", 8 << 30)
-        (work / "pd.toml").write_text(fixture.CONFIG.format(salt="0123456789abcdef0123456789abcdef"))
+        (work / "pd.toml").write_text(fixture.config())
         (work / "install.sh").write_text(fixture.INSTALL.format(
             kernel=env / "bzImage", initrd=env / "faketarget-initrd.cpio.zst"))
         # 4.5 GiB of an 8 GiB disk reaches past the floor; deleted and
@@ -275,7 +275,7 @@ fstrim $d
         echo "UUID $(cryptsetup luksUUID /dev/vda2)"
         """, disks=[disk], timeout=900, log=work / "decoy.log")
         uuid = re.search(r"^UUID (\S+)", out, re.M).group(1)
-        (work / "pd.toml").write_text(fixture.CONFIG.format(salt=uuid))
+        (work / "pd.toml").write_text(fixture.config(uuid))
         _, out = vm.ToolVM(env, work).run(f"""
         printf '%s\\n%s\\n' '{dpw}' '{hpw}' | python3 -m pd init-hidden --config pd.toml \\
             --stock-decoy /dev/vda2 --password-stdin && echo HIDDEN-CREATED || echo HIDDEN-REFUSED

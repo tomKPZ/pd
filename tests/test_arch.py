@@ -5,7 +5,6 @@ boot it through pd.  Needs network access; downloads are cached in
 
 import os
 import pathlib
-import secrets
 import unittest
 
 from pd import usb
@@ -17,7 +16,6 @@ PACKAGES = "base linux mkinitcpio lvm2 cryptsetup btrfs-progs"
 
 CONFIG = """
 disk = "/dev/vda"
-salt = "{salt}"
 vg = "sysvg"
 swap_size = "64M"
 
@@ -66,7 +64,7 @@ class Arch(unittest.TestCase):
         work = vm.workdir()
         self.addCleanup(vm.cleanup, work)
         disk = vm.sparse_disk(work / "disk.img", 8 << 30)
-        (work / "pd.toml").write_text(CONFIG.format(salt=secrets.token_hex(32)))
+        (work / "pd.toml").write_text(CONFIG)
         (work / "install.sh").write_text(INSTALL.format(snapshot=SNAPSHOT, packages=PACKAGES))
         cache = pathlib.Path.home() / ".cache" / "pd-tests"
         vm.ToolVM(env, work).run(

@@ -1,4 +1,7 @@
-"""Migrate a v1-format disk to v2 in place, then boot both sides with v2."""
+"""Migrate a v1-format disk to v2 in place, keeping the salt in the config
+(as installs migrated before the salt moved to the disk did), then move the
+salt to the disk with `pd header`, and boot both sides with v2.  (test_compact
+migrates straight to the disk salt.)"""
 
 import re
 import secrets
@@ -13,7 +16,6 @@ HIDDEN_PW = "hidden password"
 
 CONFIG = """
 disk = "/dev/vda"
-salt = "{salt}"
 vg = "sysvg"
 
 [argon2]
@@ -29,7 +31,7 @@ class MigrateV1(unittest.TestCase):
         work = vm.workdir()
         self.addCleanup(vm.cleanup, work)
         disk = vm.sparse_disk(work / "disk.img", 8 << 30)
-        (work / "pd.toml").write_text(CONFIG.format(salt=secrets.token_hex(32)))
+        (work / "pd.toml").write_text(f'salt = "{secrets.token_hex(32)}"\n' + CONFIG)
         v1_salt = secrets.token_hex(32)
         tool = vm.ToolVM(env, work)
         _, out = tool.run(
@@ -40,8 +42,12 @@ class MigrateV1(unittest.TestCase):
         tool.run(
             f"printf '%s\\n%s\\n' '{DECOY_PW}' '{HIDDEN_PW}' | python3 -m pd migrate-v1 "
             f"--config pd.toml --v1-salt {v1_salt} --v1-hidden-offset {offset} "
-            f"--v1-argon2 1,12,1 --password-stdin",
+            f"--v1-argon2 1,12,1 --password-stdin && "
+            f"printf '%s\\n%s\\n' '{DECOY_PW}' '{HIDDEN_PW}' | python3 -m pd header "
+            f"--config pd.toml --hidden-offset {offset} --password-stdin && "
+            f"sed -i '/^salt = /d' pd.toml",
             disks=[disk], log=work / "migrate.log")
+        self.assertNotIn("salt", (work / "pd.toml").read_text())
 
         cfg = Config.load(work / "pd.toml")
         (work / "install.cpio").write_bytes(usb.install_cpio(cfg))

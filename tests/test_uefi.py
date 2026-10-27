@@ -1,4 +1,6 @@
-"""Boot the real UKI from a USB stick under OVMF, and check that the boot
+"""The release boot image: reproducible, records nothing about the build
+host, and boots from a USB stick under OVMF with per-install files next to
+it (systemd-stub's EFI/BOOT/BOOTX64.EFI.extra.d/*.cred).  The boot
 environment removes the firmware's boot entry for it from NVRAM."""
 
 import pathlib
@@ -11,7 +13,10 @@ from pd import usb
 from tests import fixture, vm
 
 
-def make_esp(env: pathlib.Path, uki: pathlib.Path, out: pathlib.Path) -> pathlib.Path:
+def make_esp(env: pathlib.Path, uki: pathlib.Path, out: pathlib.Path,
+             extra: dict[str, bytes] | None = None) -> pathlib.Path:
+    """A FAT image with the boot image, and `extra` files (name -> content)
+    in EFI/BOOT/BOOTX64.EFI.extra.d/."""
     tools = env / "toolenv" / "bin"
     with open(out, "wb") as f:
         f.truncate(64 << 20)
@@ -20,6 +25,13 @@ def make_esp(env: pathlib.Path, uki: pathlib.Path, out: pathlib.Path) -> pathlib
     subprocess.run([tools / "mmd", "-i", str(out), "::/EFI", "::/EFI/BOOT"], check=True)
     subprocess.run([tools / "mcopy", "-i", str(out), str(uki), "::/EFI/BOOT/BOOTX64.EFI"],
                    check=True)
+    if extra:
+        subprocess.run([tools / "mmd", "-i", str(out), "::/EFI/BOOT/BOOTX64.EFI.extra.d"], check=True)
+        for name, data in extra.items():
+            f = out.parent / name
+            f.write_bytes(data)
+            subprocess.run([tools / "mcopy", "-i", str(out), str(f),
+                            f"::/EFI/BOOT/BOOTX64.EFI.extra.d/{name}"], check=True)
     return out
 
 
@@ -34,17 +46,27 @@ class Uefi(unittest.TestCase):
 
     def test_uki_boot_removes_nvram_entry(self):
         fx = self.fx
-        uki = fx.work / "BOOTX64.EFI"
-        usb.build_uki(fx.cfg, fx.env, uki, cmdline="console=ttyS0 " + usb.BOOT_CMDLINE)
-        # The UKI must not record the build host's OS.
-        data = uki.read_bytes()
+        release = fx.env / usb.IMAGE
+        # Reproducible: building it again here gives the same bytes.
+        rebuilt = fx.work / "rebuilt.efi"
+        usb.build_uki(fx.env, rebuilt)
+        self.assertEqual(rebuilt.read_bytes(), release.read_bytes(), "the boot image isn't reproducible")
+        # It must not record the build host's OS.
+        data = release.read_bytes()
         self.assertIn(b"NAME=Linux\nID=linux\n", data)
         host = pathlib.Path("/usr/lib/os-release")
         if host.exists():
             m = re.search(r'^PRETTY_NAME="?([^"\n]+)', host.read_text(), re.M)
             if m:
                 self.assertNotIn(m.group(1).encode(), data)
-        esp = make_esp(fx.env, uki, fx.work / "esp.img")
+        # The same image with a serial console, so the test can drive it.
+        uki = fx.work / "BOOTX64.EFI"
+        usb.build_uki(fx.env, uki, cmdline="console=ttyS0 " + usb.BOOT_CMDLINE)
+        # The test config's Argon2 parameters aren't the defaults: without
+        # argon2.cred next to the image, the decoy wouldn't open.
+        extra = {f"{k}.cred": v for k, v in usb.credentials(fx.cfg).items()}
+        self.assertIn("argon2.cred", extra)
+        esp = make_esp(fx.env, uki, fx.work / "esp.img", extra)
         ovmf = fx.env / "ovmf" / "FV"
         vars_ = fx.work / "OVMF_VARS.fd"
         shutil.copy(ovmf / "OVMF_VARS.fd", vars_)
@@ -72,8 +94,13 @@ class Uefi(unittest.TestCase):
         b.expect(r"NVRAM: entry_(\w+) order_(\w+)\.")
         self.assertEqual(b.child.match.group(1), "gone")
         self.assertEqual(b.child.match.group(2), "gone")
-        # Driving the real boot path proves the UKI works; the decoy itself is
-        # covered by test_e2e.
+        # systemd-stub passed the file in; with it, the decoy boots.
+        b.sendline("test -s /.extra/credentials/argon2.cred && echo \"CRED: $((40 + 2)).\"")
+        b.expect(r"CRED: 42\.")
+        b.sendline("/early.sh")
+        b.expect("Password: ")
+        b.sendline(fixture.DECOY_PW)
+        b.expect("PD-TARGET: marker=decoy", timeout=180)
 
 
 if __name__ == "__main__":

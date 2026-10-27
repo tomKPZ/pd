@@ -3,7 +3,6 @@ environment with the target disk attached, run pd in its shell, then boot
 the disk through pd."""
 
 import os
-import secrets
 import subprocess
 import tarfile
 import unittest
@@ -19,7 +18,7 @@ class SetupEnv(unittest.TestCase):
         work = vm.workdir()
         self.addCleanup(vm.cleanup, work)
         disk = vm.sparse_disk(work / "disk.img", 8 << 30)
-        config = fixture.CONFIG.format(salt=secrets.token_hex(32))
+        config = fixture.config()
         (work / "pd.toml").write_text(config)
 
         # A second disk carries the config and the fake OS to install, as a
@@ -64,6 +63,11 @@ class SetupEnv(unittest.TestCase):
                    "echo decoy > $PD_ROOT/fake/etc/pd-marker")
         run(f"printf '%s\\n' '{fixture.DECOY_PW}' | pd init-decoy --config payload/pd.toml "
             f"--password-stdin --run '{install}'")
+        # The boot stick, from the setup environment's own boot image: the
+        # test config's Argon2 parameters aren't the defaults, so they go next to it.
+        run("mkdir /tmp/esp && pd usb --output /tmp/esp --config payload/pd.toml && "
+            "test -s /tmp/esp/EFI/BOOT/BOOTX64.EFI && "
+            "test -s /tmp/esp/EFI/BOOT/BOOTX64.EFI.extra.d/argon2.cred")
         b.sendline("sync; poweroff -f")
         b.child.expect(vm.pexpect.EOF, timeout=60)
 

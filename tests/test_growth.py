@@ -16,11 +16,12 @@ class Growth(unittest.TestCase):
         print("\n" + visualize.render(m))
         runs = visualize.runs(m)
         mib = L.MIB >> 20
-        # Expected: zero header, then everything the decoy wrote, one large
-        # untouched gap, then everything the hidden side wrote (its data,
-        # its boot volume) and the decoy's end-of-disk metadata.
-        self.assertFalse(runs[0][0], "first MiB must be zero")
-        self.assertEqual(runs[0][2], 0)
+        # Expected: the random header (the salt's), then everything the decoy
+        # wrote, one large untouched gap, then everything the hidden side
+        # wrote (its data, its boot volume), the decoy's end-of-disk
+        # metadata, and the random trailer.
+        self.assertTrue(runs[0][0], "the first MiB holds the random header")
+        self.assertTrue(m[-1], "the last MiB holds the random trailer")
         gaps = [r for r in runs if not r[0]]
         biggest = max(gaps, key=lambda r: r[2] - r[1])
         size_mib = len(m)

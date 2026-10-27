@@ -4,7 +4,6 @@ holding the fake target OS."""
 import dataclasses
 import pathlib
 import re
-import secrets
 
 from pd import usb
 from pd.config import Config
@@ -13,9 +12,9 @@ from tests import vm
 DECOY_PW = "decoy password"
 HIDDEN_PW = "hidden password"
 
+# The salt comes from the disk unless config() is given one.
 CONFIG = """
 disk = "/dev/vda"
-salt = "{salt}"
 vg = "sysvg"
 swap_size = "64M"
 hidden_cap = 0.4
@@ -36,6 +35,13 @@ cmdline = "console=ttyS0 panic=-1 root=/dev/sysvg/root rootflags=subvol=@"
 name = "data"
 fs = "xfs"
 """
+
+
+
+def config(salt: str | None = None) -> str:
+    """CONFIG, with `salt` set if given (stock decoys, explicit salts)."""
+    return (f'salt = "{salt}"\n' if salt else "") + CONFIG
+
 
 INSTALL = """
 set -eu
@@ -76,7 +82,7 @@ def make(size: int = 8 << 30, kernel=None, initrd=None, randomize: bool = True) 
     initrd = initrd or env / "faketarget-initrd.cpio.zst"
     work = vm.workdir()
     disk = vm.sparse_disk(work / "disk.img", size)
-    (work / "pd.toml").write_text(CONFIG.format(salt=secrets.token_hex(32)))
+    (work / "pd.toml").write_text(config())
     (work / "install.sh").write_text(INSTALL.format(kernel=kernel, initrd=initrd))
     cfg = Config.load(work / "pd.toml")
     script = f"""

@@ -50,7 +50,9 @@ is booted from a live system ([stock-boot.md §4](stock-boot.md#4-booting)).
 
 * It's a normal shell. Typing `exit` powers the machine off.
 * If the right password doesn't work, check that:
-  * the right disk is attached;
+  * the right disk is attached. With several disks that look random, name it:
+    `PD_DISK=/dev/nvme0n1 /early.sh`. The boot reads each disk's salt from its first MiB, so a disk
+    whose first MiB was overwritten (beyond a partition table at its very start) can't be opened;
   * the offset was typed correctly (hidden boot only);
   * you typed the password for the boot environment's keyboard layout: US unless `keymap` was set
     when the USB was built.
@@ -62,10 +64,12 @@ is booted from a live system ([stock-boot.md §4](stock-boot.md#4-booting)).
   until it's unplugged and plugged in again; after eight in total it locks for good. `No security key
   found.` means no plugged-in key holds one of the USB's credentials.
 
-## Rebuilding the USB
+## Updating or replacing the USB
 
-The installed OSes update their own kernels; the USB never needs to know about it. Rebuild the USB only
-to update the boot environment itself.
+The installed OSes update their own kernels; the USB never needs to know about it. Update it only to
+update the boot environment itself.
 
-* **v2:** `pd usb --salt-from OLD.EFI` takes the salt (and `fido2.txt`, if the config has none) from the existing UKI ([install.md](install.md#3-build-the-boot-usb)).
+* **v2:** replace `EFI/BOOT/BOOTX64.EFI` with a newer boot image; the files next to it stay. A lost
+  stick is replaced by writing a new one (`pd usb`, [install.md](install.md#3-the-boot-usb)): it needs
+  `pd.toml` only for the files next to the image (FIDO2, a keymap, custom Argon2 parameters).
 * **v1:** set `STATIC_SALT`/`SALT` to the original salt and rerun the UKI build ([v1.md](v1.md)).

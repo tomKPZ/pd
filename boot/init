@@ -31,8 +31,9 @@ for _ in 1 2 3 4 5 6; do
     sleep 0.25
 done
 
-# The configured console keymap, for typing the password (local console only).
-[ -r /keymap.bmap ] && loadkmap </keymap.bmap 2>/dev/null
+# The configured console keymap, for typing the password (local console only):
+# keymap.cred next to the boot image, passed in by systemd-stub.
+[ -r /.extra/credentials/keymap.cred ] && loadkmap </.extra/credentials/keymap.cred 2>/dev/null
 
 # One session for both, so output isn't lost when a session leader exits.
 setsid cttyhack sh -c '/early.sh; echo "Starting recovery shell. Exit to power off."; exec sh -l'

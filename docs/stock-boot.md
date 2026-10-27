@@ -144,7 +144,8 @@ discard settings are fixed (§1):
 
 1. **Write `pd.toml`:**
    * `disk` is the whole disk, e.g. `/dev/nvme0n1`.
-   * `salt` is something you can reproduce at boot. With an attached header, use the decoy's LUKS UUID
+   * `salt` is required (a pd disk keeps its salt in its first MiB, but a stock disk's first MiB is a
+     partition table), and must be something you can reproduce at boot. With an attached header, use the decoy's LUKS UUID
      (`cryptsetup luksUUID /dev/nvme0n1p2`): it's random, and the hidden boot reads it back. Otherwise
      use a string you'll remember: at least 8 characters, from letters, digits, `.`, `_` and `-`. With
      a detached header the UUID is in the header file, which isn't at hand during the hidden boot unless
@@ -216,6 +217,12 @@ the hidden side again.
 If cryptsetup reports the disk as busy, the live system is using one of its partitions (e.g. it mounted
 the ESP): unmount it. The hidden side maps the whole disk, and the kernel refuses that while a partition
 is in use.
+
+**A pd disk can be booted this way too**, without its USB (if it's lost, or to boot from a borrowed
+live system): use `-o 2048` for the decoy or the hidden offset, the whole disk as `DISK`, and as `SALT`
+the disk's own, read from its first MiB:
+`"$(od -An -tx1 -v -j 1048544 -N 32 /dev/nvme0n1 | tr -d ' \n')"` (design.md §4.2). This doesn't work
+for a side enrolled for FIDO2.
 
 To practice without booting anything, run the first three commands, then `mount -o
 ro,rescue=nologreplay /dev/mapper/cryptboot /mnt/boot && ls /mnt/boot`, and undo it with `umount /mnt/boot; cryptsetup close

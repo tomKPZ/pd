@@ -1,5 +1,8 @@
 # Migrating a v1 install to v2
 
+This also covers moving an earlier v2 install's salt from the USB to the disk
+([below](#moving-the-salt-to-the-disk)).
+
 > [!CAUTION]
 > `pd migrate-v1` is tested only against v1-format disks built in QEMU (`tests/make_v1.py`,
 > `tests/test_migrate.py`). It rewrites both boot volumes in place. Back up nothing to unencrypted
@@ -14,10 +17,11 @@ the LUKS volume key *is* v2's `data.key`, and the data regions stay exactly as t
 
 What does change:
 * **Both plain volumes are re-keyed.** v2 uses a 64-byte Argon2 output and no hidden salt suffix, so
-  both plain keys change. Take the opportunity to use a new salt.
+  both plain keys change. The salt moves to the disk: v1's first MiB is zeros and unused, and becomes
+  the random header holding the salt (design.md §4.2).
 * **New contents in each plain volume:** `data.key` (the extracted volume key), `crypt.env`, the v2
   `late.sh`, and `bin/` with static tools. `header.dat` goes away.
-* **New hook in every target OS**, plus a new USB.
+* **New hook in every target OS**, plus a new USB: the release boot image.
 
 ## What stays v1-shaped
 
@@ -45,7 +49,7 @@ What does change:
      add the v2 `pd` hook after it.
 
    Rebuild the initrds and confirm each OS still boots with the v1 USB.
-2. **Boot a throwaway environment** with pd, write a v2 config with a **new** salt (`pd salt`), and run:
+2. **Boot a throwaway environment** with pd, write a v2 config (without `salt`), and run:
    ```sh
    pd migrate-v1 --config pd.toml --v1-salt <v1 salt> --v1-hidden-offset <v1 hidden sector>
    ```
@@ -54,10 +58,14 @@ What does change:
       volume read-only;
    2. extracts the LUKS volume key (`cryptsetup luksDump --dump-volume-key`, in `/run` only);
    3. checks that plain dm-crypt with that key shows the LVM PV;
-   4. only after both sides pass, re-creates each boot volume in place under the v2 key, keeping
+   4. only after both sides pass, checks that the first MiB is still all zeros and that the hidden side
+      has nothing in the 256 MiB chunk at the start of the disk (v1's hidden region starts at 0; its
+      pool reaches that chunk last), and writes the random header. The trailer is left alone: v1's decoy
+      region reaches the end of the disk. An interrupted run keeps the header it wrote;
+   5. re-creates each boot volume in place under the v2 key (with the disk's salt), keeping
       `table.txt` and `systems/*/env.sh`, replacing `extra.sh` with the v2 versions, and adding the
       frontier monitor to the hidden side.
-3. **Write the v2 USB** with the new salt (`pd usb`). Boot both sides.
+3. **Write the v2 USB** (`pd usb`, [install.md §3](install.md#3-the-boot-usb)). Boot both sides.
 4. **Remove the v1 compatibility** (`pd.v1Compat`, or the guarded `mycrypt` hook).
 
 Rollback: keep the v1 USB until both sides boot with v2. The data regions are never modified, but the
@@ -80,3 +88,23 @@ decoy from an earlier session, so even without compacting, it takes a while on a
 `pd compact` needs the decoy's filesystems to be btrfs, XFS or ext4 (it mounts them to trim) and LVM's
 spare metadata LV, which v1's pool has. *(tested: `test_compact` builds a v1 decoy that was nearly full,
 migrates it, compacts it, adds a hidden side and boots both.)*
+
+## Moving the salt to the disk
+
+Installs set up (or migrated) before the salt moved to the disk keep it in the config and on the USB
+(`salt.cred`, or `salt.txt` inside an old boot image), and their first MiB is zeros. They keep working
+that way. To move the salt to the disk, from the setup environment:
+```sh
+pd header --config pd.toml --hidden-offset N    # or --no-hidden; asks for both passwords
+```
+It reads the old salt from the config (or `--old-salt S`, or `--old-salt-from OLD.EFI` to take it from
+an old boot image), checks that the first MiB is all zeros and that both sides open, saves the old salt
+next to the config (`pd.toml.old-salt`), writes the random header (and the trailer, where the layout
+leaves it unused), then re-keys each side to the new salt, the same way `pd rekey` does. Interrupted,
+run it again: each side opens with one of the two salts, and it continues. Then remove `salt` from the
+config and write the boot USB again (`pd usb`): it's just the release image now, plus any FIDO2 or
+keymap files. *(tested: `test_migrate` migrates a v1 disk with an explicit salt, moves it to the disk,
+and boots both sides.)*
+
+As with any re-key, an interruption *while* a boot volume is being rewritten loses that boot volume,
+since its only complete copy is in RAM.

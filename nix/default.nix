@@ -134,8 +134,19 @@ let
   # The tool VM also has ext4 and f2fs, for the filesystem survey.
   toolModulesClosure = mkModulesClosure (rootModules ++ [ "xfs" "ext4" "f2fs" ]);
 
-  # The boot environment's initrd, without per-install files (salt and
-  # early_env.sh, which `pd usb` appends as a second cpio).
+  # early_env.sh and the kernel command line, from pd/usb.py (one source for
+  # both the boot image and pd).
+  earlyEnv = pkgs.runCommand "early_env.sh" { nativeBuildInputs = [ pkgs.python3Minimal ]; } ''
+    PYTHONPATH=${src} PYTHONDONTWRITEBYTECODE=1 python3 -c \
+      'from pd import usb; print(usb.early_env(), end="")' >$out
+  '';
+  bootCmdline = pkgs.runCommand "boot-cmdline" { nativeBuildInputs = [ pkgs.python3Minimal ]; } ''
+    PYTHONPATH=${src} PYTHONDONTWRITEBYTECODE=1 python3 -c \
+      'from pd import usb; print(usb.BOOT_CMDLINE, end="")' >$out
+  '';
+
+  # The boot environment's initrd.  The same for every install: per-install
+  # files come from next to the boot image (pd/usb.py).
   bootInitrd = pkgs.runCommand "pd-boot-initrd.cpio.zst" {
     nativeBuildInputs = [ pkgs.cpio pkgs.zstd pkgs.findutils ];
   } ''
@@ -153,10 +164,21 @@ let
     fi
     install -m755 ${src}/boot/init $root/init
     install -m755 ${src}/boot/early.sh $root/early.sh
+    install -m644 ${src}/pd/disk_class.sh $root/disk_class.sh
+    install -m644 ${earlyEnv} $root/early_env.sh
     chmod -R u+w $root
     (cd $root && find . -print0 | sort -z |
       cpio --null -o -H newc --reproducible --owner=0:0 --quiet) |
       zstd -19 -T0 -q >$out
+  '';
+
+  # The release boot image (docs/design.md §7.1): identical for every
+  # install, and reproducible, so a download can be checked against a build.
+  bootOsRelease = pkgs.writeText "os-release" "NAME=Linux\nID=linux\n";
+  bootUki = pkgs.runCommand "BOOTX64.EFI" { nativeBuildInputs = [ pkgs.systemdUkify ]; } ''
+    ukify build --linux ${kernel}/bzImage --initrd ${bootInitrd} \
+      --stub ${pkgs.systemd}/lib/systemd/boot/efi/linuxx64.efi.stub \
+      --cmdline "$(cat ${bootCmdline})" --os-release "@${bootOsRelease}" --output $out
   '';
 
   # Contents of the encrypted boot volume, minus per-install files.
@@ -219,7 +241,7 @@ let
 
   toolvm = import ./toolvm.nix { inherit pkgs kernel plainTree bootTools fido2Hmac; modulesClosure = toolModulesClosure; };
 
-  setupEnv = import ./setup-env.nix { inherit pkgs kernel plainTree src fido2Hmac; modulesClosure = setupModulesClosure; };
+  setupEnv = import ./setup-env.nix { inherit pkgs kernel plainTree src fido2Hmac bootUki keymaps; modulesClosure = setupModulesClosure; };
 
   faketarget = import ./faketarget.nix { inherit pkgs modulesClosure bootTools plainTools src; };
 
@@ -227,6 +249,7 @@ let
   testenv = pkgs.linkFarm "pd-testenv" [
     { name = "bzImage"; path = "${kernel}/bzImage"; }
     { name = "boot-initrd.cpio.zst"; path = bootInitrd; }
+    { name = "BOOTX64.EFI"; path = bootUki; }
     { name = "toolvm-initrd.cpio.zst"; path = toolvm.initrd; }
     { name = "toolenv"; path = toolvm.toolEnv; }
     { name = "plain"; path = plainTree; }
@@ -245,7 +268,7 @@ let
   ];
 in
 {
-  inherit testenv toolvm setupEnv pdPyz;
+  inherit testenv toolvm setupEnv pdPyz bootUki;
   inherit bootTools plainTools bootInitrd plainTree modulesClosure detectShift fido2Hmac lvm2Static;
   kernelImage = "${kernel}/bzImage";
   kernel = kernel;

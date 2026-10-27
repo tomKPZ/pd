@@ -104,7 +104,7 @@ def make_stock(test: unittest.TestCase) -> Stock:
     test.assertTrue(before[2][1].startswith("decoy "))
 
     # The salt is the decoy's LUKS UUID, read back at boot.
-    (work / "pd.toml").write_text(fixture.CONFIG.format(salt=uuid))
+    (work / "pd.toml").write_text(fixture.config(uuid))
     _, out = vm.ToolVM(env, work).run(FINGERPRINT + f"""
     printf '%s\\n%s\\n' '{DECOY_PW}' '{HIDDEN_PW}' | python3 -m pd init-hidden --config pd.toml \\
         --stock-decoy /dev/vda2 --password-stdin --run 'sh /work/install.sh hidden' | tee hidden.txt

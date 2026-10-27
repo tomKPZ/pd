@@ -21,7 +21,7 @@ import pathlib
 import subprocess
 
 from pd import layout as L
-from pd import rekey, setup, thinpool
+from pd import header, rekey, setup, thinpool
 from pd.config import Config
 from pd.opener import thin_table
 from pd.util import argon2, cmd, cmd_output, dm_device, mountpoint
@@ -292,10 +292,12 @@ def move(cfg: Config, new_disk: str, decoy_password: bytes,
             report("randomizing the new disk")
             setup.randomize(new_disk)
         else:
-            setup.zero_header(new_disk)
+            header.write_edges(new_disk)
+        # The new disk has its own salt (unless the config sets one).
+        salt = header.salt(new_cfg)
 
         report("creating the decoy on the new disk")
-        key = argon2(decoy_password, cfg.salt, cfg.argon2)
+        key = argon2(decoy_password, salt, cfg.argon2)
         decoy_key = os.urandom(64)
         decoy_table = L.linear_table(L.DATA_START, L.data_end(d))
         with setup.boot_volume(new_disk, L.DECOY_PLAIN_OFFSET, key, create=True) as mnt:
@@ -314,7 +316,7 @@ def move(cfg: Config, new_disk: str, decoy_password: bytes,
         top = setup.decoy_top(segs, pe_start, L.DATA_START, d)
         hl = L.hidden_layout(top, memorable=cfg.memorable_offset)
         setup.check_no_overlap(segs, pe_start, hl)
-        hkey = argon2(old_hidden.password, cfg.salt, cfg.argon2)
+        hkey = argon2(old_hidden.password, salt, cfg.argon2)
         hidden_key = os.urandom(64)
         frontier = old_hidden.snapshot.get("frontier.env")
         extra_env = b"".join(line + b"\n" for line in (frontier[2] if frontier else b"").splitlines()

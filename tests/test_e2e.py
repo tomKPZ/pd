@@ -102,6 +102,44 @@ class EndToEnd(unittest.TestCase):
         b.sendline(fixture.DECOY_PW)
         b.expect("kexec_core: Starting new kernel", timeout=120)
 
+    def test_disk_classes_and_order(self):
+        """Each disk has its own salt.  Empty and small disks are never tried;
+        a pd disk whose first sectors got a partition table still boots
+        (tried last), since the salt at the end of the first MiB survives."""
+        import os
+        import subprocess
+        work = self.fx.work
+        blank = vm.sparse_disk(work / "blank.img", 4 << 30)
+        small = work / "small.img"
+        small.write_bytes(os.urandom(1 << 20))
+        with open(small, "ab") as f:
+            f.truncate(1 << 30)
+        gpt = work / "gpt.img"
+        subprocess.run(["cp", "--sparse=always", "--reflink=auto", str(self.fx.disk), str(gpt)], check=True)
+        with open(gpt, "r+b") as f:
+            f.seek(510)
+            f.write(b"\x55\xaa" + b"EFI PART")
+        log = open(work / "boot-order.log", "w")
+        self.addCleanup(log.close)
+        b = vm.BootVM(self.fx.env, [self.fx.env / "boot-initrd.cpio.zst", work / "install.cpio"],
+                      [blank, small, gpt], log=log)
+        self.addCleanup(b.close)
+        b.expect("Password: ")
+        b.sendline("")
+        b.expect("~ # ")
+        # The disks may enumerate in any order: match them by size.
+        b.sendline('. /disk_class.sh; for d in vda vdb vdc; do '
+                   'echo "CLASS-$(blockdev --getsize64 /dev/$d)=$(disk_class /dev/$d)."; done')
+        classes = {}
+        for _ in range(3):
+            b.expect(r"CLASS-(\d+)=(\w+)\.")
+            classes[int(b.child.match.group(1))] = b.child.match.group(2)
+        self.assertEqual(classes, {4 << 30: "blank", 1 << 30: "small", gpt.stat().st_size: "used"})
+        b.sendline("/early.sh")
+        b.expect("Password: ")
+        b.sendline(fixture.DECOY_PW)
+        b.expect("PD-TARGET: marker=decoy", timeout=180)
+
 
 if __name__ == "__main__":
     unittest.main()

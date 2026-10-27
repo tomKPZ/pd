@@ -65,8 +65,9 @@ class Monitor(unittest.TestCase):
         b.expect("Password: ")
         b.sendline("")
         b.expect("~ # ")
-        b.sendline(". /early_env.sh; printf %s '" + fixture.DECOY_PW + "' | "
-                   "argon2 \"$(cat /salt.txt)\" $ARGON2_ARGS | xxd -r -p > /run/k; "
+        b.sendline(". /early_env.sh; . /disk_class.sh; A=$(cat /.extra/credentials/argon2.cred); "
+                   "printf %s '" + fixture.DECOY_PW + "' | "
+                   "argon2 \"$(disk_salt /dev/vda)\" $A | xxd -r -p > /run/k; "
                    "cryptsetup open --type plain --readonly $CRYPT_ARGS --offset 2048 "
                    "--size 522240 --key-file /run/k /dev/vda c; mkdir -p /m; "
                    "mount -o ro,rescue=nologreplay /dev/mapper/c /m; "

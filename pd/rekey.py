@@ -10,7 +10,7 @@ import os
 import pathlib
 import stat
 
-from pd import fido2
+from pd import fido2, header
 from pd import layout as L
 from pd import setup
 from pd.config import Config
@@ -93,7 +93,7 @@ def rekey(cfg: Config, offset: int, old_password: bytes, new_password: bytes,
     if found is None:
         raise RuntimeError("the current password doesn't open a boot volume at that offset")
     old_key, slot = found
-    new_a = argon2(new_password, new_salt or cfg.salt, new_argon2 or cfg.argon2)
+    new_a = argon2(new_password, new_salt or header.salt(cfg), new_argon2 or cfg.argon2)
     if slot is None:
         if new_a == old_key:
             raise RuntimeError("the new password and salt derive the same key")
@@ -146,7 +146,7 @@ def enroll(cfg: Config, offset: int, password: bytes, next_key=no_more_keys) -> 
         raise RuntimeError("that password doesn't open a boot volume at that offset"
                            + (" (with the plugged-in security key)" if fido2.load(cfg) else ""))
     key, slot = found
-    a = argon2(password, cfg.salt, cfg.argon2)
+    a = argon2(password, header.salt(cfg), cfg.argon2)
     side = fido2.side_slot(offset) if slot is None else slot
     new_key = key if slot is not None else os.urandom(fido2.KEY_LEN)
     creds = fido2.load(cfg)

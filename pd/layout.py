@@ -7,16 +7,20 @@ KIB = 1024
 MIB = 1024 * KIB
 GIB = 1024 * MIB
 
-ZERO_HEADER = 1 * MIB
-# The last MiB is zeroed and left unused too, so a backup GPT written by a
-# tool that "initializes" the disk can't land on the decoy's pool metadata.
-ZERO_TRAILER = 1 * MIB
+# The disk's edges (docs/design.md §3): random data, never used for data.
+# The first MiB leaves room for a partition table and holds the salt in its
+# last 32 bytes (§4); the last MiB is where a tool that "initializes" the disk
+# writes a backup GPT, which then can't land on the decoy's pool metadata.
+HEADER = 1 * MIB
+TRAILER = 1 * MIB
+SALT_LEN = 32
+SALT_OFFSET = HEADER - SALT_LEN
 PLAIN_SIZE = 255 * MIB
-DATA_START = ZERO_HEADER + PLAIN_SIZE  # 256 MiB
+DATA_START = HEADER + PLAIN_SIZE  # 256 MiB
 REVERSE_CHUNK = 256 * MIB
 ALIGN = 1 * MIB
 
-DECOY_PLAIN_OFFSET = ZERO_HEADER  # sector 2048
+DECOY_PLAIN_OFFSET = HEADER  # sector 2048
 
 
 def sectors(nbytes: int) -> int:
@@ -34,8 +38,8 @@ def disk_size(raw_size: int) -> int:
 
 
 def data_end(d: int) -> int:
-    """End of the decoy's data region: D minus the zero trailer."""
-    return d - ZERO_TRAILER
+    """End of the decoy's data region: D minus the trailer."""
+    return d - TRAILER
 
 
 def linear_table(start: int, end: int, dev: str = "DISK") -> str:
