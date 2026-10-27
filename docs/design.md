@@ -829,7 +829,8 @@ floor is the defence.
   * a minimal NixOS system using `target/nixos/pd.nix`, for integration tests;
   * the RAM-only setup UKI (`setupUki`), which carries the boot image and keymaps for `pd usb`.
 
-  Build with `nix build "path:$PWD#testenv"` (and `#setupUki`, `#bootUki`). The `path:` form is needed because Nix's libgit2 can't
+  Build with `nix build "path:$PWD#testenv"` (and `#setupUki`, `#bootUki`; `#release` is everything
+  a release publishes, [release.md](release.md)). The `path:` form is needed because Nix's libgit2 can't
   read repositories using the reftable ref format.
 * **Test.** Tests run QEMU (KVM, OVMF) as an ordinary user against sparse image files. Setup runs as
   root inside the tool VM; nothing needs root on the host, and no device-mapper state is created there.
@@ -963,6 +964,7 @@ Decisions made while implementing v2:
 | D57 | The boot tries disks in order: never those too small or whose salt bytes are all equal, partitioned-looking ones last, largest first; one Argon2 run (and FIDO2 touch) per disk tried | Each disk has its own salt; with one pd disk the right password still costs one key derivation (§7.2) | agreed |
 | D58 | The release image has fixed Argon2 parameters; keymap, FIDO2 slots, other Argon2 parameters and an explicit salt are optional files in `BOOTX64.EFI.extra.d/`, which systemd-stub passes to the initrd | The image itself stays identical for everyone (§7.1) | agreed |
 | D59 | No seed or fill key is kept to prove the disk's edges are filler | The free space can never be proven unused, so proving only the header invites the question why, and the fill key would expose the hidden side (§2.4) | agreed |
+| D60 | Prebuilt releases from GitHub Actions: every published file is reproducible and rebuild-checked; releases build without any binary cache but cache.nixos.org, carry `SHA256SUMS` and a build-provenance attestation, and are tested first; third-party actions are pinned to commit SHAs | Users download instead of building; anyone can check a download against the source (release.md) | agreed |
 
 ---
 

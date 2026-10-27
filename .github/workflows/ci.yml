@@ -1,0 +1,83 @@
+# Every push and pull request: build what a release publishes, check that it
+# rebuilds bit for bit, and run the unit tests and a fast subset of the QEMU
+# tests.  The whole suite runs nightly (nightly.yml).  docs/release.md.
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # A normal checkout, so the git flake reference works (and copies only
+  # tracked files); locally the scripts default to path:$PWD.
+  FLAKE: .
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Free disk space
+        run: ci/free-disk.sh
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702  # v31.11.2
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            max-jobs = auto
+      # Optional binary cache for pd's own builds (static tools, CanoKey
+      # QEMU): set the repository variable CACHIX_CACHE, and the secret
+      # CACHIX_AUTH_TOKEN to push to it.  Without it, everything not on
+      # cache.nixos.org is built from source each run.
+      - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866  # v17
+        if: vars.CACHIX_CACHE != ''
+        with:
+          name: ${{ vars.CACHIX_CACHE }}
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - name: Build the published outputs
+        run: ci/collect-release.sh dist
+      - name: Build the test environment
+        run: nix build -j auto --print-build-logs --out-link .testenv .#testenv
+      - name: Unit tests
+        env:
+          PD_SKIP_NIX_BUILD: "1"
+        run: >-
+          nix develop .# -c python3 -m unittest -v
+          tests.test_layout tests.test_placement tests.test_usb tests.test_monitor_awk
+      - name: Reproducibility (every published output rebuilt bit for bit)
+        run: ci/rebuild-check.sh
+      - name: Enable KVM
+        run: ci/enable-kvm.sh
+      - name: QEMU tests (fast subset)
+        env:
+          PD_SKIP_NIX_BUILD: "1"
+          PD_TEST_DIR: ${{ runner.temp }}/pd-tests
+          PD_KEEP_TEST_DIR: "1"
+        run: >-
+          nix develop .# -c python3 -m unittest -v
+          tests.test_smoke tests.test_e2e tests.test_uefi
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: test-logs
+          path: ${{ runner.temp }}/pd-tests/**/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload the published outputs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: pd-${{ github.sha }}
+          path: dist/
+          retention-days: 14
+

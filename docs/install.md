@@ -23,6 +23,9 @@ adapters, but no Wi-Fi.
 
 ## 1. Build
 
+Or download a release instead: `pd-setup.efi` and `BOOTX64.EFI`, with `SHA256SUMS` and a
+build-provenance attestation to check them against ([release.md](release.md)).
+
 On any x86_64 Linux machine with Nix:
 ```sh
 nix build "path:$PWD#setupUki" --out-link setup.efi   # RAM-only setup environment (about 210 MB)

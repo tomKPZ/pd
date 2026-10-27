@@ -16,6 +16,9 @@
         # The release boot image (docs/design.md §7.1).
         bootUki = pd.bootUki;
         pdPyz = pd.pdPyz;
+        setupInitrd = pd.setupEnv.initrd;
+        # What a release publishes (docs/release.md).
+        inherit (pd) release bootToolsTarball;
         inherit (pd) testenv bootTools plainTools bootInitrd plainTree modulesClosure detectShift fido2Hmac kernel;
         default = pkgs.linkFarm "pd" [
           { name = "bzImage"; path = pd.kernelImage; }
@@ -24,6 +27,12 @@
           { name = "stub.efi"; path = pd.stub; }
           { name = "ovmf"; path = pd.ovmf; }
         ];
+      };
+
+      # For running the tests: Python with pexpect, and QEMU (the CanoKey build
+      # the FIDO2 tests use, so the same one runs everything).
+      devShells.${system}.default = pkgs.mkShell {
+        packages = [ (pkgs.python3.withPackages (ps: [ ps.pexpect ])) pd.qemuCanokey ];
       };
 
       nixosModules.default = ./target/nixos/pd.nix;

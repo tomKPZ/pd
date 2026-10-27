@@ -167,6 +167,9 @@ let
     install -m644 ${src}/pd/disk_class.sh $root/disk_class.sh
     install -m644 ${earlyEnv} $root/early_env.sh
     chmod -R u+w $root
+    # Fixed times (cpio --reproducible doesn't touch them), so the initrd,
+    # and with it the boot image, is reproducible.
+    find $root -exec touch -h -d @1 {} +
     (cd $root && find . -print0 | sort -z |
       cpio --null -o -H newc --reproducible --owner=0:0 --quiet) |
       zstd -19 -T0 -q >$out
@@ -209,12 +212,22 @@ let
     test -s $out/de.bmap
   '';
 
-  # pd as a single file, for live ISOs: `python3 pd.pyz open ...`.
+  # pd as a single file, for live ISOs: `python3 pd.pyz open ...`.  The
+  # copied files get a fixed time (zip can't store anything before 1980), so
+  # the archive is reproducible.
   pdPyz = pkgs.runCommand "pd.pyz" { nativeBuildInputs = [ pkgs.python3 ]; } ''
     mkdir src
     cp -r --no-preserve=mode ${src}/pd src/
     rm -rf src/pd/__pycache__
+    find src -exec touch -h -d @315532800 {} +
     python3 -m zipapp src -o $out -p "/usr/bin/env python3" -m "pd.cli:entry"
+  '';
+
+  # The boot volume's static tools and scripts as a tarball, for booting from
+  # a live system without pd's USB (docs/stock-boot.md).  Reproducible.
+  bootToolsTarball = pkgs.runCommand "pd-boot-tools.tar.gz" { } ''
+    tar --sort=name --mtime=@1 --owner=0 --group=0 --numeric-owner --format=gnu \
+      -C ${plainTree} --transform 's,^\.,pd-boot-tools,' -cf - . | gzip -9n >$out
   '';
 
   # QEMU with CanoKey, an emulated FIDO2 security key (tests only), patched
@@ -268,7 +281,15 @@ let
   ];
 in
 {
-  inherit testenv toolvm setupEnv pdPyz bootUki;
+  inherit testenv toolvm setupEnv pdPyz bootUki bootToolsTarball qemuCanokey;
+  # Everything a release publishes (.github/workflows/release.yml), at the
+  # names it publishes them under.
+  release = pkgs.linkFarm "pd-release" [
+    { name = "BOOTX64.EFI"; path = bootUki; }
+    { name = "pd-setup.efi"; path = setupEnv.uki; }
+    { name = "pd.pyz"; path = pdPyz; }
+    { name = "pd-boot-tools.tar.gz"; path = bootToolsTarball; }
+  ];
   inherit bootTools plainTools bootInitrd plainTree modulesClosure detectShift fido2Hmac lvm2Static;
   kernelImage = "${kernel}/bzImage";
   kernel = kernel;

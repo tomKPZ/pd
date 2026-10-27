@@ -71,6 +71,7 @@ The details are in [docs/design.md](docs/design.md).
 | [docs/stock-boot.md](docs/stock-boot.md) | Without pd's USB: a stock decoy, and the hidden side booted from a live system |
 | [docs/v1.md](docs/v1.md) | Exact as-built description of v1 (what deployed installs run) |
 | [docs/migration.md](docs/migration.md) | Moving a v1 install to v2 |
+| [docs/release.md](docs/release.md) | Prebuilt releases, checking a download, CI |
 | [docs/roadmap.md](docs/roadmap.md) | Milestones and ideas |
 | [docs/history.md](docs/history.md) | How the design evolved, reconstructed from the git history |
 | [AGENTS.md](AGENTS.md) | Orientation and rules for coding agents working on this repo |
@@ -79,7 +80,8 @@ The details are in [docs/design.md](docs/design.md).
 
 [docs/install.md](docs/install.md) has the full procedure. In short:
 
-1. Build: `nix build "path:$PWD#setupUki" --out-link setup.efi` (RAM-only setup environment, which
+1. Build (or download a release: the setup UKI, the boot image and `pd.pyz`, reproducible and
+   attested, [docs/release.md](docs/release.md)): `nix build "path:$PWD#setupUki" --out-link setup.efi` (RAM-only setup environment, which
    also carries the boot image; `#bootUki` builds the boot image alone, reproducibly).
 2. Write a `pd.toml` (disk, systems, optional volumes).
 3. Boot the target machine from the setup UKI and run `pd randomize`, `pd init-decoy --run` (install the

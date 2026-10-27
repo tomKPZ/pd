@@ -1,0 +1,69 @@
+# A tag `vN...` publishes a release: the boot image, the setup UKI, pd.pyz and
+# the boot tools tarball, with SHA256SUMS and a build-provenance attestation.
+# Built from cache.nixos.org and source only (no other binary cache), checked
+# to rebuild bit for bit, and tested before anything is published.
+# docs/release.md.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  FLAKE: .
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    permissions:
+      contents: write       # create the release
+      id-token: write       # sign the attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Free disk space
+        run: ci/free-disk.sh
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702  # v31.11.2
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            max-jobs = auto
+      - name: Build the published outputs
+        run: ci/collect-release.sh dist
+      - name: Reproducibility (every published output rebuilt bit for bit)
+        run: ci/rebuild-check.sh
+      - name: Build the test environment
+        run: nix build -j auto --print-build-logs --out-link .testenv .#testenv
+      - name: Enable KVM
+        run: ci/enable-kvm.sh
+      - name: Tests (unit tests and the fast QEMU subset)
+        env:
+          PD_SKIP_NIX_BUILD: "1"
+          PD_TEST_DIR: ${{ runner.temp }}/pd-tests
+        run: >-
+          nix develop .# -c python3 -m unittest -v
+          tests.test_layout tests.test_placement tests.test_usb tests.test_monitor_awk
+          tests.test_smoke tests.test_e2e tests.test_uefi
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8  # v4.2.2
+        with:
+          subject-path: |
+            dist/BOOTX64.EFI
+            dist/pd-setup.efi
+            dist/pd.pyz
+            dist/pd-boot-tools.tar.gz
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          ci/release-notes.sh "$TAG" dist >notes.md
+          gh release create "$TAG" --verify-tag --title "pd $TAG" --notes-file notes.md dist/*
+

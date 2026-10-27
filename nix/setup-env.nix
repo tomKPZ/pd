@@ -227,6 +227,8 @@ let
     install -Dm644 ${mirrorlist} $root/etc/pacman.d/mirrorlist
     install -Dm644 ${closure}/registration $root/etc/nix-registration
     chmod -R u+w $root
+    # Fixed times (cpio --reproducible doesn't touch them): reproducible.
+    find $root -exec touch -h -d @1 {} +
     (cd $root && find . -print0 | sort -z |
       cpio --null -o -H newc --reproducible --owner=0:0 --quiet) | zstd -10 -T0 -q >$out
   '';
