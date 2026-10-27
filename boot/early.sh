@@ -23,7 +23,6 @@ if [ -r $CRED/argon2.cred ]; then
     a=$(cat $CRED/argon2.cred)
     case $a in "" | *[!-0-9a-z\ ]*) echo "Ignoring argon2.cred." ;; *) ARGON2_ARGS=$a ;; esac
 fi
-FIDO2=$CRED/fido2.cred
 
 forget_boot_entry() {
     # Delete the NVRAM boot entry the firmware used to start this system,
@@ -66,36 +65,6 @@ read_secret() {
     echo
 }
 
-# With FIDO2 (fido2.cred next to the boot image), a security key unwraps the
-# boot volume key from one of two slots; see docs/design.md §4.1.  The Argon2
-# output alone is tried too, for a side without FIDO2.  The PIN is asked
-# once, and each disk tried needs a touch (its Argon2 output differs).
-PIN=
-unlock_fido2() {
-    tries=0
-    while [ $tries -lt 3 ]; do
-        [ -n "$PIN" ] || read_secret PIN "Security key PIN"
-        printf '%s\n' "$PIN" | fido2-hmac unlock "$FIDO2" /run/pd/boot.key /run/pd
-        rc=$?
-        case $rc in
-        0) KEYS="$KEYS /run/pd/slot0.key /run/pd/slot1.key"; return ;;
-        3) echo "Wrong PIN."; PIN= ;;
-        4) echo "PIN blocked: remove and reinsert the security key."; PIN=; return ;;
-        5) echo "Not touched." ;;
-        *) return ;;
-        esac
-        tries=$((tries + 1))
-    done
-}
-
-KEYS=
-forget_keys() {
-    for k in $KEYS; do
-        [ "$k" = "${1:-}" ] || shred -u "$k" 2>/dev/null
-    done
-    KEYS=
-}
-
 # The disks to try, in order: random-looking ones first, then partitioned or
 # formatted ones (a pd disk whose first sectors something overwrote), largest
 # first within each.  Never: disks too small for pd, and disks whose salt
@@ -121,26 +90,22 @@ candidates() {
     done
 }
 
-# Try the current keys on disk $1; on success, never returns.
+# Try /run/pd/boot.key on disk $1; on success, never returns.
 try_disk() {
-    for key in $KEYS; do
-        if cryptsetup open --type plain --readonly --batch-mode $CRYPT_ARGS \
-            --offset "$PLAIN_OFFSET" --size "$PLAIN_SIZE" \
-            --key-file "$key" "$1" cryptboot 2>/dev/null; then
-            if mount -t btrfs -o ro,nodiscard,rescue=nologreplay /dev/mapper/cryptboot /mnt/boot 2>/dev/null; then
-                if [ -x /mnt/boot/late.sh ]; then
-                    echo "$1" >/run/pd/disk
-                    forget_keys "$key"
-                    [ "$key" = /run/pd/boot.key ] || mv "$key" /run/pd/boot.key
-                    SECRET= PIN=
-                    unset SECRET PIN
-                    exec /mnt/boot/late.sh
-                fi
-                umount /mnt/boot
+    if cryptsetup open --type plain --readonly --batch-mode $CRYPT_ARGS \
+        --offset "$PLAIN_OFFSET" --size "$PLAIN_SIZE" \
+        --key-file /run/pd/boot.key "$1" cryptboot 2>/dev/null; then
+        if mount -t btrfs -o ro,nodiscard,rescue=nologreplay /dev/mapper/cryptboot /mnt/boot 2>/dev/null; then
+            if [ -x /mnt/boot/late.sh ]; then
+                echo "$1" >/run/pd/disk
+                SECRET=
+                unset SECRET
+                exec /mnt/boot/late.sh
             fi
-            cryptsetup close cryptboot
+            umount /mnt/boot
         fi
-    done
+        cryptsetup close cryptboot
+    fi
 }
 
 # Not on a live system: its boot entry is its own business.
@@ -160,17 +125,14 @@ prev=
 for disk in $(candidates); do
     salt=${SALT:-$(disk_salt "$disk")}
     if [ "$salt" != "$prev" ]; then
-        forget_keys
         printf %s "$SECRET" | argon2 "$salt" $ARGON2_ARGS | xxd -r -p >/run/pd/boot.key
-        KEYS=/run/pd/boot.key
-        [ -s "$FIDO2" ] && unlock_fido2
         prev=$salt
     fi
     try_disk "$disk"
 done
-SECRET= PIN=
-unset SECRET PIN
+SECRET=
+unset SECRET
 
-forget_keys
+shred -u /run/pd/boot.key 2>/dev/null
 echo "No bootable disk found."
 exit 1

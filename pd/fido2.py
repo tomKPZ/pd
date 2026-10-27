@@ -1,42 +1,32 @@
-"""FIDO2 security keys as a second factor (docs/design.md §4.1), in one of
-two modes (the config's `fido2_mode`):
+"""FIDO2 security keys as a second factor for a side's data (docs/design.md
+§4.1).
 
-* "data" (the default): the boot volume stays keyed by A = Argon2(password,
-  salt), and the security key protects the side's data-region key instead.
-  The boot volume holds fido2.txt (INNER) in place of data.key: one line per
-  credential, "CRED SLOT0 SLOT1", SLOT0 the data key and SLOT1 (on the hidden
-  side) the decoy's data key, each XOR SHA-512(A || h || n) with
-  h = hmac-secret(CRED, SHA-256(A)) and n the slot's number as one byte.
-  Nothing goes on the USB, but a password can be checked offline.
-* "boot": the boot volume's key K is random, and each enrolled security key
-  holds a wrapped copy of it on the USB (fido2.cred, from the config's
-  `fido2` file): one line per credential,
+The boot volume stays keyed by A = Argon2(password, salt), as without FIDO2.
+With FIDO2 it holds fido2.txt (INNER) in place of data.key (and, on the
+hidden side, decoy.key): one line per credential,
 
     CRED SLOT0 SLOT1        (hex)
 
-where SLOTn = K_n XOR SHA-512(A_n || hmac-secret(CRED, SHA-256(A_n))), slot 0
-for the side whose boot volume is at the decoy's offset and slot 1 for the
-other.  A slot nobody uses holds random bytes, so the file looks the same
-whether or not a second side exists.  Credentials aren't per side: both
-sides use the same security keys.
+SLOT0 the side's data key and SLOT1 the decoy's data key on the hidden side
+(random bytes on the decoy), each XOR SHA-512(A || h || n), with
+h = hmac-secret(CRED, SHA-256(A)) and n the slot's number as one byte.  Both
+sides use the same security keys; nothing goes on the USB.
 
 The token operations go through `fido2-hmac` (tools/fido2_hmac.c), the same
-program the boot USB uses.
+program late.sh runs from the boot volume.
 """
 
 import dataclasses
 import getpass
 import hashlib
-import os
-import pathlib
 import subprocess
 
-from pd import layout as L
 from pd.util import cmd
 
 TOOL = "fido2-hmac"
 SLOTS = 2
 KEY_LEN = 64
+INNER = "fido2.txt"
 
 
 @dataclasses.dataclass
@@ -68,16 +58,12 @@ def hmac_salt(a: bytes) -> bytes:
     return hashlib.sha256(a).digest()
 
 
-def wrapping_key(a: bytes, h: bytes) -> bytes:
-    return hashlib.sha512(a + h).digest()
+def pad(a: bytes, h: bytes, slot: int) -> bytes:
+    return hashlib.sha512(a + h + bytes([slot])).digest()
 
 
 def xor(x: bytes, y: bytes) -> bytes:
     return bytes(i ^ j for i, j in zip(x, y, strict=True))
-
-
-def side_slot(offset: int) -> int:
-    return 0 if offset == L.DECOY_PLAIN_OFFSET else 1
 
 
 # --- Tokens --------------------------------------------------------------------------
@@ -146,23 +132,16 @@ def holders(creds: list[Credential]) -> dict[str, int]:
     return out
 
 
-# --- Data mode: fido2.txt inside the boot volume ---------------------------------------
+# --- Slots ---------------------------------------------------------------------------
 
-INNER = "fido2.txt"
-
-
-def inner_pad(a: bytes, h: bytes, slot: int) -> bytes:
-    return hashlib.sha512(a + h + bytes([slot])).digest()
-
-
-def inner_slots(a: bytes, dev: str, cred: bytes, secrets: list[bytes]) -> list[bytes]:
+def wrap(a: bytes, dev: str, cred: bytes, secrets: list[bytes]) -> list[bytes]:
     """The slots wrapping `secrets` (data key, decoy key) for one security
     key: one touch."""
     h = get(dev, cred, hmac_salt(a))
-    return [xor(x, inner_pad(a, h, n)) for n, x in enumerate(secrets)]
+    return [xor(x, pad(a, h, n)) for n, x in enumerate(secrets)]
 
 
-def inner_unwrap(text: str, a: bytes) -> list[bytes]:
+def unwrap(text: str, a: bytes) -> list[bytes]:
     """The secrets in a boot volume's fido2.txt, with whichever enrolled
     security key is plugged in."""
     creds = parse(text)
@@ -171,60 +150,15 @@ def inner_unwrap(text: str, a: bytes) -> list[bytes]:
         raise RuntimeError("this side uses FIDO2: plug in one of its security keys")
     dev, i = next(iter(held.items()))
     h = get(dev, creds[i].id, hmac_salt(a))
-    return [xor(s, inner_pad(a, h, n)) for n, s in enumerate(creds[i].slots)]
+    return [xor(s, pad(a, h, n)) for n, s in enumerate(creds[i].slots)]
 
 
 def volume_secrets(files: dict[str, bytes], a: bytes) -> tuple[bytes, bytes | None]:
     """(data key, decoy key or None) of a boot volume opened with key `a`,
-    from its files (name -> content): plain, or unwrapped in data mode."""
+    from its files (name -> content): plain, or unwrapped with FIDO2."""
     if "data.key" in files:
         return files["data.key"], files.get("decoy.key")
     if INNER not in files:
         raise RuntimeError("that boot volume has no data.key; not a pd boot volume?")
-    data, decoy = inner_unwrap(files[INNER].decode(), a)
+    data, decoy = unwrap(files[INNER].decode(), a)
     return data, decoy
-
-
-# --- Boot mode: fido2.txt next to the config, fido2.cred on the USB -------------------
-
-def load(cfg) -> list[Credential]:
-    if cfg.fido2_text is not None:
-        return parse(cfg.fido2_text)
-    if cfg.fido2 and pathlib.Path(cfg.fido2).exists():
-        return parse(pathlib.Path(cfg.fido2).read_text())
-    return []
-
-
-def save(cfg, creds: list[Credential]) -> None:
-    if not cfg.fido2:
-        raise RuntimeError("set `fido2 = \"fido2.txt\"` in the config")
-    path = pathlib.Path(cfg.fido2)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(dump(creds))
-    os.replace(tmp, path)
-    cfg.fido2_text = None
-
-
-# --- Keys ----------------------------------------------------------------------------
-
-def candidate_keys(cfg, a: bytes) -> list[tuple[bytes, int | None]]:
-    """The keys a password may open a boot volume with, as (key, slot):
-    A itself (slot None: a side without FIDO2), and, if a present security
-    key holds an enrolled credential, both of its unwrapped slots."""
-    keys: list[tuple[bytes, int | None]] = [(a, None)]
-    creds = load(cfg)
-    if not creds:
-        return keys
-    held = holders(creds)
-    if not held:
-        return keys
-    dev, i = next(iter(held.items()))
-    w = wrapping_key(a, get(dev, creds[i].id, hmac_salt(a)))
-    keys += [(xor(s, w), n) for n, s in enumerate(creds[i].slots)]
-    return keys
-
-
-def wrap_for(a: bytes, key: bytes, dev: str, cred: bytes) -> bytes:
-    """This side's slot for one security key."""
-    return xor(key, wrapping_key(a, get(dev, cred, hmac_salt(a))))
-

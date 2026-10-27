@@ -204,8 +204,8 @@ def change(cfg: Config, config_path: str, sides: list[Side], *, old_salt: str | 
             if found is None:
                 raise RuntimeError(f"the password for the side at sector {side.offset // L.SECTOR} "
                                    "doesn't open it with the current salt")
-            with setup.boot_volume(cfg.disk, side.offset, found[0], create=False) as mnt:
-                table, data_key = (mnt / "table.txt").read_text(), setup.volume_secrets(mnt, found[0])[0]
+            with setup.boot_volume(cfg.disk, side.offset, found, create=False) as mnt:
+                table, data_key = (mnt / "table.txt").read_text(), setup.volume_secrets(mnt, found)[0]
             if side.offset == L.DECOY_PLAIN_OFFSET:
                 # On a layout migrated from v1, the decoy's data region
                 # reaches the end of the disk: leave the trailer alone.

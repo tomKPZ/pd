@@ -28,7 +28,7 @@ from pd.util import argon2, cmd, cmd_output, dm_device, mountpoint
 
 OLD_MAP = "pd-old"
 FIDO2_NOTE = ("FIDO2: the moved sides open without their security keys; enroll them again "
-              "(pd fido2 enroll, both sides), and in boot mode write a new boot USB.")
+              "(pd fido2 enroll, both sides).")
 COPY_BUFFER = 16 * L.MIB
 
 
@@ -54,7 +54,7 @@ class OldSide:
     vg: str
     lvs: list[LV]
     block_size: int
-    fido2: bool                   # opened through a security key
+    fido2: bool                   # FIDO2 enrolled (its keys are in fido2.txt)
     # The old pool's layout, read once: while the new disk's VG (of the same
     # name) is active, LVM won't read the old one.
     pool: thinpool.Pool | None = None
@@ -106,10 +106,9 @@ def old_thin_devices(side: OldSide, pv: str):
 
 
 def read_side(cfg: Config, offset: int, password: bytes) -> OldSide:
-    found = setup.find_boot_key(cfg, offset, password)
-    if found is None:
+    key = setup.find_boot_key(cfg, offset, password)
+    if key is None:
         raise RuntimeError("that password doesn't open a boot volume at that offset")
-    key, slot = found
     with setup.boot_volume(cfg.disk, offset, key, create=False) as mnt:
         snap = rekey.snapshot(mnt)
     data_key, _ = fido2.volume_secrets({n: v[2] for n, v in snap.items() if n in setup.SECRET_FILES}, key)
@@ -119,7 +118,7 @@ def read_side(cfg: Config, offset: int, password: bytes) -> OldSide:
               cfg.vg)
     side = OldSide(offset=offset, password=password, snapshot=snap, data_key=data_key, table=table,
                    vg=vg, lvs=[], block_size=0,
-                   fido2=slot is not None or fido2.INNER in snap)
+                   fido2=fido2.INNER in snap)
     with old_region(cfg, side) as pv:
         for row in thinpool.lvm_out(pv, "lvs", "--noheadings", "--units", "b", "--nosuffix",
                                     "-o", "lv_name,segtype,lv_size", vg).splitlines():

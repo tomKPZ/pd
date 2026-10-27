@@ -2,7 +2,7 @@
 
 pd publishes prebuilt files, so a user doesn't have to build anything, and anyone can check that a
 download is what this repository's source builds. Nothing published is specific to an install: the
-files that are (`pd.toml`, FIDO2 slots, a keymap next to the boot image) are made by the user, with
+files that are (`pd.toml`, a keymap next to the boot image) are made by the user, with
 `pd usb --config` ([install.md §3](install.md#3-the-boot-usb)).
 
 ## What a release contains
@@ -42,7 +42,7 @@ Push a tag starting with `v` (e.g. `git tag -s v2.0 && git push origin v2.0`). T
    (`ci/rebuild-check.sh`);
 3. runs the unit tests and the fast QEMU subset;
 4. attests their build provenance, and creates the GitHub release with notes from
-   `ci/release-notes.sh`.
+   `ci/release-notes.sh`. A tag with a suffix (`v2.0-beta.1`) makes a pre-release.
 
 ## CI
 

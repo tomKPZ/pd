@@ -6,7 +6,7 @@
  *   fido2-hmac make DEV                 new credential (PIN on stdin); prints its ID (hex)
  *   fido2-hmac has DEV CRED             exit 0 if CRED (hex) belongs to DEV (no touch)
  *   fido2-hmac get DEV CRED SALT        hmac-secret for SALT (32 bytes, hex); PIN on stdin
- *   fido2-hmac unlock SLOTS KEY OUTDIR [--per-slot]   boot: see below
+ *   fido2-hmac unlock SLOTS KEY OUTDIR  boot: see below
  *
  * Credentials are non-resident (nothing is stored on the token), with the
  * hmac-secret extension.  Like systemd-cryptenroll's defaults, every
@@ -15,9 +15,9 @@
  * unlock: SLOTS has one line per credential, "CRED SLOT0 SLOT1" (hex, slots
  * 64 bytes); KEY is the Argon2 output (64 bytes).  Waits for a token holding
  * one of the credentials, asks it for h = hmac-secret(SHA-256(KEY)), and
- * writes OUTDIR/slot0.key and OUTDIR/slot1.key = SLOTn XOR SHA-512(KEY || h).
- * With --per-slot (the data-key mode, where both slots wrap secrets of the
- * same side), each slot has its own pad: SHA-512(KEY || h || n), n one byte.
+ * writes OUTDIR/slot0.key and OUTDIR/slot1.key = SLOTn XOR SHA-512(KEY || h || n),
+ * n the slot's number as one byte (both slots belong to one side, so each
+ * needs its own pad).
  *
  * Exit codes: 0 ok, 1 error, 2 no token found, 3 wrong PIN, 4 PIN blocked
  * (remove and reinsert the token, or it's locked), 5 no touch.
@@ -359,7 +359,7 @@ static void write_key(const char *dir, int slot, const unsigned char *k)
         die("can't write a key file");
 }
 
-static int cmd_unlock(const char *slots, const char *keyfile, const char *outdir, int per_slot)
+static int cmd_unlock(const char *slots, const char *keyfile, const char *outdir)
 {
     static struct cred creds[MAX_CREDS];
     int ncreds = read_slots(slots, creds);
@@ -409,7 +409,7 @@ static int cmd_unlock(const char *slots, const char *keyfile, const char *outdir
     memcpy(buf + KEY_LEN, h, 32);
     for (int s = 0; s < SLOTS; s++) {
         buf[KEY_LEN + 32] = (unsigned char)s;
-        SHA512(buf, per_slot ? sizeof buf : KEY_LEN + 32, w);
+        SHA512(buf, sizeof buf, w);
         for (int i = 0; i < KEY_LEN; i++)
             k[i] = creds[which].slot[s][i] ^ w[i];
         write_key(outdir, s, k);
@@ -436,10 +436,8 @@ int main(int argc, char **argv)
     if (argc == 5 && !strcmp(argv[1], "get"))
         return cmd_get(argv[2], argv[3], argv[4]);
     if (argc == 5 && !strcmp(argv[1], "unlock"))
-        return cmd_unlock(argv[2], argv[3], argv[4], 0);
-    if (argc == 6 && !strcmp(argv[1], "unlock") && !strcmp(argv[5], "--per-slot"))
-        return cmd_unlock(argv[2], argv[3], argv[4], 1);
+        return cmd_unlock(argv[2], argv[3], argv[4]);
     fprintf(stderr, "usage: fido2-hmac list | setpin DEV | make DEV | has DEV CRED | "
-                    "get DEV CRED SALT | unlock SLOTS KEY OUTDIR [--per-slot]\n");
+                    "get DEV CRED SALT | unlock SLOTS KEY OUTDIR\n");
     return 1;
 }

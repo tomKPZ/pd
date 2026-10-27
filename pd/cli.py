@@ -147,9 +147,9 @@ def main(argv=None) -> int:
     for x in (fe, fr, fl):
         x.add_argument("--config", required=True)
     for x in (fr, fl):
-        # Data mode keeps the keys' slots in each side's boot volume.
+        # The keys' slots are in each side's boot volume.
         x.add_argument("--offset", type=int, default=None,
-                       help="(data mode) boot volume start sector (default: the decoy's)")
+                       help="boot volume start sector (default: the decoy's)")
         x.add_argument("--password-stdin", action="store_true")
 
     m = sub.add_parser("migrate-v1", help="convert a v1 install to v2 in place")
@@ -180,7 +180,7 @@ def main(argv=None) -> int:
     u.add_argument("--output", required=True, metavar="ESP",
                    help="the mounted EFI system partition of the boot stick")
     u.add_argument("--config", default=None,
-                   help="add this install's files (FIDO2 slots, keymap, other Argon2 parameters, a salt)")
+                   help="add this install's files (keymap, other Argon2 parameters, a salt)")
     u.add_argument("--env", default=os.environ.get("PD_BOOT_ENV"),
                    help="directory with BOOTX64.EFI and keymaps/ (the testenv, or the setup "
                         "environment's; default: $PD_BOOT_ENV)")
@@ -263,8 +263,6 @@ def main(argv=None) -> int:
                              key_prompter(args), new_argon2):
             print(f"Warning: {w}")
         print("Re-keyed.")
-        if cfg.fido2_mode == "boot" and fido2.load(cfg):
-            print("Build a new boot USB (`pd usb`): fido2.txt changed if this side uses FIDO2.")
         if args.new_salt or new_argon2:
             changed = " and ".join(x for x, v in (("--new-salt", args.new_salt),
                                                   ("--new-argon2", new_argon2)) if v)
@@ -327,28 +325,18 @@ def main(argv=None) -> int:
             (pw,) = read_passwords(args, ["Password"])
             n, created = rekey.enroll(cfg, rekey.default_offset(cfg, args.offset), pw,
                                       key_prompter(args))
-            if cfg.fido2_mode == "data":
-                print(f"Enrolled {n} security key(s) for this side; its data now opens only with one "
-                      "of them.")
-            else:
-                print(f"Enrolled {n} security key(s) for this side; the password alone no longer opens it.")
+            print(f"Enrolled {n} security key(s) for this side; its data now opens only with one "
+                  "of them.")
             if created:
                 print(f"{created} new key(s): enroll them for the other side too, if there is one.")
-            if cfg.fido2_mode == "boot":
-                print("Build a new boot USB (`pd usb`).")
-        elif cfg.fido2_mode == "data":
+        else:
             (pw,) = read_passwords(args, ["Password"])
             offset = rekey.default_offset(cfg, args.offset)
             if args.fido2_command == "remove":
-                rekey.remove_data(cfg, offset, pw, args.index)
+                rekey.remove(cfg, offset, pw, args.index)
                 print("Removed.")
             else:
-                print(rekey.status_data(cfg, offset, pw))
-        elif args.fido2_command == "remove":
-            rekey.remove(cfg, args.index)
-            print("Removed.  Build a new boot USB (`pd usb`).")
-        else:
-            print(rekey.status(cfg))
+                print(rekey.status(cfg, offset, pw))
     elif args.command == "migrate-v1":
         from pd import migrate
         from pd.util import Argon2Params
@@ -413,11 +401,7 @@ def main(argv=None) -> int:
         old_salt = args.old_salt
         if args.old_salt_from:
             from pd import usb
-            uki = pathlib.Path(args.old_salt_from)
-            old_salt = usb.read_salt(uki)
-            if not (cfg.fido2 and pathlib.Path(cfg.fido2).exists()):
-                # Old boot images carried the FIDO2 slots too.
-                cfg.fido2_text = usb.read_member(uki, "fido2.txt")
+            old_salt = usb.read_salt(pathlib.Path(args.old_salt_from))
         if old_salt:
             Config(disk=cfg.disk, salt=old_salt).check_salt()
         if args.hidden_offset is not None:
@@ -431,8 +415,6 @@ def main(argv=None) -> int:
         if cfg.salt:
             print("Remove `salt` from the config, and rewrite the boot USB (`pd usb`): it no longer "
                   "needs one.")
-        elif cfg.fido2_mode == "boot" and fido2.load(cfg):
-            print("Rewrite the boot USB (`pd usb --config`): fido2.txt changed.")
     elif args.command == "install-cpio":
         from pd import usb
         pathlib.Path(args.output).write_bytes(

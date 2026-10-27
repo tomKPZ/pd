@@ -462,23 +462,18 @@ def boot_volume_exists(disk: str, offset: int, key: bytes) -> bool:
         return False
 
 
-def find_boot_key(cfg: Config, offset: int, password: bytes) -> tuple[bytes, int | None] | None:
-    """The key that opens the boot volume at offset, and the FIDO2 slot it
-    came from (None: the password alone, A = Argon2(password, salt)); None
-    if nothing opens it.  Asks a present security key if FIDO2 is set up."""
+def find_boot_key(cfg: Config, offset: int, password: bytes) -> bytes | None:
+    """The key that opens the boot volume at offset, A = Argon2(password,
+    salt), or None if it doesn't open one."""
     a = argon2(password, header.salt(cfg), cfg.argon2)
-    for key, slot in fido2.candidate_keys(cfg, a):
-        if boot_volume_exists(cfg.disk, offset, key):
-            return key, slot
-    return None
+    return a if boot_volume_exists(cfg.disk, offset, a) else None
 
 
 def boot_key(cfg: Config, offset: int, password: bytes, what: str = "that password") -> bytes:
-    found = find_boot_key(cfg, offset, password)
-    if found is None:
-        hint = " (or no enrolled security key is plugged in)" if fido2.load(cfg) else ""
-        raise RuntimeError(f"{what} doesn't open a boot volume at that offset{hint}")
-    return found[0]
+    key = find_boot_key(cfg, offset, password)
+    if key is None:
+        raise RuntimeError(f"{what} doesn't open a boot volume at that offset")
+    return key
 
 
 SECRET_FILES = ("data.key", "decoy.key", fido2.INNER)
@@ -486,7 +481,7 @@ SECRET_FILES = ("data.key", "decoy.key", fido2.INNER)
 
 def volume_secrets(mnt: pathlib.Path, key: bytes) -> tuple[bytes, bytes | None]:
     """(data key, decoy key or None) of the boot volume mounted at mnt,
-    which `key` opened: unwrapped with a security key in FIDO2's data mode."""
+    which `key` opened (with FIDO2, unwrapped with a security key)."""
     files = {n: (mnt / n).read_bytes() for n in SECRET_FILES if (mnt / n).exists()}
     return fido2.volume_secrets(files, key)
 
@@ -540,8 +535,7 @@ def init_decoy(cfg: Config, password: bytes, run=None, *, force: bool = False,
     # the one a hidden side is keyed under.
     header.ensure(cfg, keep=isinstance(hidden, tuple))
     existing = find_boot_key(cfg, L.DECOY_PLAIN_OFFSET, password)
-    # Re-creating keeps the existing key, so FIDO2 enrollment carries over.
-    key = existing[0] if existing else argon2(password, header.salt(cfg), cfg.argon2)
+    key = argon2(password, header.salt(cfg), cfg.argon2)
     if not force and existing:
         raise RuntimeError(
             "this disk already has a decoy side with that password.  To re-create it, pass --force "

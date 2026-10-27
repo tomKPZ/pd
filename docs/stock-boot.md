@@ -221,7 +221,7 @@ is in use.
 **With network access**, the release's `pd-live` bundle does the same without typing anything but
 the password: `pd-live/boot.sh --offset OFFSET --salt "$(cryptsetup luksUUID /dev/nvme0n1p2)"`
 ([booting.md](booting.md#from-a-live-system)); add `--argon2 T,M_LOG2,P` for non-default parameters.
-A hidden side enrolled for FIDO2 (in either mode) needs `pd-live`: the typed commands don't keep the
+A hidden side enrolled for FIDO2 needs `pd-live`: the typed commands don't keep the
 boot volume's key for `late.sh`.
 Downloading it leaves a trace on the network, and pd's tools on the live system.
 
@@ -259,10 +259,10 @@ install argon2 xxd`, which downloads them; on Tails, through Tor):
 | Decoy | created by pd: plain dm-crypt, no partition table | any distribution with LUKS and LVM thin |
 | Decoy boot | pd's USB and the decoy password | the decoy's own bootloader |
 | Hidden boot | pd's USB: Enter, one `sed`, the password | a stock live system: a few commands and the password |
-| Salt | random, on the USB | the decoy's LUKS UUID, or remembered |
+| Salt | random, in the disk's first MiB | the decoy's LUKS UUID, or remembered |
 | Argon2 at boot | `argon2`, all cores | OpenSSL, one core |
 | Firmware boot entry | deleted on every boot | the firmware may keep one for the live USB |
-| FIDO2 ([design.md §4.1](design.md#41-fido2-security-keys-optional)) | optional | not available |
+| FIDO2 ([design.md §4.1](design.md#41-fido2-security-keys-optional)) | optional | optional for the hidden side, booted with `pd-live` |
 | Secure Boot | off (pd's UKI isn't signed) | the decoy can use it; the hidden boot needs it off |
 | Frontier monitor | yes | yes |
 

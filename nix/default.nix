@@ -58,7 +58,7 @@ let
     doInstallCheck = false;
   });
 
-  # FIDO2 hmac-secret for the boot USB and for setup (docs/design.md §4.1).
+  # FIDO2 hmac-secret for the boot volume and for setup (docs/design.md §4.1).
   fido2Hmac = static.stdenv.mkDerivation {
     pname = "fido2-hmac";
     version = "1";
@@ -94,12 +94,12 @@ let
   '';
 
   # Tools on the boot USB.  Keep this list minimal: anything here is visible
-  # to someone who has the USB but no password.
+  # to someone who has the USB but no password.  (FIDO2's fido2-hmac is in
+  # the boot volume: late.sh unlocks the data key, docs/design.md §4.1.)
   bootTools = staticBin "pd-boot-tools" [
     "${static.busybox}/bin/busybox"
     "${lib.getBin static.cryptsetup}/bin/cryptsetup"
     "${static.libargon2}/bin/argon2"
-    "${fido2Hmac}/bin/fido2-hmac"
   ];
 
   # Tools stored in the encrypted boot volume, used by late.sh.
@@ -112,7 +112,7 @@ let
     "${static.fzf}/bin/fzf"
     "${detectShift}/bin/detect_shift"
     "${tmetaScan}/bin/tmeta_scan"
-    # FIDO2's data mode unwraps the data key in late.sh (docs/design.md §4.1).
+    # FIDO2: late.sh unwraps the data key (docs/design.md §4.1).
     "${fido2Hmac}/bin/fido2-hmac"
     "${static.busybox}/bin/busybox"
   ];

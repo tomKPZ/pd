@@ -66,5 +66,8 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           ci/release-notes.sh "$TAG" dist >notes.md
-          gh release create "$TAG" --verify-tag --title "pd $TAG" --notes-file notes.md dist/*
+          # A tag with a suffix (v2.0-beta.1) is a pre-release.
+          pre=()
+          [[ "$TAG" != *-* ]] || pre=(--prerelease)
+          gh release create "$TAG" --verify-tag "${pre[@]}" --title "pd $TAG" --notes-file notes.md dist/*
 

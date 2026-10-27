@@ -18,9 +18,9 @@ fi
 disk=$(cat /run/pd/disk)
 . "$B/crypt.env"
 
-# FIDO2 in data mode (docs/design.md §4.1): this side's data key (and, on the
-# hidden side, the decoy's, for the frontier monitor) is wrapped for each
-# enrolled security key in fido2.txt, under the boot volume's key.
+# FIDO2 (docs/design.md §4.1): this side's data key (and, on the hidden side,
+# the decoy's, for the frontier monitor) is wrapped for each enrolled security
+# key in fido2.txt, under the boot volume's key.
 DATA_KEY=$B/data.key
 DECOY_KEY=$B/decoy.key
 if [ -s "$B/fido2.txt" ]; then
@@ -32,7 +32,7 @@ if [ -s "$B/fido2.txt" ]; then
         stty echo 2>/dev/null || true
         echo
         rc=0
-        printf '%s\n' "$PIN" | fido2-hmac unlock "$B/fido2.txt" /run/pd/boot.key /run/pd --per-slot || rc=$?
+        printf '%s\n' "$PIN" | fido2-hmac unlock "$B/fido2.txt" /run/pd/boot.key /run/pd || rc=$?
         PIN=
         case $rc in
         0) break ;;

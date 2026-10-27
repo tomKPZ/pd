@@ -86,8 +86,8 @@ The details are in [docs/design.md](docs/design.md).
 2. Write a `pd.toml` (disk, systems, optional volumes).
 3. Boot the target machine from the setup UKI and run `pd randomize`, `pd init-decoy --run` (install the
    decoy OSes), and `pd init-hidden --run` (install the hidden OSes; memorize the printed offset).
-4. Write the boot USB there: `pd usb --output ESP --config pd.toml` (the boot image, plus a keymap or
-   FIDO2 slots next to it if configured).
+4. Write the boot USB there: `pd usb --output ESP --config pd.toml` (the boot image, plus a keymap next
+   to it if configured).
 5. Boot from the boot USB ([docs/booting.md](docs/booting.md)).
 
 Tests: `python3 -m unittest discover -s tests -t .` (about 15 minutes, needs KVM; see

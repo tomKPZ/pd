@@ -316,8 +316,8 @@ pd close
 
 ## C. YubiKey (FIDO2)
 
-This uses the disk from part B. Each YubiKey must have a FIDO2 PIN. It tests the default mode, data
-mode (the key protects the data; nothing on the USB); C7 tries boot mode.
+This uses the disk from part B. Each YubiKey must have a FIDO2 PIN. The key protects each side's data;
+nothing goes on the USB.
 
 > [!WARNING]
 > A YubiKey refuses PINs after 3 wrong attempts in a row until it's unplugged and plugged in again,
@@ -355,7 +355,7 @@ sync; umount /m; poweroff -f
 
 ### C3. The boot USB
 
-Nothing to do: in data mode nothing goes on the USB.
+Nothing to do: FIDO2 puts nothing on the USB.
 
 ### C4. Boot with the key
 
@@ -385,15 +385,6 @@ Boot the setup stick, mount it, plug in the key:
 pd rekey --config /m/pd.toml                        # current and new decoy password, PIN, touch, done
 ```
 * [ ] `Re-keyed.` Boot the decoy with the new password, the PIN and a touch.
-
-### C7. Optional: boot mode
-
-Boot mode keeps the slots on the USB, and a password can't be checked without the key. Re-create the
-test disk (B4 to B6), then add `fido2_mode = "boot"` and `fido2 = "fido2.txt"` at the top of
-`pd.toml`, enroll as in C2, and write the boot stick with `pd usb --output /b --config /m/pd.toml`.
-* [ ] `pd usb` prints `wrote EFI/BOOT/BOOTX64.EFI.extra.d/fido2.cred`.
-* [ ] Booting asks for the PIN right after the password; without the key it ends in `No bootable disk
-  found.`
 
 ---
 
@@ -473,7 +464,7 @@ Boot the setup stick, mount it (B2), run `pd-net`, and write `/m/stock.toml`: a 
 with the decoy's LUKS UUID as the salt.
 ```sh
 uuid=$(cryptsetup luksUUID /dev/nvme0n1p2)          # p3 with Fedora
-{ echo "salt = \"$uuid\""; sed '/^fido2 = /d' /m/pd.toml; } > /m/stock.toml
+{ echo "salt = \"$uuid\""; cat /m/pd.toml; } > /m/stock.toml
 pd init-hidden --config /m/stock.toml --stock-decoy /dev/nvme0n1p2 --run
 ```
 
@@ -575,7 +566,7 @@ what you tried. Useful extras:
   them off with a USB stick);
 * from pd's recovery shell: `dmesg`, `ls /sys/block`, `ls /dev/hidraw*` (photos are fine).
 
-When you're done, wipe the setup stick: it holds `pd.toml` and `fido2.txt`.
+When you're done, wipe the setup stick: it holds `pd.toml`.
 
 ### Results
 
