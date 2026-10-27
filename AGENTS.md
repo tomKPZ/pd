@@ -55,7 +55,7 @@ order: [README.md](README.md) → [docs/design.md](docs/design.md) →
 * **Layout:** `boot/` (USB initrd scripts; `pd/disk_class.sh` goes on the USB too, shared with setup), `plain/` (boot-volume scripts; `plain/hidden/` is installed
   only on the hidden side), `target/` (hook, NixOS module, Arch hook and trim unit for installed OSes),
   `pd/` (setup CLI), `ci/` (scripts for `.github/workflows/`, which also run locally; [docs/release.md](docs/release.md)), `nix/` (static tools, kernel modules, boot initrd, tool VM, setup UKI, fake target,
-  NixOS test system), `tests/`, `tools/` (`detect_shift.c`, `fido2_hmac.c`). The v1 code is on branch `main` (`git show main:pd.py`).
+  NixOS test system), `tests/`, `tools/` (`detect_shift.c`, `fido2_hmac.c`, `tmeta_scan.c`). The v1 code is on branch `main` (`git show main:pd.py`).
 * **Opt-in tests:** `PD_TEST_ARCH=1` (Arch install, downloads packages into `~/.cache/pd-tests`),
   `PD_TEST_NET=1` (setup environment networking) and `PD_TEST_LIVE=1` (stock boot from Debian Live,
   downloads a 3.8 GB image into `~/.cache/pd-tests/live`) need internet access.

@@ -1,5 +1,5 @@
 # A tag `vN...` publishes a release: the boot image, the setup UKI, pd.pyz and
-# the boot tools tarball, with SHA256SUMS and a build-provenance attestation.
+# pd-live (booting from a live system), with SHA256SUMS and a build-provenance attestation.
 # Built from cache.nixos.org and source only (no other binary cache), checked
 # to rebuild bit for bit, and tested before anything is published.
 # docs/release.md.
@@ -59,7 +59,7 @@ jobs:
             dist/BOOTX64.EFI
             dist/pd-setup.efi
             dist/pd.pyz
-            dist/pd-boot-tools.tar.gz
+            dist/pd-live.tar.gz
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}

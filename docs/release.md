@@ -12,7 +12,7 @@ files that are (`pd.toml`, FIDO2 slots, a keymap next to the boot image) are mad
 | `BOOTX64.EFI` | `bootUki` | the boot image, the same for every install ([design.md §7.1](design.md#71-uki)) |
 | `pd-setup.efi` | `setupUki` | the RAM-only setup environment; carries the boot image and the keymaps for `pd usb` |
 | `pd.pyz` | `pdPyz` | pd as one file, for maintenance from a live system ([install.md](install.md#from-a-live-iso)) |
-| `pd-boot-tools.tar.gz` | `bootToolsTarball` | the boot volume's static tools and scripts (`plainTree`), for booting from a live system |
+| `pd-live.tar.gz` | `liveTarball` | boots a pd disk from a live system without pd's USB: the boot USB's `early.sh` and static tools, plus `boot.sh` ([booting.md](booting.md#from-a-live-system)) |
 | `SHA256SUMS` | | their SHA-256 sums |
 
 The flake output `release` is all four, under these names: `nix build .#release`.

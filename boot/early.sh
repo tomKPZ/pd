@@ -2,13 +2,18 @@
 # Stage 1: find the disk whose encrypted boot volume the password opens, and
 # hand over to the late.sh stored inside it.  Each disk has its own salt (the
 # 32 bytes below 1 MiB), so the key is derived per disk (docs/design.md §7.2).
+#
+# On pd's USB it runs from the initrd's root.  From a live system, boot.sh in
+# the release's pd-live bundle runs it with PD_BOOT_DIR pointing at a
+# directory holding the same files (docs/booting.md).
 
-. /early_env.sh
-. /disk_class.sh
+D=${PD_BOOT_DIR:-}
+. "$D/early_env.sh"
+. "$D/disk_class.sh"
 
 # Optional per-install files next to the boot image (EFI/BOOT/BOOTX64.EFI.extra.d/*.cred),
 # which systemd-stub passes in (docs/design.md §7.1).
-CRED=/.extra/credentials
+CRED=$D/.extra/credentials
 SALT=
 if [ -r $CRED/salt.cred ]; then
     SALT=$(cat $CRED/salt.cred)
@@ -138,7 +143,8 @@ try_disk() {
     done
 }
 
-forget_boot_entry
+# Not on a live system: its boot entry is its own business.
+[ -n "$D" ] || forget_boot_entry
 
 mkdir -p /run/pd /mnt/boot
 chmod 700 /run/pd

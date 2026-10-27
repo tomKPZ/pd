@@ -21,7 +21,7 @@ Built by the release workflow from tag \`$tag\` ($(git rev-parse HEAD)), with ni
 | \`BOOTX64.EFI\` | the boot image: copy it to \`EFI/BOOT/BOOTX64.EFI\` on the boot stick ([install.md §3]($docs/install.md#3-the-boot-usb)) | \`$(sum BOOTX64.EFI)\` |
 | \`pd-setup.efi\` | the RAM-only setup environment, with the boot image inside ([install.md §4]($docs/install.md#4-set-up-the-disk)) | \`$(sum pd-setup.efi)\` |
 | \`pd.pyz\` | pd as one file, for maintenance from a live system ([install.md]($docs/install.md#from-a-live-iso)) | \`$(sum pd.pyz)\` |
-| \`pd-boot-tools.tar.gz\` | the boot volume's static tools and scripts, for booting from a live system | \`$(sum pd-boot-tools.tar.gz)\` |
+| \`pd-live.tar.gz\` | boots a pd disk from a live system, without pd's USB ([booting.md]($docs/booting.md#from-a-live-system)) | \`$(sum pd-live.tar.gz)\` |
 
 **Checking a download** ([docs/release.md]($docs/release.md)):
 \`\`\`sh

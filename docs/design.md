@@ -733,8 +733,9 @@ Tested: 7379 MiB free on a fresh 8 GiB test disk; 543 MiB and a warning after wr
 decoy.
 
 It also warns (and waits) if any decoy LV other than the pool's data lies inside the hidden region, e.g.
-after someone changed the decoy's LVM layout, and if the decoy's data is above the hidden side's floor
-(§10.5).
+after someone changed the decoy's LVM layout; if the decoy's data is above the hidden side's floor; and
+if the decoy's pool metadata, stale nodes included, points above the floor or into the hidden side's
+data (§10.5).
 
 ### 10.3 Never clone the disk
 A snapshot adversary who compares two images can see "unused" space change. Backups of hidden data must
@@ -808,12 +809,22 @@ hidden side never takes. Two things break the invariant, and pd clears the trace
   Otherwise, and always for a stock decoy, `init-hidden` does the same rewrite and refill above the
   floor first. On a large disk that writes cap × disk and takes a while.
 
-**What remains.** Between hidden boots, the decoy can grow above the floor and shrink again (the
-shutdown trim), leaving traces in the hidden side's future space. The frontier monitor warns on the
-next hidden boot when the decoy's data is above the floor (`FLOOR_SECTOR` in `frontier.env`), and
-`pd compact --hidden-offset N` on the decoy clears the traces again. A decoy that rose above the
-floor and fell back between two hidden boots goes unnoticed; keeping the decoy's data well below the
-floor is the defence.
+**Between hidden boots**, the decoy can grow above the floor and shrink again (the shutdown trim),
+leaving traces in the hidden side's future space. The frontier monitor catches both on the next hidden
+boot (D61):
+* the decoy's data is above the floor now (`FLOOR_SECTOR` in `frontier.env`, from `thin_dump`);
+* its pool metadata points above the floor: `tmeta_scan` (`tools/tmeta_scan.c`, static, in the hidden
+  boot volume) reads the decoy's whole metadata device and takes the highest data block that any valid
+  btree leaf maps, stale copies included. A leaf is valid if its checksum (crc32c, as
+  dm-persistent-data computes it) and its own block number match; bottom-level mapping values are
+  `data block << 24 | time`, and the top-level tree's values (metadata block numbers) read as block 0.
+  If those pointers reach the hidden side's lowest block, the evidence exists already, and the warning
+  says so.
+
+Either way, `pd compact --hidden-offset N` on the decoy clears the traces. What `tmeta_scan` can't see
+is a stale node that has since been reused: the decoy's old data in freed blocks then stays, with
+nothing left pointing at it. An examiner could still find recognizable old decoy blocks there, but
+couldn't show that any are missing. Scanning the metadata takes about a second per GiB of `tmeta`.
 
 ---
 
@@ -841,14 +852,14 @@ floor is the defence.
   |---|---|
   | `test_layout`, `test_placement`, `test_usb`, `test_monitor_awk` | unit tests: layout arithmetic, reversed tables, hidden placement and overlap checks, the per-install files next to the boot image, `disk_class.sh` on image files (blank, small, MBR signature, GPT header, a filesystem), salt read-back from old boot images, the monitor's overlap detection |
   | `test_smoke` | the tool VM |
-  | `test_e2e` | decoy boot, hidden boot via the recovery-shell `sed`, wrong password, password not echoed, read-only disk, keyboard plugged in after boot, keymap; with an empty and a small extra disk and the pd disk's copy carrying an MBR signature and a GPT header, the classes are blank/small/used and the decoy still boots |
+  | `test_e2e` | decoy boot, hidden boot via the recovery-shell `sed`, wrong password, password not echoed, read-only disk, keyboard plugged in after boot, keymap; the release's `pd-live` bundle boots both sides from the tool VM; with an empty and a small extra disk and the pd disk's copy carrying an MBR signature and a GPT header, the classes are blank/small/used and the decoy still boots |
   | `test_safety` | boot after a crash with a dirty btrfs log; hidden cap over roots and volumes; fstrim shrinks the pool but never reaches the disk; random edges that nothing recognizes |
   | `test_growth` | on an unrandomized disk, decoy writes at the front, hidden at the back, untouched gap between (and the random edges `init-decoy` gave it) |
   | `test_uefi` | the release boot image is reproducible (rebuilt bit for bit) and has no build-host os-release; the same image with a serial console boots from a USB stick under OVMF with `argon2.cred` in `BOOTX64.EFI.extra.d/` (the decoy only opens with it); NVRAM entry and `BootOrder` cleanup |
   | `test_setup_env` | setup run from the RAM-only setup environment, `pd usb` from its own boot image, then a boot; with `PD_TEST_NET=1`, DHCP through an emulated Intel NIC and a signature-checked `pacstrap` |
   | `test_nixos` | a real NixOS initrd with `pd.nix` unlocks the disk and mounts `/sysroot` |
   | `test_arch` | a real Arch install (pacstrap, `pd` mkinitcpio hook) boots through pd (`PD_TEST_ARCH=1`, needs network) |
-  | `test_monitor` | frontier monitor report and warnings (decoy above the floor, small gap); no hidden-only files in the decoy |
+  | `test_monitor` | frontier monitor report and warnings (decoy above the floor, small gap; after the decoy deletes and trims, its stale metadata above the floor; none after `pd compact`); no hidden-only files in the decoy |
   | `test_stock` | stock boot: a stock LUKS + LVM thin decoy's header, LVM metadata and files are left unchanged by `init-hidden --stock-decoy`, and the printed commands boot the hidden side from another VM |
   | `test_live` (opt-in: `PD_TEST_LIVE=1`) | stock boot from the real Debian Live 13 Xfce image: log in on its serial console, type the printed commands, boot the hidden side |
   | `test_compact` | a pd decoy, a migrated v1 decoy and a stock decoy, filled and mostly emptied: init-hidden refuses, `pd compact` moves the data down (files intact; `--recover` after a damaged metadata write; none of the fill's marked blocks left above the boundary), then both sides boot; `init-hidden` on a decoy that used and trimmed the hidden side's space clears it (§10.5) |
@@ -965,6 +976,8 @@ Decisions made while implementing v2:
 | D58 | The release image has fixed Argon2 parameters; keymap, FIDO2 slots, other Argon2 parameters and an explicit salt are optional files in `BOOTX64.EFI.extra.d/`, which systemd-stub passes to the initrd | The image itself stays identical for everyone (§7.1) | agreed |
 | D59 | No seed or fill key is kept to prove the disk's edges are filler | The free space can never be proven unused, so proving only the header invites the question why, and the fill key would expose the hidden side (§2.4) | agreed |
 | D60 | Prebuilt releases from GitHub Actions: every published file is reproducible and rebuild-checked; releases build without any binary cache but cache.nixos.org, carry `SHA256SUMS` and a build-provenance attestation, and are tested first; third-party actions are pinned to commit SHAs | Users download instead of building; anyone can check a download against the source (release.md) | agreed |
+| D61 | The frontier monitor also scans the decoy's pool metadata for stale btree leaves (`tmeta_scan`) and warns if they point above the floor or into the hidden side's data | The decoy can rise above the floor and fall back between hidden boots; its stale metadata then points at old data the hidden side would overwrite (§10.5) | agreed |
+| D62 | The release's `pd-live` bundle boots a pd disk from a live system: the boot USB's `early.sh`, disk check and static tools, run by `boot.sh` with the per-install files as options | A lost or unavailable USB doesn't lock the user out, and booting needs nothing typed but the password and options ([booting.md](booting.md#from-a-live-system)) | agreed |
 
 ---
 

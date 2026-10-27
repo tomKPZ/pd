@@ -37,10 +37,12 @@ map_ranges() {
         }'
 }
 
-# pool_ranges VG PV REGION_TABLE OUT: physical disk ranges holding VG's
-# thin-pool data that has been allocated so far (blocks 0..max).
+# pool_ranges VG PV REGION_TABLE OUT [STALE_OUT]: physical disk ranges holding
+# VG's thin-pool data that has been allocated so far (blocks 0..max).  With
+# STALE_OUT, also the ranges up to the highest block any btree node in the
+# pool's metadata maps, stale copies included (tmeta_scan; design.md §10.5).
 pool_ranges() {
-    vg=$1 pv=$2 region=$3 out=$4
+    vg=$1 pv=$2 region=$3 out=$4 stale_out=${5:-}
     l="lvm lvs --readonly --devices $pv --noheadings"
     pe_start=$(lvm pvs --readonly --devices "$pv" --noheadings --nosuffix --units s -o pe_start "$pv" 2>/dev/null | tr -d ' ')
     pool=$($l -o lv_name,segtype "$vg" 2>/dev/null | awk '$2 == "thin-pool" { print $1 }')
@@ -48,8 +50,9 @@ pool_ranges() {
     lv_table "$vg" "${pool}_tdata" "$pv" >/run/fr-tdata.table
     dmsetup create --readonly fr-tmeta </run/fr-tmeta.table
     dmsetup mknodes fr-tmeta
-    # Highest allocated data block over all thin devices, in sectors.
-    end=$(thin_dump /dev/mapper/fr-tmeta | awk '
+    # Highest allocated data block over all thin devices, and the block size,
+    # in sectors.
+    set -- $(thin_dump /dev/mapper/fr-tmeta | awk '
         function attr(name,   m) {
             if (match($0, name "=\"[0-9]+\"")) {
                 m = substr($0, RSTART, RLENGTH); sub(/^[^"]*"/, "", m); sub(/"$/, "", m)
@@ -60,7 +63,12 @@ pool_ranges() {
         /<superblock/ { bs = attr("data_block_size") }
         /<range_mapping/ { e = attr("data_begin") + attr("length"); if (e > max) max = e }
         /<single_mapping/ { e = attr("data_block") + 1; if (e > max) max = e }
-        END { print max * bs }')
+        END { print max * bs, bs }')
+    end=$1 bs=$2
+    if [ -n "$stale_out" ]; then
+        stale=$(($(tmeta_scan /dev/mapper/fr-tmeta 2>/dev/null || echo 0) * bs))
+        echo "0 $stale" | map_ranges /run/fr-tdata.table | map_ranges "$region" >"$stale_out"
+    fi
     dmsetup remove fr-tmeta
     # Allocation is sequential, so blocks [0, max) are the used range.
     echo "0 $end" | map_ranges /run/fr-tdata.table | map_ranges "$region" >"$out"
@@ -77,7 +85,8 @@ frontier_check() {
     cryptsetup open --type plain --readonly --batch-mode $DECOY_CRYPT_ARGS \
         --key-file "$B/decoy.key" /dev/mapper/fr-decoy-raw fr-decoy
 
-    pool_ranges "$DECOY_VG" /dev/mapper/fr-decoy /run/fr-decoy-region.table /run/fr-decoy.ranges
+    pool_ranges "$DECOY_VG" /dev/mapper/fr-decoy /run/fr-decoy-region.table /run/fr-decoy.ranges \
+        /run/fr-decoy-stale.ranges
     pool_ranges "$VG" /dev/mapper/cryptlvm /run/fr-hidden-region.table /run/fr-hidden.ranges
 
     # Decoy LVs other than the pool's data must stay out of the hidden
@@ -112,6 +121,7 @@ frontier_check() {
     dmsetup remove fr-decoy-raw
 
     decoy_top=$(awk 'BEGIN { m = 0 } { if ($2 > m) m = $2 } END { print m }' /run/fr-decoy.ranges)
+    stale_top=$(awk 'BEGIN { m = 0 } { if ($2 > m) m = $2 } END { print m }' /run/fr-decoy-stale.ranges)
     hidden_bottom=$(awk -v t="$total" 'BEGIN { m = t } { if ($1 < m) m = $1 } END { print m }' /run/fr-hidden.ranges)
     gap=$(((hidden_bottom - decoy_top) / 2048))
     min=$((total / 2048 * MIN_GAP_PERCENT / 100))
@@ -128,6 +138,23 @@ frontier_check() {
         echo "When this side grows there, it overwrites space the decoy has used, which can be detected."
         echo "Free space on the decoy, then run pd compact --hidden-offset N on it from the setup"
         echo "environment: it moves the decoy's data back below and clears the traces above."
+        printf "Press Enter to continue booting. "
+        read -r _
+    fi
+    # Where the decoy's data used to be: its pool metadata's stale nodes
+    # still point there, and its freed blocks still hold the old data.
+    if [ "$stale_top" -gt "$hidden_bottom" ]; then
+        echo "WARNING: this side has data where the decoy's old data was: the decoy's pool metadata"
+        echo "still points there, and an examiner could see that something wrote over it."
+        echo "Run pd compact --hidden-offset N on the decoy from the setup environment soon: it"
+        echo "erases those pointers (docs/design.md §10.5)."
+        printf "Press Enter to continue booting. "
+        read -r _
+    elif [ -n "$FLOOR_SECTOR" ] && [ "$stale_top" -gt "$FLOOR_SECTOR" ] && [ "$decoy_top" -le "$FLOOR_SECTOR" ]; then
+        echo "WARNING: the decoy's pool metadata still points into the space reserved for this side"
+        echo "($(((stale_top - FLOOR_SECTOR) / 2048)) MiB of old data the decoy has freed)."
+        echo "Before this side grows there, run pd compact --hidden-offset N on the decoy from the"
+        echo "setup environment: it erases those pointers and the old data (docs/design.md §10.5)."
         printf "Press Enter to continue booting. "
         read -r _
     fi

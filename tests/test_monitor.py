@@ -7,6 +7,12 @@ import unittest
 from tests import fixture, vm
 
 
+def before_kexec(b) -> str:
+    """What the boot printed before handing over (the target OS has warnings
+    of its own)."""
+    return b.child.before.split("kexec_core: Starting new kernel")[0]
+
+
 class Monitor(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -34,15 +40,17 @@ class Monitor(unittest.TestCase):
         b, gap = self.hidden_boot("monitor-1")
         b.expect("PD-TARGET: marker=hidden")
         self.assertNotIn("inside the hidden region", b.child.before)
-        self.assertNotIn("space reserved for this side", b.child.before)
+        self.assertNotIn("WARNING", before_kexec(b))
         # Fresh 8 GiB disk: most of it is free.
         self.assertGreater(gap, 6000)
         self.assertLess(gap, 8192)
 
-        # Fill the decoy with 6.5 GiB of incompressible data.
+        # Fill the decoy with 6.5 GiB of incompressible data, on its XFS
+        # volume: deleted and trimmed later, it leaves nothing mapped up there
+        # (btrfs would keep metadata it wrote meanwhile).
         script = f"""
         printf '%s\\n' '{fixture.DECOY_PW}' | python3 -m pd open --config pd.toml --rw --password-stdin \\
-            --run 'head -c 6800M /dev/urandom > $PD_ROOT/fake/home/big; sync'
+            --run 'head -c 6800M /dev/urandom > $PD_ROOT/volumes/data/big; sync'
         """
         vm.ToolVM(self.fx.env, self.fx.work).run(script, disks=[self.fx.disk], timeout=900)
 
@@ -56,6 +64,33 @@ class Monitor(unittest.TestCase):
         b.expect("Press Enter to continue booting")
         b.sendline("")
         b.expect("PD-TARGET: marker=hidden")
+        b.close()
+
+        # The decoy deletes it and trims: its data is back below the floor,
+        # but its pool metadata's stale nodes still point above it (tmeta_scan).
+        script = f"""
+        printf '%s\\n' '{fixture.DECOY_PW}' | python3 -m pd open --config pd.toml --rw --password-stdin \\
+            --run 'rm $PD_ROOT/volumes/data/big; sync; fstrim $PD_ROOT/volumes/data'
+        """
+        vm.ToolVM(self.fx.env, self.fx.work).run(script, disks=[self.fx.disk], timeout=900)
+        b, _ = self.hidden_boot("monitor-3")
+        b.expect(r"WARNING: the decoy's pool metadata still points into the space reserved for this side")
+        b.expect("Press Enter to continue booting")
+        self.assertNotIn("the decoy has data in the space reserved", b.child.before)
+        b.sendline("")
+        b.expect("PD-TARGET: marker=hidden")
+        b.close()
+
+        # pd compact on the decoy rewrites its metadata: no warnings left.
+        offset = fixture.hidden_offset_sectors(self.fx)
+        script = f"""
+        printf '%s\\n%s\\n' '{fixture.DECOY_PW}' '{fixture.HIDDEN_PW}' | python3 -m pd compact \\
+            --config pd.toml --hidden-offset {offset} --password-stdin
+        """
+        vm.ToolVM(self.fx.env, self.fx.work).run(script, disks=[self.fx.disk], timeout=900)
+        b, _ = self.hidden_boot("monitor-4")
+        b.expect("PD-TARGET: marker=hidden")
+        self.assertNotIn("WARNING", before_kexec(b))
 
     def test_decoy_has_no_hidden_files(self):
         # Invariant 1: nothing hidden-specific in the decoy's boot volume.

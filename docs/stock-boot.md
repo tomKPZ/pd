@@ -218,11 +218,16 @@ If cryptsetup reports the disk as busy, the live system is using one of its part
 the ESP): unmount it. The hidden side maps the whole disk, and the kernel refuses that while a partition
 is in use.
 
+**With network access**, the release's `pd-live` bundle does the same without typing anything but
+the password: `pd-live/boot.sh --offset OFFSET --salt "$(cryptsetup luksUUID /dev/nvme0n1p2)"`
+([booting.md](booting.md#from-a-live-system)); add `--argon2 T,M_LOG2,P` for non-default parameters.
+Downloading it leaves a trace on the network, and pd's tools on the live system.
+
 **A pd disk can be booted this way too**, without its USB (if it's lost, or to boot from a borrowed
 live system): use `-o 2048` for the decoy or the hidden offset, the whole disk as `DISK`, and as `SALT`
 the disk's own, read from its first MiB:
 `"$(od -An -tx1 -v -j 1048544 -N 32 /dev/nvme0n1 | tr -d ' \n')"` (design.md §4.2). This doesn't work
-for a side enrolled for FIDO2.
+for a side enrolled for FIDO2; `pd-live` does.
 
 To practice without booting anything, run the first three commands, then `mount -o
 ro,rescue=nologreplay /dev/mapper/cryptboot /mnt/boot && ls /mnt/boot`, and undo it with `umount /mnt/boot; cryptsetup close

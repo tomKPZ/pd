@@ -102,6 +102,18 @@ class EndToEnd(unittest.TestCase):
         b.sendline(fixture.DECOY_PW)
         b.expect("kexec_core: Starting new kernel", timeout=120)
 
+    def test_live_bundle(self):
+        """The release's pd-live bundle boots both sides from another Linux
+        system (the tool VM standing in for a live system), without pd's USB."""
+        offset = fixture.hidden_offset_sectors(self.fx)
+        for side, pw, extra in (("decoy", fixture.DECOY_PW, ""),
+                                ("hidden", fixture.HIDDEN_PW, f"--offset {offset}")):
+            _, out = vm.ToolVM(self.fx.env, self.fx.work).run(f"""
+            tar -xzf {self.fx.env}/pd-live.tar.gz -C /tmp
+            printf '%s\\n' '{pw}' | /tmp/pd-live/boot.sh --argon2 1,12,1 {extra}
+            """, disks=[self.fx.disk], check=False, log=self.fx.work / f"live-{side}.log")
+            self.assertIn(f"PD-TARGET: marker={side}", out)
+
     def test_disk_classes_and_order(self):
         """Each disk has its own salt.  Empty and small disks are never tried;
         a pd disk whose first sectors got a partition table still boots

@@ -9,7 +9,7 @@ FLAKE=${FLAKE:-path:$PWD}
 NIX=(nix --extra-experimental-features "nix-command flakes")
 # The published files (release), then what they're made of: a rebuild of a
 # top-level derivation doesn't rebuild its inputs.
-ATTRS=(bootUki setupUki pdPyz bootToolsTarball bootInitrd setupInitrd bootTools plainTree)
+ATTRS=(bootUki setupUki pdPyz liveTarball bootInitrd setupInitrd bootTools plainTree)
 
 # Evaluate once, so that the build and the rebuilds use the same derivations
 # even if the working tree changes meanwhile.

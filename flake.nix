@@ -18,7 +18,7 @@
         pdPyz = pd.pdPyz;
         setupInitrd = pd.setupEnv.initrd;
         # What a release publishes (docs/release.md).
-        inherit (pd) release bootToolsTarball;
+        inherit (pd) release liveTarball;
         inherit (pd) testenv bootTools plainTools bootInitrd plainTree modulesClosure detectShift fido2Hmac kernel;
         default = pkgs.linkFarm "pd" [
           { name = "bzImage"; path = pd.kernelImage; }

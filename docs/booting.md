@@ -46,6 +46,25 @@ The edits only change the in-RAM copy of the boot environment. The USB is never 
 With [stock boot](stock-boot.md) there's no pd USB: the decoy boots on its own, and the hidden side
 is booted from a live system ([stock-boot.md §4](stock-boot.md#4-booting)).
 
+## From a live system
+
+Without pd's USB (lost, or not at hand), any Linux live system that can run as root and has `kexec`
+enabled in its kernel boots a pd disk with the release's `pd-live.tar.gz` ([release.md](release.md)):
+```sh
+sudo -i
+curl -LO https://github.com/tomKPZ/pd/releases/download/vX.Y/pd-live.tar.gz   # or copy it over
+tar -xzf pd-live.tar.gz
+pd-live/boot.sh                       # the decoy; asks for its password
+pd-live/boot.sh --offset <offset>     # the hidden side
+```
+`boot.sh` runs the boot USB's own `early.sh` with the bundle's static tools, so everything after the
+password is the same as on the USB: the disk is found by its salt (`--disk DEVICE` names it), and
+`late.sh` from its boot volume kexecs the chosen system. The files that would sit next to the boot
+image are options: `--argon2 T,M_LOG2,P` (non-default parameters), `--salt SALT` (an explicit salt),
+`--fido2 FILE` (the FIDO2 slots). It leaves the live system's boot entries alone. Check the download
+against the release's `SHA256SUMS` when you can. Downloading it is visible on the network.
+*(tested: `test_e2e` boots both sides with it from the tool VM.)*
+
 ## Recovery shell
 
 * It's a normal shell. Typing `exit` powers the machine off.

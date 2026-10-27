@@ -26,6 +26,21 @@ let
     '';
   };
 
+  # The frontier monitor's scan of the decoy pool's metadata, stale nodes
+  # included (docs/design.md §10.5).
+  tmetaScan = static.stdenv.mkDerivation {
+    pname = "tmeta_scan";
+    version = "1";
+    src = src + "/tools";
+    dontConfigure = true;
+    buildPhase = ''
+      $CC -static -O2 -Wall -Wextra -Werror tmeta_scan.c -o tmeta_scan
+    '';
+    installPhase = ''
+      install -Dm755 tmeta_scan $out/bin/tmeta_scan
+    '';
+  };
+
   # USB only: no smartcard (pcsc) support, whose static build fails anyway.
   # Only the library: libfido2's own tests and tools don't link statically.
   # libcbor's static build uses LTO, whose archive index has no symbols.
@@ -96,6 +111,7 @@ let
     "${lib.getBin static.jq}/bin/jq"
     "${static.fzf}/bin/fzf"
     "${detectShift}/bin/detect_shift"
+    "${tmetaScan}/bin/tmeta_scan"
     "${static.busybox}/bin/busybox"
   ];
 
@@ -223,11 +239,27 @@ let
     python3 -m zipapp src -o $out -p "/usr/bin/env python3" -m "pd.cli:entry"
   '';
 
-  # The boot volume's static tools and scripts as a tarball, for booting from
-  # a live system without pd's USB (docs/stock-boot.md).  Reproducible.
-  bootToolsTarball = pkgs.runCommand "pd-boot-tools.tar.gz" { } ''
+  # pd-live: boot a pd disk from a live system without pd's USB
+  # (docs/booting.md).  The boot USB's early.sh, disk check and tools, plus
+  # boot.sh to run them; late.sh and the rest come from the disk's boot
+  # volume.  Published as a reproducible tarball.
+  liveBundle = pkgs.runCommand "pd-live" { } ''
+    mkdir -p $out/bin
+    cp ${bootTools}/bin/* $out/bin/
+    # Only the applets early.sh and disk_class.sh use: the rest of the live
+    # system (e.g. late.sh's systemctl) stays as it is.
+    for a in awk blkid blockdev cat chmod cut dd grep mkdir mount mv od sed shred sort stat stty \
+        tr umount xxd; do
+      ln -s busybox $out/bin/$a
+    done
+    install -m755 ${src}/boot/early.sh $out/early.sh
+    install -m755 ${src}/boot/live-boot.sh $out/boot.sh
+    install -m644 ${src}/pd/disk_class.sh $out/disk_class.sh
+    install -m644 ${earlyEnv} $out/early_env.sh
+  '';
+  liveTarball = pkgs.runCommand "pd-live.tar.gz" { } ''
     tar --sort=name --mtime=@1 --owner=0 --group=0 --numeric-owner --format=gnu \
-      -C ${plainTree} --transform 's,^\.,pd-boot-tools,' -cf - . | gzip -9n >$out
+      -C ${liveBundle} --transform 's,^\.,pd-live,' -cf - . | gzip -9n >$out
   '';
 
   # QEMU with CanoKey, an emulated FIDO2 security key (tests only), patched
@@ -263,6 +295,7 @@ let
     { name = "bzImage"; path = "${kernel}/bzImage"; }
     { name = "boot-initrd.cpio.zst"; path = bootInitrd; }
     { name = "BOOTX64.EFI"; path = bootUki; }
+    { name = "pd-live.tar.gz"; path = liveTarball; }
     { name = "toolvm-initrd.cpio.zst"; path = toolvm.initrd; }
     { name = "toolenv"; path = toolvm.toolEnv; }
     { name = "plain"; path = plainTree; }
@@ -281,14 +314,14 @@ let
   ];
 in
 {
-  inherit testenv toolvm setupEnv pdPyz bootUki bootToolsTarball qemuCanokey;
+  inherit testenv toolvm setupEnv pdPyz bootUki liveBundle liveTarball qemuCanokey;
   # Everything a release publishes (.github/workflows/release.yml), at the
   # names it publishes them under.
   release = pkgs.linkFarm "pd-release" [
     { name = "BOOTX64.EFI"; path = bootUki; }
     { name = "pd-setup.efi"; path = setupEnv.uki; }
     { name = "pd.pyz"; path = pdPyz; }
-    { name = "pd-boot-tools.tar.gz"; path = bootToolsTarball; }
+    { name = "pd-live.tar.gz"; path = liveTarball; }
   ];
   inherit bootTools plainTools bootInitrd plainTree modulesClosure detectShift fido2Hmac lvm2Static;
   kernelImage = "${kernel}/bzImage";
