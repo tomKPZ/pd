@@ -790,7 +790,7 @@ floor is the defence.
 | dracut-built boot environment (host kernel + host tools) | v1. Replaced by a pinned minimal build, so the USB reveals less. |
 | mkinitcpio → dracut for the Arch target | Tried and reverted: it added nothing, and mkinitcpio is simpler and the Arch default. |
 | dm-integrity under the plain volume | Replaced in 2024 by btrfs dup + checksums. |
-| Salt in a disk sector | Rejected: one key derivation can then try every disk, without per-disk salts complicating boot and alignment. |
+| Salt in a disk sector | Rejected at first: one key derivation could then try every disk. Now planned (D55, [disk-salt.md](disk-salt.md)): a boot image identical for every install is worth a key derivation per candidate disk. |
 | Hidden salt suffix | Removed: it's public, so it adds nothing. Setup enforces different passwords instead. |
 | `pvmove` to tidy the pool layout (`MOVE_PES`) | Removed: cosmetic, and visible in LVM history. The decoy layout is now stock. |
 | rdseed as an extra entropy source | Removed: the kernel CSPRNG is enough. |
@@ -865,9 +865,15 @@ Decisions made while implementing v2:
 | D52 | `pd rekey` on a FIDO2 side generates a new boot-volume key | Otherwise an old `fido2.txt` with the old password still opens the side | agreed |
 | D53 | `pd randomize` checks that every byte was written | `dd` exits non-zero at the end of the disk either way, so a failed fill went unnoticed; unfilled space would stand out | agreed |
 | D54 | `pd compact` trims at `/mnt`; stock-boot mounts the hidden boot volume `ro,rescue=nologreplay` | ext4 records the last mount point; invariant 3 for the printed commands too | agreed |
+| D55 | The salt becomes the 32 bytes just below 1 MiB on the disk (as hex); the boot image carries none, and an explicit salt can still come from a file next to it. Reverses the USB salt of §4 and D22, and §12's "salt in a disk sector" | A boot image identical for every install: downloadable, reproducible, replaceable. The salt can't be lost with the USB, and rebuilding the USB needs no config ([disk-salt.md](disk-salt.md)) | agreed, planned |
+| D56 | The disk's first and last MiB hold random data instead of zeros, still unused; setup refills either if it matches any partition-table or filesystem signature, checking a superset of what the boot checks | Zeros at both ends are a fixed pattern; the buffers' job doesn't need zeros (disk-salt.md §3) | agreed, planned |
+| D57 | The boot tries disks in order: never those too small or whose salt bytes are all equal, partitioned-looking ones last, largest first; one Argon2 run (and FIDO2 touch) per disk tried | Each disk has its own salt; with one pd disk the right password still costs one key derivation (disk-salt.md §4) | agreed, planned |
+| D58 | The release image has fixed Argon2 parameters; keymap, FIDO2 slots, other Argon2 parameters and an explicit salt are optional files in `BOOTX64.EFI.extra.d/`, which systemd-stub passes to the initrd | The image itself stays identical for everyone (disk-salt.md §5) | agreed, planned |
+| D59 | No seed or fill key is kept to prove the disk's edges are filler | The free space can never be proven unused, so proving only the header invites the question why, and the fill key would expose the hidden side (§2.4) | agreed, planned |
 
 ---
 
 ## 14. Open questions
 
-None at the moment; what's left is in [roadmap.md](roadmap.md).
+None at the moment; what's left is in [roadmap.md](roadmap.md). Planned and agreed but not implemented:
+[disk-salt.md](disk-salt.md) moves the salt onto the disk for a generic boot image (D55–D59).
