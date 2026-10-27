@@ -255,10 +255,7 @@ def compact_pool(cfg: Config, pool: thinpool.Pool, region_table: str, target, *,
 def hidden_low(cfg: Config, offset: int, password: bytes) -> int:
     """The lowest disk byte the hidden side at `offset` has allocated (the
     start of the 256 MiB chunk holding its pool's highest block)."""
-    key = setup.boot_key(cfg, offset, password, "the hidden password")
-    with setup.boot_volume(cfg.disk, offset, key, create=False) as mnt:
-        data_key = (mnt / "data.key").read_bytes()
-        table = (mnt / "table.txt").read_text()
+    data_key, table = setup.side_keys(cfg, offset, password, "the hidden password")
     return region_low(cfg, table, data_key)
 
 
@@ -292,10 +289,7 @@ def compact(cfg: Config, offset: int, password: bytes, *, below: int | None = No
                                "stop below a hidden side")
         if hidden != "none":
             limit = hidden_low(cfg, hidden[0], hidden[1]) - L.REVERSE_CHUNK
-    key = setup.boot_key(cfg, offset, password)
-    with setup.boot_volume(cfg.disk, offset, key, create=False) as mnt:
-        data_key = (mnt / "data.key").read_bytes()
-        table = (mnt / "table.txt").read_text()
+    data_key, table = setup.side_keys(cfg, offset, password)
     d = setup.check_disk(cfg.disk)
     with setup.data_region(cfg.disk, table, data_key, readonly=False) as dev:
         pool = thinpool.find_pool(cfg.vg, str(dev))
@@ -322,10 +316,7 @@ def clean_decoy(cfg: Config, password: bytes, floor: int, report=print) -> None:
     below the floor."""
     def target(pool, u):
         return thinpool.blocks_below(pool, region, floor, u.block_size)
-    key = setup.boot_key(cfg, L.DECOY_PLAIN_OFFSET, password, "the decoy password")
-    with setup.boot_volume(cfg.disk, L.DECOY_PLAIN_OFFSET, key, create=False) as mnt:
-        data_key = (mnt / "data.key").read_bytes()
-        table = (mnt / "table.txt").read_text()
+    data_key, table = setup.side_keys(cfg, L.DECOY_PLAIN_OFFSET, password, "the decoy password")
     with setup.data_region(cfg.disk, table, data_key, readonly=False) as dev:
         pool = thinpool.find_pool(cfg.vg, str(dev))
         region = table.replace("DISK", cfg.disk)
@@ -371,9 +362,6 @@ def recover_side(cfg: Config, args, password: bytes) -> str:
             return recover(thinpool.find_pool(vg, str(dev)))
     from pd import rekey
     offset = rekey.default_offset(cfg, args.offset)
-    key = setup.boot_key(cfg, offset, password)
-    with setup.boot_volume(cfg.disk, offset, key, create=False) as mnt:
-        data_key = (mnt / "data.key").read_bytes()
-        table = (mnt / "table.txt").read_text()
+    data_key, table = setup.side_keys(cfg, offset, password)
     with setup.data_region(cfg.disk, table, data_key, readonly=False) as dev:
         return recover(thinpool.find_pool(cfg.vg, str(dev)))

@@ -121,6 +121,8 @@ class ToolVM:
             prelude += PLUG_SECURITY_KEY
         (self.work / "run.sh").write_text(prelude + script)
         (self.work / "hostname").write_text(hostname)
+        exit_file = self.work / "pd-exit"
+        exit_file.unlink(missing_ok=True)
         args = _qemu_base() + [
             "-kernel", str(self.env / "bzImage"),
             "-initrd", str(self.env / "toolvm-initrd.cpio.zst"),
@@ -160,10 +162,17 @@ class ToolVM:
         out = stdout.decode(errors="replace")
         if log:
             log.write_text(out)
+        # The guest writes its exit code to /work too: the console's last
+        # lines can get lost when the VM powers off on a slow host.
         rc = None
-        for line in out.splitlines():
-            if line.startswith("PD-EXIT "):
-                rc = int(line.split()[1])
+        if exit_file.exists():
+            text = exit_file.read_text().strip()
+            exit_file.unlink()
+            rc = int(text) if text.lstrip("-").isdigit() else None
+        if rc is None:
+            for line in out.splitlines():
+                if line.startswith("PD-EXIT "):
+                    rc = int(line.split()[1])
         if rc is None:
             rc = -1
         if check and rc != 0:

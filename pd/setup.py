@@ -455,7 +455,7 @@ def boot_volume_exists(disk: str, offset: int, key: bytes) -> bool:
                        check=False, stderr=subprocess.DEVNULL).returncode != 0:
                     return False
                 try:
-                    return (mnt / "data.key").exists()
+                    return (mnt / "data.key").exists() or (mnt / fido2.INNER).exists()
                 finally:
                     cmd("umount", mnt)
     except subprocess.CalledProcessError:
@@ -479,6 +479,37 @@ def boot_key(cfg: Config, offset: int, password: bytes, what: str = "that passwo
         hint = " (or no enrolled security key is plugged in)" if fido2.load(cfg) else ""
         raise RuntimeError(f"{what} doesn't open a boot volume at that offset{hint}")
     return found[0]
+
+
+SECRET_FILES = ("data.key", "decoy.key", fido2.INNER)
+
+
+def volume_secrets(mnt: pathlib.Path, key: bytes) -> tuple[bytes, bytes | None]:
+    """(data key, decoy key or None) of the boot volume mounted at mnt,
+    which `key` opened: unwrapped with a security key in FIDO2's data mode."""
+    files = {n: (mnt / n).read_bytes() for n in SECRET_FILES if (mnt / n).exists()}
+    return fido2.volume_secrets(files, key)
+
+
+def side_keys(cfg: Config, offset: int, password: bytes, what: str = "that password") -> tuple[bytes, str]:
+    """(data key, data-region table) of the side whose boot volume is at offset."""
+    key = boot_key(cfg, offset, password, what)
+    with boot_volume(cfg.disk, offset, key, create=False) as mnt:
+        table = (mnt / "table.txt").read_text()
+        data_key, _ = volume_secrets(mnt, key)
+    return data_key, table
+
+
+def wipe_boot_volume(disk: str, offset: int) -> None:
+    """Fill a boot volume's whole area with random data (through a throwaway
+    key), so nothing from an earlier boot volume there survives in what the
+    next one leaves unused."""
+    cmd("cryptsetup", "open", "--type=plain", "--batch-mode", *CIPHER_ARGS, "--key-file=/dev/urandom",
+        f"--offset={L.sectors(offset)}", f"--size={L.sectors(L.PLAIN_SIZE)}", disk, "pd-wipe-boot")
+    try:
+        fill_zeros("/dev/mapper/pd-wipe-boot", progress=False)
+    finally:
+        cmd("cryptsetup", "close", "pd-wipe-boot")
 
 
 def read_hidden_layout(cfg: Config, offset: int, password: bytes) -> L.HiddenLayout:
@@ -535,16 +566,19 @@ def init_decoy(cfg: Config, password: bytes, run=None, *, force: bool = False,
             if run:
                 with mountpoint("mnt-") as base, roots_mounted(cfg, base):
                     run(base)
+    if hl is not None:
+        # The hidden side keeps the decoy's data key and table for the
+        # frontier monitor: give it the new ones.
+        from pd import rekey
+        for w in rekey.update_decoy_copy(cfg, hl.plain_offset, hidden[1], data_key, table):
+            print(f"Warning: {w}")
 
 
 def open_decoy_readonly(cfg: Config, password: bytes):
     """Yield (data_key, table, segments, pe_start) of the decoy, read-only."""
     @contextlib.contextmanager
     def ctx():
-        key = boot_key(cfg, L.DECOY_PLAIN_OFFSET, password, "the decoy password")
-        with boot_volume(cfg.disk, L.DECOY_PLAIN_OFFSET, key, create=False) as mnt:
-            data_key = (mnt / "data.key").read_bytes()
-            table = (mnt / "table.txt").read_text()
+        data_key, table = side_keys(cfg, L.DECOY_PLAIN_OFFSET, password, "the decoy password")
         with data_region(cfg.disk, table, data_key, readonly=True) as dev:
             segs = lvm_segments(cfg.vg)
             pe = pv_data_offset(dev)

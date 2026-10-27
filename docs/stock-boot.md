@@ -221,6 +221,8 @@ is in use.
 **With network access**, the release's `pd-live` bundle does the same without typing anything but
 the password: `pd-live/boot.sh --offset OFFSET --salt "$(cryptsetup luksUUID /dev/nvme0n1p2)"`
 ([booting.md](booting.md#from-a-live-system)); add `--argon2 T,M_LOG2,P` for non-default parameters.
+A hidden side enrolled for FIDO2 (in either mode) needs `pd-live`: the typed commands don't keep the
+boot volume's key for `late.sh`.
 Downloading it leaves a trace on the network, and pd's tools on the live system.
 
 **A pd disk can be booted this way too**, without its USB (if it's lost, or to boot from a borrowed

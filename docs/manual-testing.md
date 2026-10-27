@@ -316,7 +316,8 @@ pd close
 
 ## C. YubiKey (FIDO2)
 
-This uses the disk from part B. Each YubiKey must have a FIDO2 PIN.
+This uses the disk from part B. Each YubiKey must have a FIDO2 PIN. It tests the default mode, data
+mode (the key protects the data; nothing on the USB); C7 tries boot mode.
 
 > [!WARNING]
 > A YubiKey refuses PINs after 3 wrong attempts in a row until it's unplugged and plugged in again,
@@ -338,31 +339,23 @@ Use at least 6 characters.
 
 Boot the setup stick, mount it (B2), plug in the YubiKey, then:
 ```sh
-sed -i '1i fido2 = "fido2.txt"' /m/pd.toml
 fido2-hmac list                                     # shows the key: /dev/hidrawN
 pd fido2 enroll --config /m/pd.toml                 # decoy password, PIN, touch the key when it blinks
 ```
 * [ ] It asks `Plug in the next security key and press Enter, or type "done":`. Type `done` (or, with
   a second key, plug it in and press Enter, then enter its PIN and touch it).
-* [ ] It prints `Enrolled 1 security key(s) for this side; the password alone no longer opens it.`
+* [ ] It prints `Enrolled 1 security key(s) for this side; its data now opens only with one of them.`
 
 ```sh
 pd fido2 enroll --config /m/pd.toml --offset NNNNNNNNNN    # hidden password, PIN, touch; then done
-pd fido2 list --config /m/pd.toml
+pd fido2 list --config /m/pd.toml                          # decoy password
+sync; umount /m; poweroff -f
 ```
 * [ ] The list shows `0: …  plugged in: /dev/hidrawN` (one line per key).
 
-### C3. Rewrite the boot USB
+### C3. The boot USB
 
-In the same setup session, plug in the boot stick and:
-```sh
-lsblk -o NAME,SIZE,MODEL,TRAN                      # the boot stick's partition, e.g. /dev/sdb1
-mkdir -p /b && mount /dev/sdb1 /b
-pd usb --output /b --config /m/pd.toml
-umount /b
-sync; umount /m; poweroff -f
-```
-* [ ] It prints `wrote EFI/BOOT/BOOTX64.EFI` and `wrote EFI/BOOT/BOOTX64.EFI.extra.d/fido2.cred`.
+Nothing to do: in data mode nothing goes on the USB.
 
 ### C4. Boot with the key
 
@@ -378,7 +371,7 @@ With the YubiKey plugged in, boot the decoy.
 * [ ] **Key plugged in late:** start without the key. After the PIN it prints
   `Insert your security key.`; plug it in within a minute, touch it, and it boots.
 * [ ] **No key:** start without the key and don't plug it in. After a minute: `No security key found.`,
-  then `No bootable disk found.` (the password alone no longer opens the decoy).
+  then the recovery shell (the boot volume opened; the data didn't).
 * [ ] **No touch:** enter the PIN but don't touch. After 15–30 seconds: `Not touched.` and the PIN
   prompt again; this time touch it, and it boots.
 * [ ] **Optional, uses 3 attempts:** three wrong PINs in a row print
@@ -391,8 +384,16 @@ Boot the setup stick, mount it, plug in the key:
 ```sh
 pd rekey --config /m/pd.toml                        # current and new decoy password, PIN, touch, done
 ```
-* [ ] `Re-keyed.` and a note to rebuild the boot USB. Rebuild it (C3), then boot the decoy with the
-  new password, the PIN and a touch.
+* [ ] `Re-keyed.` Boot the decoy with the new password, the PIN and a touch.
+
+### C7. Optional: boot mode
+
+Boot mode keeps the slots on the USB, and a password can't be checked without the key. Re-create the
+test disk (B4 to B6), then add `fido2_mode = "boot"` and `fido2 = "fido2.txt"` at the top of
+`pd.toml`, enroll as in C2, and write the boot stick with `pd usb --output /b --config /m/pd.toml`.
+* [ ] `pd usb` prints `wrote EFI/BOOT/BOOTX64.EFI.extra.d/fido2.cred`.
+* [ ] Booting asks for the PIN right after the password; without the key it ends in `No bootable disk
+  found.`
 
 ---
 

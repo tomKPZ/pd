@@ -48,8 +48,12 @@ class Config:
     vg: str = "sysvg"
     hostname: str | None = None  # set during setup, since LVM records it
     keymap: str | None = None  # console keymap for the password prompt (kbd name, e.g. "de")
-    # FIDO2 slots file (pd/fido2.py), relative to the config file.  Written by
-    # `pd fido2 enroll`, put on the USB by `pd usb`.
+    # FIDO2 mode (pd/fido2.py, docs/design.md §4.1): "data" (the security key
+    # protects the data-region key, kept in the boot volume; nothing on the
+    # USB) or "boot" (it protects the boot volume's key, in fido2.txt on the USB).
+    fido2_mode: str = "data"
+    # Boot mode's slots file (pd/fido2.py), relative to the config file.
+    # Written by `pd fido2 enroll`, put on the USB by `pd usb`.
     fido2: str | None = None
     # Swap LV on each side, fixed at setup (the VG has no free space later).
     # None: the RAM size of the machine running setup, like an installer; 0: no swap.
@@ -95,6 +99,8 @@ class Config:
             cfg.default = cfg.systems[0].name
         if cfg.salt:
             cfg.check_salt()
+        if cfg.fido2_mode not in ("data", "boot"):
+            raise ValueError('fido2_mode must be "data" or "boot"')
         return cfg
 
     def check_salt(self) -> None:

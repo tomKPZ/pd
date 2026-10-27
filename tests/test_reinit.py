@@ -48,6 +48,9 @@ class ReinitDecoy(unittest.TestCase):
         b.sendline("/early.sh")
         b.expect("Password: ")
         b.sendline(fixture.HIDDEN_PW)
+        # The hidden side got the new decoy's key: its frontier monitor reads it.
+        b.expect(r"Free space between the two sides: \d+ MiB", timeout=120)
+        self.assertNotIn("doesn't open with the key", b.child.before)
         b.expect("PD-TARGET: marker=hidden", timeout=120)
 
 

@@ -1,9 +1,16 @@
-"""FIDO2 security keys as a second factor for the plain volume key
-(docs/design.md §4.1).
+"""FIDO2 security keys as a second factor (docs/design.md §4.1), in one of
+two modes (the config's `fido2_mode`):
 
-Without FIDO2 a side's plain key is A = Argon2(password, salt).  With it, the
-plain key K is random, and each enrolled security key holds a wrapped copy
-of it on the USB, in fido2.txt: one line per credential,
+* "data" (the default): the boot volume stays keyed by A = Argon2(password,
+  salt), and the security key protects the side's data-region key instead.
+  The boot volume holds fido2.txt (INNER) in place of data.key: one line per
+  credential, "CRED SLOT0 SLOT1", SLOT0 the data key and SLOT1 (on the hidden
+  side) the decoy's data key, each XOR SHA-512(A || h || n) with
+  h = hmac-secret(CRED, SHA-256(A)) and n the slot's number as one byte.
+  Nothing goes on the USB, but a password can be checked offline.
+* "boot": the boot volume's key K is random, and each enrolled security key
+  holds a wrapped copy of it on the USB (fido2.cred, from the config's
+  `fido2` file): one line per credential,
 
     CRED SLOT0 SLOT1        (hex)
 
@@ -139,7 +146,46 @@ def holders(creds: list[Credential]) -> dict[str, int]:
     return out
 
 
-# --- fido2.txt -----------------------------------------------------------------------
+# --- Data mode: fido2.txt inside the boot volume ---------------------------------------
+
+INNER = "fido2.txt"
+
+
+def inner_pad(a: bytes, h: bytes, slot: int) -> bytes:
+    return hashlib.sha512(a + h + bytes([slot])).digest()
+
+
+def inner_slots(a: bytes, dev: str, cred: bytes, secrets: list[bytes]) -> list[bytes]:
+    """The slots wrapping `secrets` (data key, decoy key) for one security
+    key: one touch."""
+    h = get(dev, cred, hmac_salt(a))
+    return [xor(x, inner_pad(a, h, n)) for n, x in enumerate(secrets)]
+
+
+def inner_unwrap(text: str, a: bytes) -> list[bytes]:
+    """The secrets in a boot volume's fido2.txt, with whichever enrolled
+    security key is plugged in."""
+    creds = parse(text)
+    held = holders(creds)
+    if not held:
+        raise RuntimeError("this side uses FIDO2: plug in one of its security keys")
+    dev, i = next(iter(held.items()))
+    h = get(dev, creds[i].id, hmac_salt(a))
+    return [xor(s, inner_pad(a, h, n)) for n, s in enumerate(creds[i].slots)]
+
+
+def volume_secrets(files: dict[str, bytes], a: bytes) -> tuple[bytes, bytes | None]:
+    """(data key, decoy key or None) of a boot volume opened with key `a`,
+    from its files (name -> content): plain, or unwrapped in data mode."""
+    if "data.key" in files:
+        return files["data.key"], files.get("decoy.key")
+    if INNER not in files:
+        raise RuntimeError("that boot volume has no data.key; not a pd boot volume?")
+    data, decoy = inner_unwrap(files[INNER].decode(), a)
+    return data, decoy
+
+
+# --- Boot mode: fido2.txt next to the config, fido2.cred on the USB -------------------
 
 def load(cfg) -> list[Credential]:
     if cfg.fido2_text is not None:

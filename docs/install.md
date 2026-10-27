@@ -230,26 +230,32 @@ side is booted from a stock live system with commands typed from memory.
 
 ## FIDO2 security keys (optional)
 
-A FIDO2 security key with `hmac-secret` (e.g. any YubiKey 5 or Security Key) makes offline password
-guessing impossible without the key ([design.md §4.1](design.md#41-fido2-security-keys-optional)).
-Like `systemd-cryptenroll`, pd needs the key's PIN and a touch. Set a PIN first (e.g. `ykman fido
-access change-pin`). Then, in the setup environment, after setting up the sides:
+A FIDO2 security key with `hmac-secret` (e.g. any YubiKey 5 or Security Key) adds a second factor
+([design.md §4.1](design.md#41-fido2-security-keys-optional)). Like `systemd-cryptenroll`, pd needs
+the key's PIN and a touch. Choose a mode with `fido2_mode` in the config (top level, before any
+`[table]`):
+* `"data"` (the default): the key protects each side's data. The password still opens the boot
+  volume, so a stolen disk image allows guessing passwords offline (as without FIDO2), but the data
+  needs the key. Nothing goes on the USB.
+* `"boot"`: the key protects the boot volume, so a password can't even be checked without it. The
+  slots go on the USB next to the boot image, and the config's `fido2 = "fido2.txt"` names the file
+  that holds them (keep it on the setup stick: it's the only copy besides the USB).
 
-1. Add `fido2 = "fido2.txt"` to the config, at the top level (before any `[table]`).
-2. Enroll the decoy: `pd fido2 enroll --config pd.toml`. It asks for the decoy password and the PIN,
+Set a PIN first (e.g. `ykman fido access change-pin`). Then, in the setup environment, after setting
+up the sides:
+1. Enroll the decoy: `pd fido2 enroll --config pd.toml`. It asks for the decoy password and the PIN,
    and for a touch. Then it offers to enroll another key: swap keys and press Enter. Enroll at least
    two keys: losing every enrolled key loses the side.
-3. If there's a hidden side, enroll it too, with the same keys: `pd fido2 enroll --config pd.toml
-   --offset N`. If the hidden side uses FIDO2, the decoy must too (otherwise `fido2.cred` on the USB
-   points at another side).
-4. Write the boot USB again with `--config` (§3). The slots go next to the image as `fido2.cred`,
-   and the boot asks for the PIN after the password.
+2. If there's a hidden side, enroll it too, with the same keys: `pd fido2 enroll --config pd.toml
+   --offset N`. In boot mode, if the hidden side uses FIDO2, the decoy must too (otherwise
+   `fido2.cred` on the USB points at another side).
+3. Boot mode only: write the boot USB again with `--config` (§3), which puts the slots next to the
+   image as `fido2.cred`.
 
-The first enrollment re-creates the side's boot volume under a random key. After that the password alone
-no longer opens it. To add a key later, plug in an enrolled one first. `pd rekey` re-wraps every key
-it's shown, one at a time; keys it isn't shown stop working for that side. `pd fido2 list` and `pd
-fido2 remove N` manage the list. Rewrite the USB after every change. Keep `fido2.txt` (on the setup
-stick): it's the only copy besides the USB. *(tested: `test_fido2`, with
+The boot asks for the PIN after the password. To add a key later, plug in an enrolled one first. `pd
+rekey` re-wraps every key it's shown, one at a time; keys it isn't shown stop working for that side.
+`pd fido2 list` and `pd fido2 remove N` manage the list (in data mode per side: `--offset N`, and they
+ask for its password). In boot mode, rewrite the USB after every change. *(tested: `test_fido2`, with
 QEMU's emulated CanoKey; not yet with a real security key.)*
 
 ## From a live ISO

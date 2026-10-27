@@ -21,12 +21,14 @@ import pathlib
 import subprocess
 
 from pd import layout as L
-from pd import header, rekey, setup, thinpool
+from pd import fido2, header, rekey, setup, thinpool
 from pd.config import Config
 from pd.opener import thin_table
 from pd.util import argon2, cmd, cmd_output, dm_device, mountpoint
 
 OLD_MAP = "pd-old"
+FIDO2_NOTE = ("FIDO2: the moved sides open without their security keys; enroll them again "
+              "(pd fido2 enroll, both sides), and in boot mode write a new boot USB.")
 COPY_BUFFER = 16 * L.MIB
 
 
@@ -110,12 +112,14 @@ def read_side(cfg: Config, offset: int, password: bytes) -> OldSide:
     key, slot = found
     with setup.boot_volume(cfg.disk, offset, key, create=False) as mnt:
         snap = rekey.snapshot(mnt)
-    data_key, table = snap["data.key"][2], snap["table.txt"][2].decode()
+    data_key, _ = fido2.volume_secrets({n: v[2] for n, v in snap.items() if n in setup.SECRET_FILES}, key)
+    table = snap["table.txt"][2].decode()
     env = next((v[2].decode() for k, v in snap.items() if k.endswith("/env.sh")), "")
     vg = next((line.split("=", 1)[1].strip("'\"") for line in env.splitlines() if line.startswith("VG=")),
               cfg.vg)
     side = OldSide(offset=offset, password=password, snapshot=snap, data_key=data_key, table=table,
-                   vg=vg, lvs=[], block_size=0, fido2=slot is not None)
+                   vg=vg, lvs=[], block_size=0,
+                   fido2=slot is not None or fido2.INNER in snap)
     with old_region(cfg, side) as pv:
         for row in thinpool.lvm_out(pv, "lvs", "--noheadings", "--units", "b", "--nosuffix",
                                     "-o", "lv_name,segtype,lv_size", vg).splitlines():
@@ -310,6 +314,8 @@ def move(cfg: Config, new_disk: str, decoy_password: bytes,
             pe_start = setup.pv_data_offset(str(dev))
             setup.LVM_DEVICES = None
         if not old_hidden:
+            if decoy.fido2:
+                report(FIDO2_NOTE)
             return None
 
         report("creating the hidden side on the new disk")
@@ -330,6 +336,8 @@ def move(cfg: Config, new_disk: str, decoy_password: bytes,
         with setup.data_region(new_disk, hl.data_table(), hidden_key, readonly=False) as dev:
             setup.LVM_DEVICES = str(dev)
             build_side(new_cfg, cfg, str(dev), old_hidden, hidden=True, d=d, report=report)
+        if decoy.fido2 or old_hidden.fido2:
+            report(FIDO2_NOTE)
         return hl
     finally:
         setup.LVM_DEVICES = None

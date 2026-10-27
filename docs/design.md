@@ -294,71 +294,83 @@ because v1 creates the pool with one data extent and then extends it.
 
 ### 4.1 FIDO2 security keys (optional)
 
-**Purpose: no offline password guessing.** Without FIDO2, anyone with the USB and a disk image can
-guess passwords offline, slowed only by Argon2. With FIDO2 a side's plain key can't be derived from
-the password alone: each guess needs the physical security key, its PIN (which the key locks after 8
-wrong tries), and a touch. It doesn't help against coercion (A2): the security key is one more thing
-to hand over.
+A FIDO2 security key adds a second factor, in one of two modes (the config's `fido2_mode`, D63). It
+doesn't help against coercion (A2): the security key is one more thing to hand over.
+
+| | **data** (default) | **boot** |
+|---|---|---|
+| The security key protects | the side's data-region key | the side's boot-volume key |
+| The boot volume is keyed by | A = Argon2(password, salt), as without FIDO2 | a random key K |
+| The slots live in | the boot volume (`fido2.txt` in place of `data.key`) | `fido2.cred` next to the boot image on the USB |
+| A password guess can be checked offline (disk image only) | yes, by opening the boot volume | no: each guess needs the key, its PIN and a touch |
+| So the side's existence is protected by | the password | the password and the security key |
+| The USB | is just the release image | carries a per-install file |
+| Touches per boot | one, in `late.sh` | one per disk tried, in `early.sh` |
+
+Data mode is the default because it keeps the USB generic and the boot simple, and pd already relies
+on long passwords to hide a side (§4). Boot mode is for when a stolen disk image shouldn't allow
+guessing at all.
 
 **Mechanism.** FIDO2's `hmac-secret` extension, as in `systemd-cryptenroll`, with its defaults:
 non-resident credentials (nothing is stored on the security key), PIN and touch required, no user
 verification. (U2F can't be used: it only makes randomized signatures, so it can't produce a stable
-secret.)
+secret.) Both modes use the same values:
 
 | Value | Definition |
 |---|---|
-| A | Argon2id(password, salt), as without FIDO2 |
-| K | the side's plain key: 64 random bytes, generated when FIDO2 is first enrolled for the side |
-| C_i | a credential created on security key i; its ID (an encrypted blob only that key can use) is stored on the USB |
+| A | Argon2id(password, salt) |
+| C_i | a credential created on security key i; its ID is an encrypted blob only that key can use |
 | h_i | hmac-secret(C_i, SHA-256(A)): 32 bytes only security key i can compute, and only from A |
-| slot | K XOR SHA-512(A ‖ h_i) |
 
-The USB carries the slots as `fido2.cred` next to the boot image (§7.1; the config names the file,
-`fido2.txt`): one line per credential, `C_i SLOT0 SLOT1`. Slot 0 belongs to the side
-whose boot volume is at the decoy's offset, slot 1 to the other side. A slot no side uses holds random
-bytes, which can't be told apart from a wrapped key.
+Each mode keeps one line per credential, `C_i SLOT0 SLOT1`; several security keys mean several lines,
+each wrapping the same secrets. Losing every enrolled security key loses the sides that use FIDO2;
+enroll at least two.
 
-At boot, `early.sh` derives A for a disk as usual. If `fido2.cred` exists, it asks for the PIN (once
-per boot) and runs `fido2-hmac unlock` (`tools/fido2_hmac.c`, static, on the USB). That program waits
-for a security key holding one of the credentials (checked silently, without a touch), gets h_i
-(touch), and writes the two unwrapped candidates. `early.sh` then tries A, slot 0 and slot 1 on the
-disk. Trying A keeps a side without FIDO2 bootable, so enrolling one side never locks out the other.
-A depends on the disk's salt (§4.2), so each disk tried needs its own touch; with one pd disk that's
-one.
+**Data mode.** SLOT0 is the side's data key and SLOT1 the decoy's data key on the hidden side (which
+the frontier monitor needs, §10.2) or random bytes on the decoy, each XOR SHA-512(A ‖ h_i ‖ n), n the
+slot's number as one byte, so the two never share a pad. The file sits in the boot volume, encrypted
+under A, in place of `data.key` and `decoy.key`. At boot, `early.sh` opens the boot volume with A as
+without FIDO2; `late.sh` sees `fido2.txt`, asks for the PIN, and runs `fido2-hmac unlock --per-slot`
+(`tools/fido2_hmac.c`, static, in the boot volume), which waits for a security key holding one of the
+credentials (checked silently, without a touch), gets h_i (touch), and writes the two unwrapped keys
+to `/run/pd`. A wrong key or no key: the boot volume opened, but the data region doesn't. Credential
+IDs are only readable behind the password, so whatever structure they have can't confirm a guess
+that opening the boot volume doesn't already confirm. Nothing is on the USB, so nothing there can
+point at a side. Enrolling rewrites the boot volume after refilling its whole area with random data,
+so the plaintext `data.key` doesn't survive in its free space (`test_fido2` checks).
 
-**Deniability.** Both sides use the same credentials, and the hidden side's request to the security key
-is derived from its own password, so nothing on the USB is specific to the hidden side (invariant 1):
-every line has two slots whether or not a second side exists. One consequence: **if the hidden side
-uses FIDO2, enroll the decoy too.** A `fido2.cred` on the USB that the decoy doesn't use points at
-another side. It's also the one file that makes a FIDO2 user's USB specific to an install
-([roadmap](roadmap.md)).
-
-**Several security keys.** Each security key computes a different h_i, so each gets its own line, and
-each line wraps the same K. Losing every enrolled security key loses the sides that use FIDO2; enroll
-at least two.
+**Boot mode.** K is 64 random bytes, generated when FIDO2 is first enrolled for the side; each slot is
+K XOR SHA-512(A ‖ h_i). The USB carries the slots as `fido2.cred` next to the boot image (§7.1; the
+config's `fido2` names the file, `fido2.txt`). Slot 0 belongs to the side whose boot volume is at the
+decoy's offset, slot 1 to the other side; a slot no side uses holds random bytes, which can't be told
+apart from a wrapped key. At boot, `early.sh` derives A for a disk as usual, asks for the PIN (once per
+boot), runs `fido2-hmac unlock`, and tries A, slot 0 and slot 1 on the disk. Trying A keeps a side
+without FIDO2 bootable, so enrolling one side never locks out the other. A depends on the disk's salt
+(§4.2), so each disk tried needs its own touch. Both sides use the same credentials, and the hidden
+side's request to the security key is derived from its own password, so nothing on the USB is
+specific to the hidden side (invariant 1): every line has two slots whether or not a second side
+exists. One consequence: **in boot mode, if the hidden side uses FIDO2, enroll the decoy too.** A
+`fido2.cred` that the decoy doesn't use points at another side.
 
 **Commands** (`pd/rekey.py`, `pd/fido2.py`):
 * `pd fido2 enroll [--offset N]` enrolls security keys for one side, one at a time: the plugged-in
-  one, then each one the user swaps in when asked (one USB port is enough). The first time, it
-  re-creates the side's boot volume under a random K, like `pd rekey`, and the password alone stops
-  working. Later, the first plugged-in key must be an enrolled one, to unwrap K. A security key
-  without a credential gets one; its slot for the other side stays random until that side enrolls it
-  too.
-* `pd rekey` on a FIDO2 side generates a new random K, re-creates the boot volume under it, and wraps
-  it for each security key in turn (the first plugged-in key must be an enrolled one). A new K, not
-  just new slots, so an old `fido2.txt` with the old password stops working too. The slots of keys
-  that weren't plugged in are replaced with random bytes.
-* `pd fido2 remove N` and `pd fido2 list`.
-* After any change, rewrite the USB (`pd usb --config`): `fido2.cred` is part of it. The config's
-  `fido2` names the file.
+  one, then each one the user swaps in when asked (one USB port is enough). A security key without a
+  credential gets one. Once a side uses FIDO2, the first plugged-in key must be an enrolled one, to
+  unwrap its secrets. Data mode converts a boot-mode side; boot mode refuses a data-mode side.
+* `pd rekey` re-wraps the slots for each security key in turn; keys that weren't plugged in stop
+  working for that side. In boot mode it also generates a new random K, so an old `fido2.txt` with the
+  old password stops working too. (In data mode the data key can't change without re-encrypting the
+  data region; an old boot volume would have to come from a snapshot, which is out of scope.)
+* `pd fido2 list` and `pd fido2 remove N` (in data mode with `--offset` and the side's password).
+* Boot mode only: after any change, rewrite the USB (`pd usb --config`).
 
-**Cost.** `fido2-hmac` (static libfido2, libcbor, OpenSSL; 5.7 MB) adds about 0.5 MB to every USB's
-compressed initrd, since its OpenSSL largely duplicates cryptsetup's. A PIN prompt and a touch on
-every boot, only when `fido2.cred` exists.
+**Cost.** `fido2-hmac` (static libfido2, libcbor, OpenSSL; 5.7 MB) is in every boot volume, and adds
+about 0.5 MB to the USB's compressed initrd (boot mode), since its OpenSSL largely duplicates
+cryptsetup's. A PIN prompt and a touch on every boot of a FIDO2 side.
 
-**Tests.** `tests/test_fido2.py` uses QEMU's emulated CanoKey, which implements `hmac-secret`. QEMU
-emulates one CanoKey at a time, so the test swaps between two over QMP, like a user swapping keys. A
-real security key can be passed into a VM with `-device usb-host`.
+**Tests.** `tests/test_fido2.py` runs one scenario per mode with QEMU's emulated CanoKey, which
+implements `hmac-secret`. QEMU emulates one CanoKey at a time, so the test swaps between two over QMP,
+like a user swapping keys. A real security key can be passed into a VM with `-device usb-host`.
 
 ### 4.2 The salt and the disk's edges
 
@@ -411,17 +423,18 @@ is mounted read-only during boot and never mounted by the running OSes.
 ```
 late.sh                   stage-2 boot script
 thin-ro.sh                read-only thin LV mapping (§7.3)
-data.key                  this side's data-region key
+data.key                  this side's data-region key (FIDO2 data mode: fido2.txt instead, §4.1)
 table.txt                 dm table for this side's data region, with DISK standing for the disk
 crypt.env                 cipher parameters handed to the target OS
 bin/                      static lvm, dmsetup, pdata_tools (thin_check, thin_dump), kexec, fzf, jq, detect_shift,
-                          busybox (the scripts' userland, so they also run from a live system)
+                          tmeta_scan, fido2-hmac, busybox (the scripts' userland, so they also run from a
+                          live system)
 systems/<name>/env.sh     per-system settings: VG, root LV, kernel, initrd, cmdline
 systems/<name>/extra.sh   per-system hook (e.g. the NixOS generation menu)
 systems/default           symlink to the default system
 hooks/frontier.sh         hidden side only: the frontier monitor (§10.2)
 frontier.env              hidden side only: monitor threshold
-decoy.key, decoy.table    hidden side only: used by the frontier monitor
+decoy.key, decoy.table    hidden side only: used by the frontier monitor (decoy.key in fido2.txt, data mode)
 ```
 
 `late.sh` sources every `hooks/*.sh` before handing over. The decoy has no `hooks/` directory; a test
@@ -537,7 +550,7 @@ in the initrd. `pd usb --config` writes them (`pd/usb.py`):
 | File | Contents | Reveals |
 |---|---|---|
 | `keymap.cred` | the console keymap (busybox `loadkmap` format, built from kbd's keymaps) | the user's keyboard layout |
-| `fido2.cred` | the FIDO2 slots (§4.1) | a FIDO2 enrollment, so an install |
+| `fido2.cred` | the FIDO2 slots, in boot mode (§4.1) | a FIDO2 enrollment, so an install |
 | `argon2.cred` | Argon2 parameters other than the defaults (the tests use this) | an install with custom parameters |
 | `salt.cred` | a salt from the config (§4.2) | an install |
 
@@ -581,7 +594,7 @@ when a session leader exits).
    sectors something overwrote still boots (its salt is at the end of the first MiB); only wrong
    passwords pay for them. `PD_DISK=/dev/nvme0n1 /early.sh` in the recovery shell tries just that disk.
 4. For each candidate: read its salt (or `salt.cred`'s), run `argon2` (reusing the key if the previous
-   disk had the same salt), unwrap the FIDO2 slots if `fido2.cred` exists, and with each key:
+   disk had the same salt), unwrap the FIDO2 slots if `fido2.cred` exists (boot mode), and with each key:
    * `cryptsetup open --type plain --readonly --offset $PLAIN_OFFSET --size $PLAIN_SIZE …`;
    * mount btrfs with `ro,rescue=nologreplay`;
    * `exec` `late.sh` from it. Using `exec` frees early.sh's memory, password included, which
@@ -698,7 +711,9 @@ Each side can hold several OSes in the same VG (e.g. Arch and NixOS).
   `--force`, `init-decoy` needs `--no-hidden` or `--hidden-offset` (and the hidden password); with a
   hidden side, the new decoy pool's metadata goes at the front instead of stock placement (which would
   put `tmeta` at the end, possibly on a v1 hidden boot volume), and the layout is checked against the
-  hidden side before the data region is written. The disk is never re-randomized.
+  hidden side before the data region is written. The disk is never re-randomized. The hidden side's
+  copies of the decoy's data key and table (the frontier monitor's) are then replaced with the new
+  ones; in FIDO2 data mode that needs the hidden side's security keys.
 * **The UKI records nothing about the build host:** `pd usb` passes a neutral `--os-release`
   (ukify otherwise embeds the host's `/usr/lib/os-release`).
 * **Writing the USB.** `pd usb --output ESP [--config pd.toml]` copies the release boot image to the
@@ -733,7 +748,9 @@ Tested: 7379 MiB free on a fresh 8 GiB test disk; 543 MiB and a warning after wr
 decoy.
 
 It also warns (and waits) if any decoy LV other than the pool's data lies inside the hidden region, e.g.
-after someone changed the decoy's LVM layout; if the decoy's data is above the hidden side's floor; and
+after someone changed the decoy's LVM layout; if the decoy doesn't open with the key the hidden side
+keeps for it (re-created without `--hidden-offset`); if the decoy's data is above the hidden side's
+floor; and
 if the decoy's pool metadata, stale nodes included, points above the floor or into the hidden side's
 data (§10.5).
 
@@ -864,13 +881,13 @@ couldn't show that any are missing. Scanning the metadata takes about a second p
   | `test_live` (opt-in: `PD_TEST_LIVE=1`) | stock boot from the real Debian Live 13 Xfce image: log in on its serial console, type the printed commands, boot the hidden side |
   | `test_compact` | a pd decoy, a migrated v1 decoy and a stock decoy, filled and mostly emptied: init-hidden refuses, `pd compact` moves the data down (files intact; `--recover` after a damaged metadata write; none of the fill's marked blocks left above the boundary), then both sides boot; `init-hidden` on a decoy that used and trimmed the hidden side's space clears it (§10.5) |
   | `test_move` | `pd move` 8 → 12 → 6 GiB: files intact, btrfs roots grown and shrunk, both sides boot after each move |
-  | `test_fido2` | enroll two emulated security keys for both sides, boot with either, wrong PIN, unknown key, rekey (a new boot-volume key: the old `fido2.txt` stops working), remove |
+  | `test_fido2` | both modes: enroll two emulated security keys for both sides, boot with either, wrong PIN, unknown key, rekey, remove; boot mode: the old `fido2.txt` stops working after a rekey; data mode: nothing for the USB, and the plaintext data key is gone from the boot volume |
   | `test_churn` | btrfs, XFS and (unsupported) ext4 pool footprint under churn, with and without a shutdown trim |
   | `fs_survey.py` (not in the suite; `python3 -m tests.fs_survey`) | the §2.3 table: filesystems and btrfs options × workloads × trim |
   | `test_luks_equiv` | a v1 LUKS2 data region reads identically through plain dm-crypt with its volume key |
   | `test_migrate` | a v1-format disk migrated with `pd migrate-v1` keeping an explicit salt, then moved to the disk salt with `pd header`, boots both sides with v2 (`test_compact` migrates straight to the disk salt) |
   | `test_rekey` | new passwords and Argon2 parameters on both sides, then a new header (`pd header`); `--new-salt` is refused without an explicit salt; both boot with a new USB, the old password fails |
-  | `test_reinit` | re-initializing the decoy is refused without `--force`; with the hidden offset, both sides still boot |
+  | `test_reinit` | re-initializing the decoy is refused without `--force`; with the hidden offset, both sides still boot, and the hidden side's frontier monitor reads the new decoy |
   | `test_open` | `pd.pyz open`/`close`: read-only with the disk attached read-only, hidden side, read-write, wrong password |
 
 ---
@@ -978,6 +995,7 @@ Decisions made while implementing v2:
 | D60 | Prebuilt releases from GitHub Actions: every published file is reproducible and rebuild-checked; releases build without any binary cache but cache.nixos.org, carry `SHA256SUMS` and a build-provenance attestation, and are tested first; third-party actions are pinned to commit SHAs | Users download instead of building; anyone can check a download against the source (release.md) | agreed |
 | D61 | The frontier monitor also scans the decoy's pool metadata for stale btree leaves (`tmeta_scan`) and warns if they point above the floor or into the hidden side's data | The decoy can rise above the floor and fall back between hidden boots; its stale metadata then points at old data the hidden side would overwrite (§10.5) | agreed |
 | D62 | The release's `pd-live` bundle boots a pd disk from a live system: the boot USB's `early.sh`, disk check and static tools, run by `boot.sh` with the per-install files as options | A lost or unavailable USB doesn't lock the user out, and booting needs nothing typed but the password and options ([booting.md](booting.md#from-a-live-system)) | agreed |
+| D63 | FIDO2 has two modes (`fido2_mode`): "data" (default) wraps the data key in the boot volume, which stays keyed by the password; "boot" wraps the boot volume's key, with the slots on the USB | Data mode keeps the USB generic and the boot to one touch, but lets a password be checked offline; boot mode protects a side's existence with the security key too (§4.1) | agreed |
 
 ---
 

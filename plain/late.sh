@@ -18,6 +18,36 @@ fi
 disk=$(cat /run/pd/disk)
 . "$B/crypt.env"
 
+# FIDO2 in data mode (docs/design.md §4.1): this side's data key (and, on the
+# hidden side, the decoy's, for the frontier monitor) is wrapped for each
+# enrolled security key in fido2.txt, under the boot volume's key.
+DATA_KEY=$B/data.key
+DECOY_KEY=$B/decoy.key
+if [ -s "$B/fido2.txt" ]; then
+    tries=0
+    while :; do
+        printf "Security key PIN: "
+        stty -echo 2>/dev/null || true
+        IFS= read -r PIN
+        stty echo 2>/dev/null || true
+        echo
+        rc=0
+        printf '%s\n' "$PIN" | fido2-hmac unlock "$B/fido2.txt" /run/pd/boot.key /run/pd --per-slot || rc=$?
+        PIN=
+        case $rc in
+        0) break ;;
+        3) echo "Wrong PIN." ;;
+        4) echo "PIN blocked: remove and reinsert the security key."; exit 1 ;;
+        5) echo "Not touched." ;;
+        *) exit 1 ;;
+        esac
+        tries=$((tries + 1))
+        [ "$tries" -lt 3 ] || exit 1
+    done
+    DATA_KEY=/run/pd/slot0.key
+    DECOY_KEY=/run/pd/slot1.key
+fi
+
 # On a live system, udev would probe the devices created below, and LVM could
 # activate the volume groups on them read-write.  Stop udev for the rest of
 # the session (kexec follows), and have libdevmapper make device nodes itself.
@@ -42,7 +72,7 @@ fi
 sed "s|DISK|$disk|g" "$B/table.txt" | dmsetup create --readonly cryptlvm-raw
 dmsetup mknodes cryptlvm-raw
 cryptsetup open --type plain --readonly --batch-mode $CRYPT_ARGS \
-    --key-file "$B/data.key" /dev/mapper/cryptlvm-raw cryptlvm
+    --key-file "$DATA_KEY" /dev/mapper/cryptlvm-raw cryptlvm
 . "$B/thin-ro.sh"
 thin_ro_open "$VG" "$LV_ROOT" root-ro
 ROOT_DEV=/dev/mapper/root-ro
@@ -67,11 +97,14 @@ pad=$(((4 - size % 4) % 4))
 
 mkdir -p /run/handoff/boot_tmp
 chmod 700 /run/handoff/boot_tmp
-cp "$B/data.key" "$B/table.txt" "$B/crypt.env" /run/handoff/boot_tmp/
+cp "$DATA_KEY" /run/handoff/boot_tmp/data.key
+cp "$B/table.txt" "$B/crypt.env" /run/handoff/boot_tmp/
 (cd /run/handoff && find boot_tmp | cpio -o -H newc --quiet) >>/run/initrd
 
 kexec -l "$R$KERNEL" --initrd=/run/initrd --command-line="$CMDLINE"
 shred -u /run/handoff/boot_tmp/* /run/initrd
-[ ! -e /run/pd/boot.key ] || shred -u /run/pd/boot.key
+for k in /run/pd/boot.key /run/pd/slot0.key /run/pd/slot1.key; do
+    [ ! -e "$k" ] || shred -u "$k"
+done
 kexec -e
 

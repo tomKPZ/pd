@@ -98,8 +98,12 @@ let
     export PYTHONPATH=/src PYTHONDONTWRITEBYTECODE=1 HOME=/tmp
     export SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt
     cd /work
-    setsid cttyhack sh -c 'bash /work/run.sh; echo "PD-EXIT $?"'
+    # The exit code also goes to /work: on a slow host the console's last
+    # lines can be lost when the VM powers off (seen on CI runners), so give
+    # it a moment to drain too.
+    setsid cttyhack sh -c 'bash /work/run.sh; rc=$?; echo "$rc" >/work/pd-exit; echo "PD-EXIT $rc"'
     sync
+    sleep 1
     poweroff -f
   '';
 

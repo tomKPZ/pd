@@ -112,6 +112,8 @@ let
     "${static.fzf}/bin/fzf"
     "${detectShift}/bin/detect_shift"
     "${tmetaScan}/bin/tmeta_scan"
+    # FIDO2's data mode unwraps the data key in late.sh (docs/design.md §4.1).
+    "${fido2Hmac}/bin/fido2-hmac"
     "${static.busybox}/bin/busybox"
   ];
 
@@ -210,7 +212,7 @@ let
     # The scripts' userland, so they run the same on pd's USB and on a live
     # system (docs/stock-boot.md), whatever awk or cpio that has.
     for a in awk basename blockdev cat chmod cp cpio cut dd dirname find grep ls mkdir mount \
-        readlink rm sed shred sort stat tr; do
+        readlink rm sed shred sort stat stty tr; do
       ln -s busybox $out/bin/$a
     done
     install -m755 ${src}/plain/late.sh $out/late.sh

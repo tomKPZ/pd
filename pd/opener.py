@@ -76,7 +76,7 @@ def read_boot_volume(cfg: Config, offset: int, password: bytes):
     """data.key, table and the systems' env.sh settings of a side."""
     key = setup.boot_key(cfg, offset, password)
     with setup.boot_volume(cfg.disk, offset, key, create=False) as mnt:
-        data_key = (mnt / "data.key").read_bytes()
+        data_key, _ = setup.volume_secrets(mnt, key)
         table = (mnt / "table.txt").read_text()
         systems = {}
         for d in sorted((mnt / "systems").iterdir()):

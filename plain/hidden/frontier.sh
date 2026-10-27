@@ -63,8 +63,8 @@ pool_ranges() {
         /<superblock/ { bs = attr("data_block_size") }
         /<range_mapping/ { e = attr("data_begin") + attr("length"); if (e > max) max = e }
         /<single_mapping/ { e = attr("data_block") + 1; if (e > max) max = e }
-        END { print max * bs, bs }')
-    end=$1 bs=$2
+        END { print max * bs + 0, bs + 0 }')
+    end=${1:-0} bs=${2:-0}
     if [ -n "$stale_out" ]; then
         stale=$(($(tmeta_scan /dev/mapper/fr-tmeta 2>/dev/null || echo 0) * bs))
         echo "0 $stale" | map_ranges /run/fr-tdata.table | map_ranges "$region" >"$stale_out"
@@ -83,7 +83,7 @@ frontier_check() {
     dmsetup create --readonly fr-decoy-raw </run/fr-decoy-region.table
     dmsetup mknodes fr-decoy-raw
     cryptsetup open --type plain --readonly --batch-mode $DECOY_CRYPT_ARGS \
-        --key-file "$B/decoy.key" /dev/mapper/fr-decoy-raw fr-decoy
+        --key-file "${DECOY_KEY:-$B/decoy.key}" /dev/mapper/fr-decoy-raw fr-decoy
 
     pool_ranges "$DECOY_VG" /dev/mapper/fr-decoy /run/fr-decoy-region.table /run/fr-decoy.ranges \
         /run/fr-decoy-stale.ranges
@@ -127,6 +127,13 @@ frontier_check() {
     min=$((total / 2048 * MIN_GAP_PERCENT / 100))
     rm -f /run/fr-*
 
+    if [ -z "$decoy_pe_start" ]; then
+        echo "WARNING: the decoy doesn't open with the key this side keeps for it (was it re-created"
+        echo "without --hidden-offset?), so the numbers below are wrong. pd init-decoy --force"
+        echo "--hidden-offset N updates it."
+        printf "Press Enter to continue booting. "
+        read -r _
+    fi
     echo "Free space between the two sides: $gap MiB."
     if [ -n "$overlap" ]; then
         echo "WARNING: decoy volume(s) inside the hidden region: $overlap"

@@ -61,7 +61,7 @@ pd-live/boot.sh --offset <offset>     # the hidden side
 password is the same as on the USB: the disk is found by its salt (`--disk DEVICE` names it), and
 `late.sh` from its boot volume kexecs the chosen system. The files that would sit next to the boot
 image are options: `--argon2 T,M_LOG2,P` (non-default parameters), `--salt SALT` (an explicit salt),
-`--fido2 FILE` (the FIDO2 slots). It leaves the live system's boot entries alone. Check the download
+`--fido2 FILE` (FIDO2 boot mode's slots; data mode needs nothing). It leaves the live system's boot entries alone. Check the download
 against the release's `SHA256SUMS` when you can. Downloading it is visible on the network.
 *(tested: `test_e2e` boots both sides with it from the tool VM.)*
 

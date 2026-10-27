@@ -6,7 +6,7 @@ installs goes next to it, in `EFI/BOOT/BOOTX64.EFI.extra.d/`, as `*.cred`
 files that systemd-stub packs into a cpio under `/.extra/credentials/` in
 the initrd:
   keymap.cred   the console keymap (busybox loadkmap format)
-  fido2.cred    the FIDO2 slots (pd/fido2.py)
+  fido2.cred    the FIDO2 slots, in boot mode (pd/fido2.py)
   argon2.cred   Argon2 parameters other than the defaults
   salt.cred     a salt from the config (stock boot; installs from before the
                 salt moved to the disk)
@@ -51,7 +51,7 @@ def credentials(cfg: Config, keymaps: pathlib.Path | None = None) -> dict[str, b
     if cfg.argon2.shell() != Argon2Params().shell():
         out["argon2"] = cfg.argon2.shell().encode()
     from pd import fido2
-    creds = fido2.load(cfg)
+    creds = fido2.load(cfg) if cfg.fido2_mode == "boot" else []
     if creds:
         out["fido2"] = fido2.dump(creds).encode()
     if cfg.keymap:

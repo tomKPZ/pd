@@ -143,9 +143,14 @@ def main(argv=None) -> int:
     fe.add_argument("--password-stdin", action="store_true")
     fr = fsub.add_parser("remove", help="remove security keys (by number, from `pd fido2 list`)")
     fr.add_argument("index", type=int, nargs="+")
-    fsub.add_parser("list", help="list the enrolled security keys")
-    for x in (fe, fr, fsub.choices["list"]):
+    fl = fsub.add_parser("list", help="list the enrolled security keys")
+    for x in (fe, fr, fl):
         x.add_argument("--config", required=True)
+    for x in (fr, fl):
+        # Data mode keeps the keys' slots in each side's boot volume.
+        x.add_argument("--offset", type=int, default=None,
+                       help="(data mode) boot volume start sector (default: the decoy's)")
+        x.add_argument("--password-stdin", action="store_true")
 
     m = sub.add_parser("migrate-v1", help="convert a v1 install to v2 in place")
     m.add_argument("--config", required=True, help="v2 config (new salt)")
@@ -258,7 +263,7 @@ def main(argv=None) -> int:
                              key_prompter(args), new_argon2):
             print(f"Warning: {w}")
         print("Re-keyed.")
-        if fido2.load(cfg):
+        if cfg.fido2_mode == "boot" and fido2.load(cfg):
             print("Build a new boot USB (`pd usb`): fido2.txt changed if this side uses FIDO2.")
         if args.new_salt or new_argon2:
             changed = " and ".join(x for x, v in (("--new-salt", args.new_salt),
@@ -281,10 +286,6 @@ def main(argv=None) -> int:
                   "prompt, then run:")
             print(f"  {L.hidden_boot_command(hl)}")
             print("  /early.sh")
-        from pd import fido2
-        if fido2.load(cfg):
-            print("FIDO2: the moved sides open with their passwords alone; enroll the security keys "
-                  "again (pd fido2 enroll, both sides) and build a new boot USB.")
         print("The boot USB still works" + (" (same salt)." if cfg.salt else
                                             " (the new disk has its own salt in its first MiB).")
               + "  Wipe the old disk (pd randomize) once the new one boots: two disks with the same "
@@ -326,10 +327,23 @@ def main(argv=None) -> int:
             (pw,) = read_passwords(args, ["Password"])
             n, created = rekey.enroll(cfg, rekey.default_offset(cfg, args.offset), pw,
                                       key_prompter(args))
-            print(f"Enrolled {n} security key(s) for this side; the password alone no longer opens it.")
+            if cfg.fido2_mode == "data":
+                print(f"Enrolled {n} security key(s) for this side; its data now opens only with one "
+                      "of them.")
+            else:
+                print(f"Enrolled {n} security key(s) for this side; the password alone no longer opens it.")
             if created:
                 print(f"{created} new key(s): enroll them for the other side too, if there is one.")
-            print("Build a new boot USB (`pd usb`).")
+            if cfg.fido2_mode == "boot":
+                print("Build a new boot USB (`pd usb`).")
+        elif cfg.fido2_mode == "data":
+            (pw,) = read_passwords(args, ["Password"])
+            offset = rekey.default_offset(cfg, args.offset)
+            if args.fido2_command == "remove":
+                rekey.remove_data(cfg, offset, pw, args.index)
+                print("Removed.")
+            else:
+                print(rekey.status_data(cfg, offset, pw))
         elif args.fido2_command == "remove":
             rekey.remove(cfg, args.index)
             print("Removed.  Build a new boot USB (`pd usb`).")
@@ -417,7 +431,7 @@ def main(argv=None) -> int:
         if cfg.salt:
             print("Remove `salt` from the config, and rewrite the boot USB (`pd usb`): it no longer "
                   "needs one.")
-        elif fido2.load(cfg):
+        elif cfg.fido2_mode == "boot" and fido2.load(cfg):
             print("Rewrite the boot USB (`pd usb --config`): fido2.txt changed.")
     elif args.command == "install-cpio":
         from pd import usb

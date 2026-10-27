@@ -59,16 +59,18 @@ security either way.) Argon2 (1 GiB, one pass by default: about 0.3 s, and
 1 GiB of memory per guess, which limits how many guesses a GPU can run at once) makes each guess
 costly. The defaults favor a short boot over a slow KDF, so the password has to be correspondingly
 strong: each extra random character multiplies an attacker's work by the size of the character set
-(about 60–90), far more than any practical Argon2 setting. With FIDO2 security keys enrolled ([design.md §4.1](design.md#41-fido2-security-keys-optional)),
-each guess also needs the physical key, its PIN (the key locks after 8 wrong tries), and a touch. That
-doesn't change coercion: a coercer demands the key along with the password.
+(about 60–90), far more than any practical Argon2 setting. FIDO2 security keys ([design.md §4.1](design.md#41-fido2-security-keys-optional))
+change this only in boot mode: each guess then also needs the physical key, its PIN (the key locks
+after 8 wrong tries), and a touch. In data mode, the default, a guess can still be checked offline by
+opening the boot volume, which shows that the side exists; the key protects only the side's data.
+Neither changes coercion: a coercer demands the key along with the password.
 
 ## Out of scope
 
 * **Snapshot adversaries.** Two or more disk images taken at different times show "free" space
   changing. Never clone the disk. Back up hidden data only to another pd setup. The boot USB counts
-  too: `fido2.cred` changes when the hidden side enrolls a security key or is re-keyed, while the
-  decoy's slots stay the same. Someone who kept a copy of an earlier USB can compare. Re-key or
+  too, in FIDO2's boot mode: `fido2.cred` changes when the hidden side enrolls a security key or is
+  re-keyed, while the decoy's slots stay the same. Someone who kept a copy of an earlier USB can compare. Re-key or
   enroll the decoy at the same time, and don't let old copies of the USB exist.
 * **Flash forensics.** SSD wear leveling, FTL mapping tables, chip-off analysis. If this matters, two
   mitigations:
@@ -94,7 +96,7 @@ doesn't change coercion: a coercer demands the key along with the password.
 | LVM metadata history in the decoy | v2 creates the decoy with stock commands and names ([design.md §6.1](design.md#61-decoy-stock-lvm)). A v1 decoy's history shows pd's unusual commands. Each version also records the `uname` of the machine that ran the command: for a pd decoy, the setup environment's NixOS kernel. That marks the decoy as set up by pd, which the USB shows anyway, not the presence of a hidden side. |
 | The decoy's old data in the hidden side's space | Blocks the decoy freed keep their old contents, and its pool metadata keeps old pointers to them; hidden data written over them would show. `pd compact` and `init-hidden` on a used decoy clear these traces; keep the decoy's data below the hidden side's floor, which the frontier monitor checks ([design.md §10.5](design.md#105-traces-of-the-decoys-old-data)). |
 | Filesystem errors in the decoy | If the hidden side ever overwrote decoy blocks, the decoy would show checksum errors. Prevented by the hidden cap and the frontier monitor. |
-| `fido2.cred` on the USB, but the decoy doesn't use a security key | Points at a side that does. If the hidden side uses FIDO2, enroll the decoy too. |
+| `fido2.cred` on the USB, but the decoy doesn't use a security key | Boot mode only: points at a side that does. If the hidden side uses FIDO2, enroll the decoy too. Data mode puts nothing on the USB. |
 | A written-down hidden offset | Not a secret in itself, but a note of it next to the machine is a pointer saying "there is a hidden side". Keep it out of the decoy, off the USB, and away from the machine. |
 
 ## Operational rules
