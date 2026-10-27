@@ -232,7 +232,7 @@ class BootVM:
                 "-device", "qemu-xhci", "-device", "usb-storage,drive=usb,bootindex=0",
             ] + _disk_args(disks, interface, readonly_disks)
         else:
-            initrd = self._concat_initrds(initrds)
+            initrd = self._initrd = self._concat_initrds(initrds)
             args = _qemu_base(memory) + [
                 "-kernel", str(env / "bzImage"), "-initrd", str(initrd),
                 "-append", f"console=ttyS0 panic=-1 init_on_free=1 {cmdline}".strip(),
@@ -253,9 +253,13 @@ class BootVM:
         self.child.setecho(False)
 
     _tmp = None
+    _initrd = None
 
     def _concat_initrds(self, initrds) -> pathlib.Path:
-        BootVM._tmp = BootVM._tmp or pathlib.Path(tempfile.mkdtemp(prefix="pd-initrd-"))
+        if BootVM._tmp is None:
+            import atexit
+            BootVM._tmp = pathlib.Path(tempfile.mkdtemp(prefix="pd-initrd-"))
+            atexit.register(shutil.rmtree, BootVM._tmp, ignore_errors=True)
         out = BootVM._tmp / f"initrd-{os.getpid()}-{id(self)}"
         with open(out, "wb") as f:
             for p in initrds:
@@ -291,6 +295,11 @@ class BootVM:
     def close(self):
         if self.child.isalive():
             self.child.terminate(force=True)
+        if self._initrd:
+            # The concatenated initrd (up to a few hundred MB with the setup
+            # environment's): many boots would fill a CI runner's disk.
+            self._initrd.unlink(missing_ok=True)
+            self._initrd = None
 
 
 def workdir(prefix: str = "pd-test-") -> pathlib.Path:
@@ -301,6 +310,14 @@ def workdir(prefix: str = "pd-test-") -> pathlib.Path:
 
 
 def cleanup(path: pathlib.Path):
-    if not os.environ.get("PD_KEEP_TEST_DIR"):
+    """Remove a test's work directory, unless PD_KEEP_TEST_DIR is set:
+    "logs" keeps only the serial and setup logs (*.log; CI, where disk
+    images would fill the runner), anything else keeps everything."""
+    keep = os.environ.get("PD_KEEP_TEST_DIR")
+    if not keep:
         shutil.rmtree(path, ignore_errors=True)
+    elif keep == "logs":
+        for f in path.rglob("*"):
+            if f.is_file() and f.suffix != ".log":
+                f.unlink(missing_ok=True)
 

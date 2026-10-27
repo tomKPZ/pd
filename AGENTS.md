@@ -49,7 +49,8 @@ order: [README.md](README.md) → [docs/design.md](docs/design.md) →
   artifacts. Run QEMU tests outside Nix builds.
 * **Tests:** `python3 -m unittest discover -s tests -t .` builds `.testenv` and runs everything (about
   15 minutes; `test_churn` is the slowest). Useful variables: `PD_SKIP_NIX_BUILD=1` (reuse `.testenv`),
-  `PD_TEST_DIR=/tmp/x PD_KEEP_TEST_DIR=1` (keep disk images and serial logs). `tests/debug_boot.py
+  `PD_TEST_DIR=/tmp/x PD_KEEP_TEST_DIR=1` (keep disk images and serial logs; `=logs` keeps only the
+  logs, as CI does). `tests/debug_boot.py
   WORKDIR` boots a kept disk into the recovery shell and runs commands from stdin.
 * **Layout:** `boot/` (USB initrd scripts; `pd/disk_class.sh` goes on the USB too, shared with setup), `plain/` (boot-volume scripts; `plain/hidden/` is installed
   only on the hidden side), `target/` (hook, NixOS module, Arch hook and trim unit for installed OSes),

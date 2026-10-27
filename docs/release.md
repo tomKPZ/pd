@@ -54,6 +54,10 @@ Push a tag starting with `v` (e.g. `git tag -s v2.0 && git push origin v2.0`). T
 
 * **Runners:** GitHub's standard Linux runners (4 cores, 16 GB, KVM). `ci/enable-kvm.sh` opens
   `/dev/kvm` to the runner user; `ci/free-disk.sh` removes preinstalled toolchains so the Nix store fits.
+* **Disk space:** the tests write real data to their disk images (every fixture randomizes 8 GiB;
+  `test_move` alone writes 26 GiB), so `ci/test-dir.sh` puts them on whichever of `/` and the runner's
+  temporary disk (`/mnt`) has more room, and `PD_KEEP_TEST_DIR=logs` deletes each test's images when
+  it's done, keeping only its logs. A `df` step at the end shows what was left.
 * **Tools:** `nix develop` provides Python with pexpect and QEMU (the CanoKey build the FIDO2 tests use),
   from the same pinned nixpkgs. Locally the tests use the host's.
 * **Third-party actions** are pinned to commit SHAs (with the tag in a comment): checkout,

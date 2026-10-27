@@ -43,10 +43,11 @@ jobs:
         run: nix build -j auto --print-build-logs --out-link .testenv .#testenv
       - name: Enable KVM
         run: ci/enable-kvm.sh
+      - name: Choose the disk for test images
+        run: ci/test-dir.sh
       - name: Tests (unit tests and the fast QEMU subset)
         env:
           PD_SKIP_NIX_BUILD: "1"
-          PD_TEST_DIR: ${{ runner.temp }}/pd-tests
         run: >-
           nix develop .# -c python3 -m unittest -v
           tests.test_layout tests.test_placement tests.test_usb tests.test_monitor_awk
