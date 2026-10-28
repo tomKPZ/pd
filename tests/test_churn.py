@@ -61,7 +61,7 @@ class Churn(unittest.TestCase):
             print(f"  {r['cycle']}: {r['pool_used'] >> 20} / {r['high_water'] >> 20} / {r['fs_used'] >> 20}")
         result = json.loads(out.split("RESULT ", 1)[1].splitlines()[0])
         if reboot_every:
-            self.first_session_high_water = rows[reboot_every - 1]["high_water"]
+            self.settled_high_water = rows[2 * reboot_every - 1]["high_water"]
         Churn.results[label] = result
         print(f"\n{label}: pool_used={result['pool_used'] >> 20} MiB "
               f"high_water={result['high_water'] >> 20} MiB "
@@ -103,11 +103,14 @@ class Churn(unittest.TestCase):
         self.assertLess(r["high_water"], 2 * r["peak_fs_used"] + (512 << 20))
 
     def test_ext4_trim_on_shutdown(self):
-        # Measured: the first session (5 cycles, no trim yet) spreads ext4's
-        # metadata and data over ~5 GiB of the pool; later sessions refill
-        # holes from the front, so the high-water mark stops growing.
+        # Measured: the first sessions (5 cycles each, trimmed only at their
+        # end) spread ext4's metadata and data over 4-5 GiB of the pool;
+        # later sessions refill holes from the front, so the high-water mark
+        # stops growing.  How far the first session alone reaches depends on
+        # writeback timing (on a slow runner, 4.0 GiB and then 4.3 GiB from
+        # the second session on), so compare with the mark after two sessions.
         r = self.run_fs("ext4", reboot_every=5)
-        self.assertLessEqual(r["high_water"], self.first_session_high_water * 1.05)
+        self.assertLessEqual(r["high_water"], self.settled_high_water * 1.05)
 
 
 if __name__ == "__main__":
