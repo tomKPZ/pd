@@ -221,10 +221,14 @@ PY
             kernel=env / "bzImage", initrd=env / "faketarget-initrd.cpio.zst"))
         # 4.5 GiB of an 8 GiB disk reaches past the floor; deleted and
         # trimmed, it leaves only stale traces there.  All on the XFS volume,
-        # with nothing written to the btrfs root meanwhile: btrfs's next
-        # commit would land up there (the pool allocates upwards) and stay.
+        # with nothing written to the btrfs root meanwhile: a btrfs commit
+        # during the write would land up there (the pool allocates upwards)
+        # and stay mapped.  A fresh btrfs has such a commit pending: its
+        # cleaner deletes the block groups mkfs left empty, on a 30 s timer
+        # (during the write, on a slow machine).  Delete them first.
         (work / "fill.sh").write_text(MARKED.format() + """
 d=$PD_ROOT/volumes/data
+btrfs balance start -dusage=0 -musage=0 $PD_ROOT/fake >/dev/null
 sync
 write_marked $d/keep 256
 write_marked $d/gone 4608
